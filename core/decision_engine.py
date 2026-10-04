@@ -116,8 +116,13 @@ class DecisionEngine:
                 irrelevant=frozenset(),
             )
 
+        region = self.region()
+
         boundary = analyze_boundary(
-            knowledge.event_ids(),
+            {
+                node.key()
+                for node in region.nodes
+            },
             self.relevance_graph,
         )
 
