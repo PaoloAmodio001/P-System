@@ -30,3 +30,6 @@ full-test-audit-*.log
 # OS
 .DS_Store
 Thumbs.db
+
+# Local forensic / verification archives
+backups/

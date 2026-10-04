@@ -25,6 +25,19 @@ class KnowledgeDigest:
             )
         )
 
+    @classmethod
+    def from_signed_events(
+        cls,
+        events: list[SignedTransfer] | tuple[SignedTransfer, ...],
+    ) -> "KnowledgeDigest":
+        """Digest authenticated evidence, including pending events."""
+        return cls(
+            event_ids=frozenset(
+                event.transfer.event_id()
+                for event in events
+            )
+        )
+
     def missing_from(
         self,
         other: "KnowledgeDigest",

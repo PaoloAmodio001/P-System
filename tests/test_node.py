@@ -4,11 +4,13 @@ from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
+from core.identity_claim import IdentityClaim
 from network.node import Node
 
 
 def test_node_receives_and_verifies_signed_transfer():
     sender_identity = Identity.create()
+    sender_claim = IdentityClaim.create(sender_identity, "alice")
 
     sender_node = Node(
         node_id="node-A",
@@ -24,6 +26,7 @@ def test_node_receives_and_verifies_signed_transfer():
 
     sender_node.start()
     receiver_node.start()
+    assert receiver_node.register_identity_claim(sender_claim)
 
     try:
         transfer = Transfer(

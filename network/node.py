@@ -14,6 +14,7 @@ from core.identity_claim import IdentityClaim
 from core.identity_conflict import IdentityConflictState
 from core.equivocation import EquivocationProof
 from core.equivocation_state import EquivocationState
+from core.event_lifecycle import EventLifecycle
 from core.state import State
 from core.derive import StateDeriver
 from network.message import (
@@ -102,6 +103,7 @@ class Node:
         self._reconnect_running = False
         self._reconnect_stop_event = threading.Event()
         self._reconnect_state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
 
         self._server_controller = NodeServer(self)
 
@@ -284,7 +286,7 @@ class Node:
             list(self.local_events),
         )
 
-    def receive(self, event, broadcast: bool = True):
+    def _receive_unlocked(self, event, broadcast: bool = True):
         """
         Accept an event into the node's knowledge.
 
@@ -354,73 +356,59 @@ class Node:
 
         return True
 
+    def receive(self, event, broadcast: bool = True):
+        """Thread-safe trusted/local event ingress."""
+        with self._state_lock:
+            return self._receive_unlocked(event, broadcast=broadcast)
+
     def receive_signed(
         self,
         event: SignedTransfer,
         broadcast: bool = True,
         record_received: bool = True,
     ) -> bool:
-        """
-        Process a cryptographically signed transfer through
-        one centralized verification and recording path.
+        """Authenticate, authorize and only then execute a signed event."""
+        with self._state_lock:
+            if not event.verify():
+                return False
 
-        The node never chooses a winner between conflicting
-        signed events. If the same identity signs two different
-        transfers with the same sender and nonce, the evidence
-        is recorded as an EquivocationProof.
-        """
+            event_id = event.transfer.event_id()
+            existing_signed = self.signed_events.get(event_id)
+            if existing_signed is not None and existing_signed != event:
+                return False
 
-        # The cryptographic signature can be verified
-        # independently from the identity claim.
-        #
-        # If the claim has not arrived yet, preserve the
-        # authenticated evidence instead of discarding it.
-        if not event.verify():
-            return False
+            # Authentication is not authorization. Without a registered
+            # identity claim the event is retained as evidence only.
+            if event.identity_id not in self.identities:
+                pending = self.pending_signed_events.setdefault(
+                    event.identity_id, []
+                )
+                if event not in pending:
+                    pending.append(event)
+                self._record_equivocation(event)
+                self.signed_events[event_id] = event
+                return False
 
-        event_id = event.transfer.event_id()
-
-        existing_signed = self.signed_events.get(
-            event_id
-        )
-
-        if (
-            existing_signed is not None
-            and existing_signed != event
-        ):
-            return False
-
-        # A valid signature is sufficient to preserve authenticated
-        # evidence even if the corresponding identity claim has not
-        # arrived yet.  The claim is an additional binding that can be
-        # checked when available.
-        #
-        # If a claim is already known, enforce the full identity
-        # binding immediately.  Otherwise keep the signed event as
-        # pending authenticated evidence and process its transfer.
-        if event.identity_id in self.identities:
             if not self._verify_signed_identity(event):
                 return False
-        else:
-            pending = self.pending_signed_events.setdefault(
-                event.identity_id,
-                [],
-            )
-            if event not in pending:
-                pending.append(event)
 
-        self._record_equivocation(event)
-        self.signed_events[event_id] = event
+            pending = self.pending_signed_events.get(event.identity_id)
+            if pending is not None:
+                pending = [item for item in pending if item != event]
+                if pending:
+                    self.pending_signed_events[event.identity_id] = pending
+                else:
+                    self.pending_signed_events.pop(event.identity_id, None)
 
-        accepted = self.receive(
-            event.transfer,
-            broadcast=broadcast,
-        )
+            self._record_equivocation(event)
+            self.signed_events[event_id] = event
 
-        if accepted and record_received:
-            self.received.append(event)
+            accepted = self.receive(event.transfer, broadcast=broadcast)
 
-        return accepted
+            if accepted and record_received and event not in self.received:
+                self.received.append(event)
+
+            return accepted
 
     def add_peer(self, peer: Peer) -> None:
         if peer.node_id == self.node_id:
@@ -561,45 +549,38 @@ class Node:
         self,
         identity_id: str,
     ) -> None:
-        if self.identity_conflicts.contains_identity(
-            identity_id
-        ):
+        if self.identity_conflicts.contains_identity(identity_id):
             return
 
-        pending = self.pending_signed_events.get(
-            identity_id,
-            [],
-        )
+        pending = list(self.pending_signed_events.get(identity_id, []))
+        if not pending:
+            return
 
         remaining = []
         changed = False
 
         for event in pending:
-            accepted = self.receive_signed(
-                event,
-                broadcast=False,
-                record_received=True,
-            )
-
-            if accepted:
-                changed = True
-            else:
+            if not self._verify_signed_identity(event):
                 remaining.append(event)
+                continue
+
+            # Promotion must cross the normal execution boundary. Never
+            # mutate local_events/state directly.
+            accepted = self.receive(event.transfer, broadcast=False)
+            if accepted or event.transfer in self.events:
+                if event not in self.received:
+                    self.received.append(event)
+            changed = True
+
+        if remaining:
+            self.pending_signed_events[identity_id] = remaining
+        else:
+            self.pending_signed_events.pop(identity_id, None)
 
         if changed:
             self.broadcast_decision_context()
 
-        if remaining:
-            self.pending_signed_events[
-                identity_id
-            ] = remaining
-        else:
-            self.pending_signed_events.pop(
-                identity_id,
-                None,
-            )
-
-    def register_identity_claim(
+    def _register_identity_claim_unlocked(
         self,
         claim: IdentityClaim,
     ) -> bool:
@@ -657,10 +638,45 @@ class Node:
 
         return True
 
+    def register_identity_claim(
+        self,
+        claim: IdentityClaim,
+    ) -> bool:
+        """Thread-safe identity-claim registration and promotion."""
+        with self._state_lock:
+            return self._register_identity_claim_unlocked(claim)
+
     def knowledge_digest(self) -> KnowledgeDigest:
-        return KnowledgeDigest.from_events(
-            self.events
+        # Reconciliation tracks authenticated evidence, including events
+        # still waiting for identity authorization. Execution/decision
+        # knowledge remains represented by self.events.
+        return KnowledgeDigest.from_signed_events(
+            tuple(self.signed_events.values())
         )
+
+    def signed_event_lifecycle(
+        self,
+        event: SignedTransfer,
+    ) -> EventLifecycle:
+        """Return the explicit authorization/execution lifecycle state."""
+        if not event.verify():
+            return EventLifecycle.REJECTED
+        claim = self.identities.get(event.identity_id)
+        if claim is None:
+            return EventLifecycle.PENDING_AUTHORIZATION
+        if not self._verify_signed_identity(event):
+            return EventLifecycle.REJECTED
+        if event.transfer in self.local_events:
+            return EventLifecycle.EXECUTED
+        if event.transfer in self.events:
+            if any(
+                ConflictResolver.conflicting(existing, event.transfer)
+                for existing in self.events
+                if existing != event.transfer
+            ):
+                return EventLifecycle.CONFLICTED
+            return EventLifecycle.AUTHORIZED
+        return EventLifecycle.AUTHORIZED
 
     def _send_identity_claims(
         self,
@@ -835,16 +851,20 @@ class Node:
             return
 
         message = {
-            "type": "EVENT_SYNC",
+            "type": "SIGNED_EVENT_SYNC",
             "events": [
                 {
-                    "sender": event.sender,
-                    "receiver": event.receiver,
-                    "amount": event.amount,
-                    "nonce": event.nonce,
-                    "parents": list(event.parents),
+                    "transfer": {
+                        "sender": event.transfer.sender,
+                        "receiver": event.transfer.receiver,
+                        "amount": event.transfer.amount,
+                        "nonce": event.transfer.nonce,
+                        "parents": list(event.transfer.parents),
+                    },
+                    "public_key": event.public_key.hex(),
+                    "signature": event.signature.hex(),
                 }
-                for event in self.events
+                for event in self.signed_events.values()
             ],
         }
 
@@ -977,38 +997,39 @@ class Node:
             return
 
         if message_type == "EVENT_SYNC":
-            raw_events = message.get("events", [])
+            # Legacy unsigned synchronization is not a network execution
+            # ingress. Trusted local callers can still use receive().
+            return
 
-            events = [
-                Transfer(
-                    sender=data["sender"],
-                    receiver=data["receiver"],
-                    amount=data["amount"],
-                    nonce=data["nonce"],
-                    parents=tuple(
-                        data.get("parents", [])
+        if message_type == "SIGNED_EVENT_SYNC":
+            for data in message.get("events", []):
+                transfer_data = data["transfer"]
+                signed_event = SignedTransfer(
+                    transfer=Transfer(
+                        sender=transfer_data["sender"],
+                        receiver=transfer_data["receiver"],
+                        amount=transfer_data["amount"],
+                        nonce=transfer_data["nonce"],
+                        parents=tuple(transfer_data.get("parents", [])),
                     ),
+                    public_key=bytes.fromhex(data["public_key"]),
+                    signature=bytes.fromhex(data["signature"]),
                 )
-                for data in raw_events
-            ]
-
-            self.merge_events(
-                events,
-                broadcast=False,
-            )
+                self.receive_signed(
+                    signed_event,
+                    broadcast=False,
+                    record_received=False,
+                )
             return
 
         if message_type == "DECISION_CONTEXT":
             context = decode_decision_context(message)
 
+            # Decision context is advisory. Its unsigned Transfer list is
+            # never accepted as knowledge or execution input.
             self.peer_decisions[
                 context.get("node_id", "")
             ] = context["status"]
-
-            self.merge_events(
-                context["events"],
-                broadcast=False,
-            )
             return
 
         if message_type == "KNOWLEDGE_DIGEST":
@@ -1016,8 +1037,8 @@ class Node:
                 message
             )
 
-            local_digest = KnowledgeDigest.from_events(
-                self.events
+            local_digest = KnowledgeDigest.from_signed_events(
+                tuple(self.signed_events.values())
             )
 
             missing = (

@@ -4,6 +4,7 @@ from typing import FrozenSet, Generic, TypeVar
 from core.decision_invariance import (
     DecisionInvariance,
     InvarianceStatus,
+    KnowledgeExtension,
 )
 
 

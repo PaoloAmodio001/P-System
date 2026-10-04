@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from core.event import Transfer
 from typing import TYPE_CHECKING
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, FrozenSet, TypeVar
+from typing import Callable, FrozenSet, Generic, TypeVar
 
 
 T = TypeVar("T")
@@ -14,7 +14,7 @@ class InvarianceStatus(Enum):
 
 
 @dataclass(frozen=True)
-class KnowledgeExtension:
+class KnowledgeExtension(Generic[T]):
     """
     An explicit extension of the currently known information.
 
