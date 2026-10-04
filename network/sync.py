@@ -1,0 +1,37 @@
+from core.event import Transfer
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from network.node import Node
+
+
+def encode_events(node: Node) -> dict:
+    return {
+        "type": "EVENT_SYNC",
+        "events": [
+            {
+                "sender": event.sender,
+                "receiver": event.receiver,
+                "amount": event.amount,
+                "nonce": event.nonce,
+                "parents": list(event.parents),
+            }
+            for event in node.local_events
+        ],
+    }
+
+
+def decode_events(message: dict) -> list[Transfer]:
+    if message.get("type") != "EVENT_SYNC":
+        raise ValueError("INVALID SYNC MESSAGE")
+
+    return [
+        Transfer(
+            sender=data["sender"],
+            receiver=data["receiver"],
+            amount=data["amount"],
+            nonce=data["nonce"],
+            parents=tuple(data.get("parents", [])),
+        )
+        for data in message.get("events", [])
+    ]
