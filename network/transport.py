@@ -1,105 +1,122 @@
+from __future__ import annotations
+
 import json
 import socket
+from typing import Optional
+
+from network.secure_transport import SecureTransport, TLSConfig
 
 
 class TCPTransport:
-    def __init__(self, host: str, port: int):
+    """
+    Compatibility facade for the X-System network transport.
+
+    New connections MUST use TLS 1.3.  The framing/API remains
+    compatible with the previous transport layer.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        tls_config: Optional[TLSConfig] = None,
+    ):
         self.host = host
         self.port = port
+        self.tls_config = tls_config
 
     def connect(self, peer, node_id: str):
         from network.handshake import Handshake
+
+        if self.tls_config is None:
+            raise RuntimeError(
+                "P14 TLS CONFIGURATION REQUIRED"
+            )
 
         connection = socket.create_connection(
             peer.address(),
             timeout=2.0,
         )
 
-        TCPTransport.send_connection(
-            connection,
-            Handshake(
-                node_id=node_id,
-                host=self.host,
-                port=self.port,
-            ).encode(),
-        )
+        try:
+            context = SecureTransport.create_client_context(
+                self.tls_config
+            )
 
-        response = TCPTransport.receive(connection)
-        handshake = Handshake.decode(response)
+            connection = SecureTransport.wrap_client(
+                connection,
+                context,
+                self.tls_config.server_hostname,
+            )
 
-        if handshake.node_id == node_id:
+            SecureTransport.send(
+                connection,
+                Handshake(
+                    node_id=node_id,
+                    host=self.host,
+                    port=self.port,
+                ).encode(),
+            )
+
+            response = SecureTransport.receive(connection)
+            handshake = Handshake.decode(response)
+
+            if handshake.node_id == node_id:
+                raise ValueError(
+                    "INVALID PEER IDENTITY"
+                )
+
+            return connection, handshake
+
+        except Exception:
             connection.close()
-            raise ValueError("INVALID PEER IDENTITY")
-
-        return connection, handshake
+            raise
 
     def send(self, peer, message: dict) -> None:
-        payload = json.dumps(
-            message,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        if self.tls_config is None:
+            raise RuntimeError(
+                "P14 TLS CONFIGURATION REQUIRED"
+            )
 
-        with socket.create_connection(
+        connection = socket.create_connection(
             peer.address(),
             timeout=2.0,
-        ) as connection:
-            connection.sendall(
-                len(payload).to_bytes(4, "big")
-                + payload
+        )
+
+        try:
+            context = SecureTransport.create_client_context(
+                self.tls_config
             )
+
+            connection = SecureTransport.wrap_client(
+                connection,
+                context,
+                self.tls_config.server_hostname,
+            )
+
+            SecureTransport.send(
+                connection,
+                message,
+            )
+        finally:
+            connection.close()
 
     @staticmethod
     def send_connection(connection, message: dict) -> None:
-        payload = json.dumps(
+        SecureTransport.send(
+            connection,
             message,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-
-        connection.sendall(
-            len(payload).to_bytes(4, "big")
-            + payload
         )
 
     @staticmethod
     def receive(connection) -> dict:
-        header = TCPTransport._read_exact(
-            connection,
-            4,
-        )
-
-        length = int.from_bytes(
-            header,
-            "big",
-        )
-
-        if length <= 0:
-            raise ValueError("INVALID MESSAGE LENGTH")
-
-        payload = TCPTransport._read_exact(
-            connection,
-            length,
-        )
-
-        return json.loads(
-            payload.decode("utf-8")
+        return SecureTransport.receive(
+            connection
         )
 
     @staticmethod
     def _read_exact(connection, size: int) -> bytes:
-        data = bytearray()
-
-        while len(data) < size:
-            chunk = connection.recv(
-                size - len(data)
-            )
-
-            if not chunk:
-                raise ConnectionError(
-                    "CONNECTION CLOSED"
-                )
-
-            data.extend(chunk)
-
-        return bytes(data)
+        return SecureTransport._read_exact(
+            connection,
+            size,
+        )

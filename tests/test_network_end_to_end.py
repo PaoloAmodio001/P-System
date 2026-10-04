@@ -9,6 +9,8 @@ from network.message import (
     encode_signed_transfer,
 )
 from network.transport import TCPTransport
+from network.node_tls_identity import get_node_tls_config
+from network.secure_transport import SecureTransport
 
 
 def test_signed_transfer_end_to_end_over_tcp():
@@ -41,10 +43,17 @@ def test_signed_transfer_end_to_end_over_tcp():
         connection, _ = server.accept()
 
         with connection:
-            message = TCPTransport.receive(connection)
-            received["event"] = decode_signed_transfer(
-                message
+            config = get_node_tls_config("node-client")
+            context = SecureTransport.create_server_context(config)
+            tls = SecureTransport.wrap_server(
+                connection,
+                context,
             )
+            with tls:
+                message = SecureTransport.receive(tls)
+                received["event"] = decode_signed_transfer(
+                    message
+                )
 
         server.close()
 
@@ -58,9 +67,12 @@ def test_signed_transfer_end_to_end_over_tcp():
         def address(self):
             return host, port
 
+    client_config = get_node_tls_config("node-client")
+
     transport = TCPTransport(
         host,
         port,
+        tls_config=client_config,
     )
 
     transport.send(

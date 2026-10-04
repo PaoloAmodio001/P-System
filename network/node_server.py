@@ -4,14 +4,15 @@ import threading
 from network.handshake import Handshake
 from network.peer import Peer
 from network.peer_connection import PeerConnection
-from network.transport import TCPTransport
+from network.secure_transport import SecureTransport, TLSConfig
 
 
 class NodeServer:
     """Gestisce esclusivamente il lifecycle TCP di un Node."""
 
-    def __init__(self, node):
+    def __init__(self, node, tls_config: TLSConfig | None = None):
         self.node = node
+        self.tls_config = tls_config
         self.server = None
         self.thread = None
         self.running = False
@@ -57,7 +58,24 @@ class NodeServer:
                 break
 
             try:
-                message = TCPTransport.receive(connection)
+                if self.tls_config is None:
+                    raise RuntimeError(
+                        "P14 TLS CONFIGURATION REQUIRED"
+                    )
+
+                context = SecureTransport.create_server_context(
+                    self.tls_config
+                )
+
+                connection = SecureTransport.wrap_server(
+                    connection,
+                    context,
+                )
+
+                message = SecureTransport.receive(
+                    connection
+                )
+
                 handshake = Handshake.decode(message)
 
                 if handshake.node_id == self.node.node_id:
@@ -73,7 +91,7 @@ class NodeServer:
                     ),
                 )
 
-                TCPTransport.send_connection(
+                SecureTransport.send(
                     connection,
                     Handshake(
                         node_id=self.node.node_id,

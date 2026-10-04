@@ -22,7 +22,6 @@ from network.message import (
     encode_signed_transfer,
 )
 from network.identity_message import decode_identity_claim
-from network.transport import TCPTransport
 from network.sync import encode_events, decode_events
 from network.decision_message import (
     encode_decision_context,
@@ -39,6 +38,8 @@ from network.reconciliation_protocol import (
     select_events,
 )
 from network.node_server import NodeServer
+from network.node_tls_identity import get_node_tls_config
+from network.secure_transport import SecureTransport
 
 
 class Node:
@@ -54,6 +55,7 @@ class Node:
         relevance_graph: RelevanceGraph | None = None,
     ):
         self.node_id = node_id
+        self.tls_config = get_node_tls_config(node_id)
 
         # Immutable baseline from which the local projection is derived.
         self._initial_state = (
@@ -105,7 +107,10 @@ class Node:
         self._reconnect_state_lock = threading.Lock()
         self._state_lock = threading.RLock()
 
-        self._server_controller = NodeServer(self)
+        self._server_controller = NodeServer(
+            self,
+            tls_config=self.tls_config,
+        )
 
     def start(self):
         if self._running:
@@ -458,7 +463,10 @@ class Node:
         )
 
         try:
-            handshake = connection.connect(peer)
+            handshake = connection.connect(
+                peer,
+                self.tls_config,
+            )
         except (
             ConnectionError,
             OSError,
@@ -683,7 +691,7 @@ class Node:
         connection,
     ) -> None:
         for claim in list(self.identities.values()):
-            TCPTransport.send_connection(
+            SecureTransport.send(
                 connection,
                 {
                     "type": "IDENTITY_CLAIM",

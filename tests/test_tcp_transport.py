@@ -2,6 +2,8 @@ import socket
 import threading
 
 from network.transport import TCPTransport
+from network.node_tls_identity import get_node_tls_config
+from network.secure_transport import SecureTransport
 
 
 def test_tcp_transport_sends_and_receives_message():
@@ -21,9 +23,16 @@ def test_tcp_transport_sends_and_receives_message():
         connection, _ = server.accept()
 
         with connection:
-            received.update(
-                TCPTransport.receive(connection)
+            config = get_node_tls_config("node-A")
+            context = SecureTransport.create_server_context(config)
+            tls = SecureTransport.wrap_server(
+                connection,
+                context,
             )
+            with tls:
+                received.update(
+                    SecureTransport.receive(tls)
+                )
 
         server.close()
 
@@ -34,9 +43,12 @@ def test_tcp_transport_sends_and_receives_message():
 
     thread.start()
 
+    client_config = get_node_tls_config("node-A")
+
     client = TCPTransport(
         "127.0.0.1",
         port,
+        tls_config=client_config,
     )
 
     class LocalPeer:

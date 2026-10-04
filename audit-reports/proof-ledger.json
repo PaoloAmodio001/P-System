@@ -1,0 +1,153 @@
+{
+  "P01": {
+    "assumptions": [],
+    "evidence": [
+      "deterministic invalid trusted transfer does not enter executable projection"
+    ],
+    "statement": "A rejected transfer never changes operational state.",
+    "status": "PROPERTY_TESTED",
+    "title": "Invalid transfers never execute"
+  },
+  "P02": {
+    "assumptions": [],
+    "evidence": [
+      "missing causal parent blocks execution until parent is executable"
+    ],
+    "statement": "An executable event requires every declared parent to be executable.",
+    "status": "PROPERTY_TESTED",
+    "title": "Causal dependencies are preserved"
+  },
+  "P03": {
+    "assumptions": [],
+    "evidence": [
+      "conflicting same-sender/same-nonce alternatives never coexist in projection"
+    ],
+    "statement": "Conflicting alternatives cannot both be selected into one projection.",
+    "status": "PROPERTY_TESTED",
+    "title": "Conflicts do not execute together"
+  },
+  "P04": {
+    "assumptions": [],
+    "evidence": [
+      "independent senders execute independently"
+    ],
+    "statement": "Non-conflicting, causally complete events may coexist.",
+    "status": "PROPERTY_TESTED",
+    "title": "Independent events remain independently executable"
+  },
+  "P05": {
+    "assumptions": [],
+    "evidence": [
+      "hidden relevant event prevents premature UNIQUE decision"
+    ],
+    "statement": "A relevant undiscovered extension can invalidate a unique decision.",
+    "status": "PROPERTY_TESTED",
+    "title": "Hidden relevant knowledge blocks uniqueness"
+  },
+  "P06": {
+    "assumptions": [],
+    "evidence": [
+      "explicit irrelevant extension preserves decision"
+    ],
+    "statement": "Adding an irrelevant event does not change the decision.",
+    "status": "PROPERTY_TESTED",
+    "title": "Irrelevant extension preserves decision"
+  },
+  "P07": {
+    "assumptions": [],
+    "evidence": [
+      "Ed25519 signature validates original canonical payload and rejects payload mutation"
+    ],
+    "statement": "A modified payload or signature is rejected.",
+    "status": "PROPERTY_TESTED",
+    "title": "Signed event authenticity"
+  },
+  "P08": {
+    "assumptions": [],
+    "evidence": [
+      "valid signature without identity claim remains pending; valid claim promotes exactly through receive()"
+    ],
+    "statement": "A signed event executes only when bound to a valid identity claim.",
+    "status": "PROPERTY_TESTED",
+    "title": "Identity binding"
+  },
+  "P09": {
+    "assumptions": [],
+    "evidence": [
+      "equivalent authorized knowledge delivered in different orders converges locally"
+    ],
+    "statement": "Nodes with equivalent authorized knowledge converge to the same projection.",
+    "status": "EMPIRICALLY_SUPPORTED",
+    "title": "Multi-node convergence"
+  },
+  "P10": {
+    "assumptions": [],
+    "evidence": [
+      "duplicate signed ingress does not duplicate execution"
+    ],
+    "statement": "Repeating the same event does not duplicate execution.",
+    "status": "PROPERTY_TESTED",
+    "title": "Duplicate idempotence"
+  },
+  "P11": {
+    "assumptions": [],
+    "evidence": [
+      "replayed signed evidence remains idempotent"
+    ],
+    "statement": "Replayed signed evidence cannot cause duplicate execution.",
+    "status": "PROPERTY_TESTED",
+    "title": "Replay protection"
+  },
+  "P12": {
+    "assumptions": [],
+    "evidence": [
+      "authorization gate survives deferred promotion/reconciliation-style lifecycle"
+    ],
+    "statement": "Reconnect/reconciliation never bypasses authorization gates.",
+    "status": "EMPIRICALLY_SUPPORTED",
+    "title": "Reconnect safety"
+  },
+  "P13": {
+    "assumptions": [],
+    "evidence": [
+      "RLock-protected duplicate concurrent ingress has exactly one execution"
+    ],
+    "statement": "Concurrent ingress preserves state invariants.",
+    "status": "EMPIRICALLY_SUPPORTED",
+    "title": "Concurrency safety"
+  },
+  "P14": {
+    "assumptions": [],
+    "evidence": [
+      "real TLS 1.3 transport tests pass",
+      "mutual TLS requires a trusted node certificate on both peers",
+      "certificate validation rejects untrusted peer certificates",
+      "plaintext transport is rejected when TLS configuration is absent",
+      "Node, NodeServer, PeerConnection and TCPTransport use the SecureTransport path",
+      "legacy TCP transport tests were migrated to TLS",
+      "full pytest suite passes with 380 tests",
+      "dedicated P14 TLS suite passes with 9 tests"
+    ],
+    "statement": "Transport confidentiality and peer authentication are enforced through the implemented TLS transport path.",
+    "status": "PROPERTY_TESTED",
+    "title": "Transport security scope"
+  },
+  "P15": {
+    "assumptions": [],
+    "evidence": [
+      "no Byzantine fault theorem is claimed; model remains explicitly unproven"
+    ],
+    "statement": "The claimed fault model is explicitly stated and proven if claimed.",
+    "status": "NOT_PROVEN",
+    "title": "Byzantine tolerance"
+  },
+  "P16": {
+    "assumptions": [],
+    "evidence": [
+      "no unconditional liveness theorem is claimed; eventual delivery is not assumed"
+    ],
+    "statement": "Eventual progress holds only under explicit network/liveness assumptions.",
+    "status": "NOT_PROVEN",
+    "title": "Liveness"
+  }
+}

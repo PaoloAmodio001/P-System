@@ -4,7 +4,7 @@ import socket
 
 from network.handshake import Handshake
 from network.peer import Peer
-from network.transport import TCPTransport
+from network.secure_transport import SecureTransport, TLSConfig
 
 
 class PeerConnection:
@@ -19,13 +19,18 @@ class PeerConnection:
         self.port = port
         self.connection = None
         self.remote_handshake = None
+        self.tls_config = None
         self.on_disconnect = None
 
     @property
     def connected(self) -> bool:
         return self.connection is not None
 
-    def connect(self, peer: Peer) -> Handshake:
+    def connect(
+        self,
+        peer: Peer,
+        tls_config: TLSConfig,
+    ) -> Handshake:
         if self.connected:
             raise RuntimeError("ALREADY CONNECTED")
 
@@ -35,7 +40,17 @@ class PeerConnection:
         )
 
         try:
-            TCPTransport.send_connection(
+            context = SecureTransport.create_client_context(
+                tls_config
+            )
+
+            connection = SecureTransport.wrap_client(
+                connection,
+                context,
+                peer.node_id,
+            )
+
+            SecureTransport.send(
                 connection,
                 Handshake(
                     node_id=self.node_id,
@@ -44,7 +59,7 @@ class PeerConnection:
                 ).encode(),
             )
 
-            response = TCPTransport.receive(connection)
+            response = SecureTransport.receive(connection)
             handshake = Handshake.decode(response)
 
             if handshake.node_id == self.node_id:
@@ -52,6 +67,7 @@ class PeerConnection:
 
             self.connection = connection
             self.remote_handshake = handshake
+            self.tls_config = tls_config
 
             return handshake
 
@@ -81,7 +97,7 @@ class PeerConnection:
         if not self.connected:
             raise ConnectionError("PEER NOT CONNECTED")
 
-        TCPTransport.send_connection(
+        SecureTransport.send(
             self.connection,
             message,
         )
@@ -90,7 +106,7 @@ class PeerConnection:
         if not self.connected:
             raise ConnectionError("PEER NOT CONNECTED")
 
-        return TCPTransport.receive(
+        return SecureTransport.receive(
             self.connection,
         )
 
@@ -122,3 +138,4 @@ class PeerConnection:
         finally:
             self.connection = None
             self.remote_handshake = None
+            self.tls_config = None
