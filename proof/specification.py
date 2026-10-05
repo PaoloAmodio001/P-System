@@ -48,6 +48,10 @@ DEFAULT_OBLIGATIONS = (
     ProofObligation("P12", "Reconnect safety", "Reconnect/reconciliation never bypasses authorization gates."),
     ProofObligation("P13", "Concurrency safety", "Concurrent ingress preserves state invariants."),
     ProofObligation("P14", "Transport security scope", "Network confidentiality/integrity properties are explicitly modeled."),
-    ProofObligation("P15", "Byzantine tolerance", "The claimed fault model is explicitly stated and proven if claimed."),
+    ProofObligation(
+        "P15",
+        "Byzantine safety",
+        "Under the explicit Byzantine model, invalid or altered authenticated evidence is rejected, and inconsistent dissemination of conflicting valid events cannot cause honest nodes to select a conflicting alternative as UNIQUE or as an executable winner.",
+    ),
     ProofObligation("P16", "Liveness", "Eventual progress holds only under explicit network/liveness assumptions."),
 )

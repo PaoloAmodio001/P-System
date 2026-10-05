@@ -24,6 +24,6 @@ SECURITY_SCOPE = {
     "event_authenticity": "cryptographic signature",
     "identity_binding": "IdentityClaim",
     "authorization": "identity claim + alias binding",
-    "transport_integrity": "not assumed proven",
-    "transport_confidentiality": "not assumed proven",
+    "transport_integrity": "TLS 1.3 mutual-authenticated transport; covered by P14 real-TLS tests",
+    "transport_confidentiality": "TLS 1.3 encrypted transport; covered by P14 real-TLS tests",
 }

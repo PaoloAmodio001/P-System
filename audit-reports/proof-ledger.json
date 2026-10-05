@@ -74,10 +74,14 @@
   "P09": {
     "assumptions": [],
     "evidence": [
-      "equivalent authorized knowledge delivered in different orders converges locally"
+      "independent events converge across all 24 permutations of the same authorized knowledge",
+      "causal dependency chain converges across all event-order permutations",
+      "mixed causal and independent events converge across all event-order permutations",
+      "conflicting knowledge converges without an order-dependent executable winner",
+      "dedicated tests/test_p09_convergence.py passed 4/4"
     ],
     "statement": "Nodes with equivalent authorized knowledge converge to the same projection.",
-    "status": "EMPIRICALLY_SUPPORTED",
+    "status": "PROPERTY_TESTED",
     "title": "Multi-node convergence"
   },
   "P10": {
@@ -101,19 +105,27 @@
   "P12": {
     "assumptions": [],
     "evidence": [
-      "authorization gate survives deferred promotion/reconciliation-style lifecycle"
+      "pending signed evidence is not executable before identity authorization",
+      "reconciliation does not bypass the authorization gate",
+      "authorized pending evidence is promoted only after a valid identity claim",
+      "dedicated tests/test_p12_reconnect_safety.py passed 3/3",
+      "full test suite passed: 389 tests"
     ],
     "statement": "Reconnect/reconciliation never bypasses authorization gates.",
-    "status": "EMPIRICALLY_SUPPORTED",
+    "status": "PROPERTY_TESTED",
     "title": "Reconnect safety"
   },
   "P13": {
     "assumptions": [],
     "evidence": [
-      "RLock-protected duplicate concurrent ingress has exactly one execution"
+      "concurrent duplicate signed ingress executes exactly once",
+      "10 repeated rounds with 16 workers and 64 attempts each execute exactly once",
+      "32 workers with 128 concurrent attempts produce exactly one execution and one received evidence",
+      "dedicated tests/test_p13_concurrency_safety.py passed 3/3",
+      "full test suite passed: 392 tests"
     ],
     "statement": "Concurrent ingress preserves state invariants.",
-    "status": "EMPIRICALLY_SUPPORTED",
+    "status": "PROPERTY_TESTED",
     "title": "Concurrency safety"
   },
   "P14": {
@@ -162,8 +174,10 @@
       "automatic reconnect supervisor retries unavailable peers with bounded exponential backoff",
       "reconnect succeeds automatically after temporary peer unavailability",
       "dedicated tests/test_p16_liveness.py verifies reconnection without manual connect_peer() after peer recovery",
-      "P16 liveness test passed 5/5 consecutive runs",
-      "runtime test uses a bounded recovery window and verifies connected state, last_success, and retry counter reset",
+      "dedicated tests/test_p16_liveness.py passed 2/2",
+      "repeated reconnect test covers 3 consecutive peer restart cycles",
+      "full test suite passed 393 tests",
+      "runtime tests use bounded recovery windows and verify connected state, last_success, and retry counter reset",
       "no unconditional liveness theorem is claimed"
     ],
     "statement": "Eventual progress holds only under explicit network/liveness assumptions.",

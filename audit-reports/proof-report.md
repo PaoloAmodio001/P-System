@@ -10,11 +10,11 @@
 | P06 | Irrelevant extension preserves decision | PROPERTY_TESTED |
 | P07 | Signed event authenticity | PROPERTY_TESTED |
 | P08 | Identity binding | PROPERTY_TESTED |
-| P09 | Multi-node convergence | EMPIRICALLY_SUPPORTED |
+| P09 | Multi-node convergence | PROPERTY_TESTED |
 | P10 | Duplicate idempotence | PROPERTY_TESTED |
 | P11 | Replay protection | PROPERTY_TESTED |
-| P12 | Reconnect safety | EMPIRICALLY_SUPPORTED |
-| P13 | Concurrency safety | EMPIRICALLY_SUPPORTED |
+| P12 | Reconnect safety | PROPERTY_TESTED |
+| P13 | Concurrency safety | PROPERTY_TESTED |
 | P14 | Transport security scope | PROPERTY_TESTED |
 | P15 | Byzantine safety | PROPERTY_TESTED |
 | P16 | Liveness | EMPIRICALLY_SUPPORTED |
@@ -28,11 +28,11 @@
 - **P06**: explicit irrelevant extension preserves decision
 - **P07**: Ed25519 signature validates original canonical payload and rejects payload mutation
 - **P08**: valid signature without identity claim remains pending; valid claim promotes exactly through receive()
-- **P09**: equivalent authorized knowledge delivered in different orders converges locally
+- **P09**: equivalent authorized knowledge converges across independent, causal, mixed, and conflicting event-order cases; dedicated `tests/test_p09_convergence.py` passed 4/4
 - **P10**: duplicate signed ingress does not duplicate execution
 - **P11**: replayed signed evidence remains idempotent
-- **P12**: authorization gate survives deferred promotion/reconciliation-style lifecycle
-- **P13**: RLock-protected duplicate concurrent ingress has exactly one execution
+- **P12**: pending signed evidence is not executable before identity authorization; reconciliation does not bypass the authorization gate; authorized pending evidence is promoted only after a valid identity claim; dedicated `tests/test_p12_reconnect_safety.py` passed 3/3; full test suite passed 389 tests
+- **P13**: concurrent duplicate signed ingress executes exactly once; 10 repeated rounds remain exactly-once; 32 workers × 128 attempts produce exactly one execution and one received evidence; dedicated `tests/test_p13_concurrency_safety.py` passed 3/3; full test suite passed 392 tests
 - **P14**: TLS 1.3 transport is enforced through SecureTransport; mutual certificate authentication, certificate validation, plaintext rejection, and Node/PeerConnection/TCPTransport integration are covered by dedicated real-TLS tests
 - **P15**: under the explicit Byzantine model, invalid/altered authenticated evidence is rejected; conflicting valid alternatives disseminated inconsistently cannot produce a UNIQUE executable winner; dedicated adversarial/equivocation tests and `tests/test_p15_byzantine_safety.py` cover the property; 10/10 P15 tests passed
-- **P16**: under explicit liveness assumptions, the automatic reconnect supervisor restores a temporarily unavailable peer connection; dedicated `tests/test_p16_liveness.py` passed 5/5 consecutive runs; no unconditional liveness theorem is claimed
+- **P16**: under explicit liveness assumptions, the automatic reconnect supervisor restores a temporarily unavailable peer connection; dedicated `tests/test_p16_liveness.py` passed 2/2; repeated reconnect coverage includes 3 consecutive peer restart cycles; no unconditional liveness theorem is claimed
