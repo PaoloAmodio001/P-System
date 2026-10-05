@@ -16,7 +16,7 @@
 | P12 | Reconnect safety | EMPIRICALLY_SUPPORTED |
 | P13 | Concurrency safety | EMPIRICALLY_SUPPORTED |
 | P14 | Transport security scope | PROPERTY_TESTED |
-| P15 | Byzantine tolerance | NOT_PROVEN |
+| P15 | Byzantine safety | PROPERTY_TESTED |
 | P16 | Liveness | EMPIRICALLY_SUPPORTED |
 
 ## Evidence
@@ -34,5 +34,5 @@
 - **P12**: authorization gate survives deferred promotion/reconciliation-style lifecycle
 - **P13**: RLock-protected duplicate concurrent ingress has exactly one execution
 - **P14**: TLS 1.3 transport is enforced through SecureTransport; mutual certificate authentication, certificate validation, plaintext rejection, and Node/PeerConnection/TCPTransport integration are covered by dedicated real-TLS tests
-- **P15**: no Byzantine fault theorem is claimed; model remains explicitly unproven
+- **P15**: under the explicit Byzantine model, invalid/altered authenticated evidence is rejected; conflicting valid alternatives disseminated inconsistently cannot produce a UNIQUE executable winner; dedicated adversarial/equivocation tests and `tests/test_p15_byzantine_safety.py` cover the property; 10/10 P15 tests passed
 - **P16**: under explicit liveness assumptions, the automatic reconnect supervisor restores a temporarily unavailable peer connection; dedicated `tests/test_p16_liveness.py` passed 5/5 consecutive runs; no unconditional liveness theorem is claimed

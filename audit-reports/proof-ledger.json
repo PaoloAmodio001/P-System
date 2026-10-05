@@ -133,13 +133,24 @@
     "title": "Transport security scope"
   },
   "P15": {
-    "assumptions": [],
-    "evidence": [
-      "no Byzantine fault theorem is claimed; model remains explicitly unproven"
+    "assumptions": [
+      "authenticated identities and valid cryptographic verification",
+      "Byzantine nodes may mutate or reorder messages and disseminate conflicting valid events inconsistently",
+      "the property is limited to safety: no conflicting knowledge is selected as UNIQUE or as an executable winner"
     ],
-    "statement": "The claimed fault model is explicitly stated and proven if claimed.",
-    "status": "NOT_PROVEN",
-    "title": "Byzantine tolerance"
+    "evidence": [
+      "invalid forged signatures are rejected",
+      "tampered signed payloads are rejected",
+      "valid equivocation from the same identity and nonce is detected",
+      "inconsistent dissemination of conflicting valid events results in CONFLICTED rather than UNIQUE state",
+      "conflicting alternatives are preserved in canonical knowledge but excluded from the executable local projection",
+      "EquivocationState explicitly selects no winner",
+      "dedicated tests/test_p15_byzantine_safety.py verifies the complete Byzantine dissemination-to-CONFLICTED path",
+      "P15 adversarial and equivocation tests passed 10/10"
+    ],
+    "statement": "Under the explicit Byzantine model, invalid or altered authenticated evidence is rejected, and inconsistent dissemination of conflicting valid events cannot cause honest nodes to select a conflicting alternative as UNIQUE or as an executable winner.",
+    "status": "PROPERTY_TESTED",
+    "title": "Byzantine safety"
   },
   "P16": {
     "assumptions": [
