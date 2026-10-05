@@ -3,9 +3,17 @@ from __future__ import annotations
 import socket
 import ssl
 import threading
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+
+from network.node_tls_identity import get_node_tls_config
 
 from network.secure_transport import (
     SecureTransport,
@@ -13,16 +21,109 @@ from network.secure_transport import (
 )
 
 
-BASE = Path("/tmp/xsystem-p14-tls")
+def _create_bad_tls_config():
+    directory = Path(tempfile.mkdtemp(prefix="xsystem-p14-bad-"))
+
+    ca_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    now = datetime.now(timezone.utc)
+
+    ca_subject = x509.Name([
+        x509.NameAttribute(
+            NameOID.COMMON_NAME,
+            "X-System P14 Bad CA",
+        )
+    ])
+
+    ca_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(ca_subject)
+        .issuer_name(ca_subject)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(
+            x509.BasicConstraints(
+                ca=True,
+                path_length=None,
+            ),
+            critical=True,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    ca_path = directory / "bad-ca.crt"
+    ca_path.write_bytes(
+        ca_certificate.public_bytes(
+            serialization.Encoding.PEM
+        )
+    )
+
+    node_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    node_subject = x509.Name([
+        x509.NameAttribute(
+            NameOID.COMMON_NAME,
+            "bad-node",
+        )
+    ])
+
+    node_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(node_subject)
+        .issuer_name(ca_certificate.subject)
+        .public_key(node_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName("node-a"),
+                x509.DNSName("node-b"),
+            ]),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    key_path = directory / "bad-node.key"
+    cert_path = directory / "bad-node.crt"
+
+    key_path.write_bytes(
+        node_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+
+    cert_path.write_bytes(
+        node_certificate.public_bytes(
+            serialization.Encoding.PEM
+        )
+    )
+
+    return TLSConfig(
+        certificate=str(cert_path),
+        private_key=str(key_path),
+        ca_file=str(ca_path),
+        server_hostname="node-a",
+    )
 
 
 def cfg(node: str) -> TLSConfig:
-    return TLSConfig(
-        certificate=str(BASE / f"{node}.crt"),
-        private_key=str(BASE / f"{node}.key"),
-        ca_file=str(BASE / "ca.crt"),
-        server_hostname=node,
-    )
+    return get_node_tls_config(node)
+
+
+def bad_cfg() -> TLSConfig:
+    return _create_bad_tls_config()
 
 
 def test_mutual_tls13_real_socket():
@@ -82,12 +183,7 @@ def test_mutual_tls13_real_socket():
 def test_untrusted_client_is_rejected():
     server_context = SecureTransport.create_server_context(cfg("node-a"))
 
-    bad_client_config = TLSConfig(
-        certificate=str(BASE / "bad-node.crt"),
-        private_key=str(BASE / "bad-node.key"),
-        ca_file=str(BASE / "bad-ca.crt"),
-        server_hostname="node-a",
-    )
+    bad_client_config = bad_cfg()
 
     client_context = SecureTransport.create_client_context(
         bad_client_config
@@ -125,10 +221,11 @@ def test_untrusted_client_is_rejected():
 
 
 def test_untrusted_server_is_rejected():
+    bad_server_config = bad_cfg()
     bad_server_config = TLSConfig(
-        certificate=str(BASE / "bad-node.crt"),
-        private_key=str(BASE / "bad-node.key"),
-        ca_file=str(BASE / "bad-ca.crt"),
+        certificate=bad_server_config.certificate,
+        private_key=bad_server_config.private_key,
+        ca_file=bad_server_config.ca_file,
         server_hostname="node-b",
     )
 

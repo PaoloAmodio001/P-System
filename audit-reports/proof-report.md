@@ -17,7 +17,7 @@
 | P13 | Concurrency safety | EMPIRICALLY_SUPPORTED |
 | P14 | Transport security scope | PROPERTY_TESTED |
 | P15 | Byzantine tolerance | NOT_PROVEN |
-| P16 | Liveness | NOT_PROVEN |
+| P16 | Liveness | EMPIRICALLY_SUPPORTED |
 
 ## Evidence
 - **P01**: deterministic invalid trusted transfer does not enter executable projection
@@ -35,4 +35,4 @@
 - **P13**: RLock-protected duplicate concurrent ingress has exactly one execution
 - **P14**: TLS 1.3 transport is enforced through SecureTransport; mutual certificate authentication, certificate validation, plaintext rejection, and Node/PeerConnection/TCPTransport integration are covered by dedicated real-TLS tests
 - **P15**: no Byzantine fault theorem is claimed; model remains explicitly unproven
-- **P16**: no unconditional liveness theorem is claimed; eventual delivery is not assumed
+- **P16**: under explicit liveness assumptions, the automatic reconnect supervisor restores a temporarily unavailable peer connection; dedicated `tests/test_p16_liveness.py` passed 5/5 consecutive runs; no unconditional liveness theorem is claimed

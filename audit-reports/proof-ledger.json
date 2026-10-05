@@ -142,12 +142,21 @@
     "title": "Byzantine tolerance"
   },
   "P16": {
-    "assumptions": [],
+    "assumptions": [
+      "eventual message delivery after temporary peer unavailability",
+      "fair scheduling of the reconnect supervisor",
+      "honest peer participation after recovery"
+    ],
     "evidence": [
-      "no unconditional liveness theorem is claimed; eventual delivery is not assumed"
+      "automatic reconnect supervisor retries unavailable peers with bounded exponential backoff",
+      "reconnect succeeds automatically after temporary peer unavailability",
+      "dedicated tests/test_p16_liveness.py verifies reconnection without manual connect_peer() after peer recovery",
+      "P16 liveness test passed 5/5 consecutive runs",
+      "runtime test uses a bounded recovery window and verifies connected state, last_success, and retry counter reset",
+      "no unconditional liveness theorem is claimed"
     ],
     "statement": "Eventual progress holds only under explicit network/liveness assumptions.",
-    "status": "NOT_PROVEN",
+    "status": "EMPIRICALLY_SUPPORTED",
     "title": "Liveness"
   }
 }
