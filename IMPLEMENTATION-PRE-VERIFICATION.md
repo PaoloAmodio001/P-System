@@ -1,4 +1,4 @@
-# X-System — Implementation Pass (Pre-Verification)
+# P-System — Implementation Pass (Pre-Verification)
 
 This workspace contains the architecture implementation pass requested before the final verification phase.
 

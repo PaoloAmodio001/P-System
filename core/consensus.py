@@ -8,7 +8,7 @@ class Decision:
     """
     Risultato della distinzione tra due candidati di stato.
 
-    X-System non seleziona arbitrariamente un vincitore:
+    P-System non seleziona arbitrariamente un vincitore:
     quando due candidati validi rappresentano stati differenti,
     la decisione resta indeterminata.
     """
@@ -36,7 +36,7 @@ def distinguish(
 
     INSUFFICIENT_INFORMATION
         Entrambi i candidati sono validi ma rappresentano
-        stati differenti. X-System non introduce un vincitore
+        stati differenti. P-System non introduce un vincitore
         arbitrario.
 
     Se initial_state non viene fornito, la funzione mantiene

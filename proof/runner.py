@@ -1,7 +1,7 @@
 """Executable fundamental verification suite.
 
 The runner performs small deterministic proof obligations against the actual
-X-System implementation. It deliberately does not promote every passing
+P-System implementation. It deliberately does not promote every passing
 check to a mathematical proof: statuses reflect the strength of the evidence.
 """
 from dataclasses import dataclass
@@ -240,7 +240,7 @@ def build_initial_ledger() -> ProofLedger:
 
 
 def render(ledger: ProofLedger) -> str:
-    lines = ["X-SYSTEM FUNDAMENTAL PROOF LEDGER", "=" * 34]
+    lines = ["P-SYSTEM FUNDAMENTAL PROOF LEDGER", "=" * 34]
     for item in ledger.obligations.values():
         lines.append(f"{item.identifier}  {item.title}: {item.status.value}")
         for evidence in item.evidence:

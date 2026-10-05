@@ -9,7 +9,7 @@ from network.secure_transport import SecureTransport, TLSConfig
 
 class TCPTransport:
     """
-    Compatibility facade for the X-System network transport.
+    Compatibility facade for the P-System network transport.
 
     New connections MUST use TLS 1.3.  The framing/API remains
     compatible with the previous transport layer.

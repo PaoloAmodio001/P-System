@@ -37,7 +37,7 @@ def _create_ca(directory: Path):
     subject = x509.Name([
         x509.NameAttribute(
             NameOID.COMMON_NAME,
-            "X-System P14 Local CA",
+            "P-System P14 Local CA",
         )
     ])
 
@@ -153,7 +153,7 @@ def get_node_tls_config(node_id: str) -> TLSConfig:
         if _state is None:
             directory = Path(
                 tempfile.mkdtemp(
-                    prefix="xsystem-p14-"
+                    prefix="psystem-p14-"
                 )
             )
 

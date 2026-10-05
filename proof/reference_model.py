@@ -1,6 +1,6 @@
 """Small independent reference model.
 
-This model deliberately avoids X-System's StateDeriver, ConflictResolver and
+This model deliberately avoids P-System's StateDeriver, ConflictResolver and
 DecisionEngine.  It is intended for differential checking on finite traces.
 """
 from dataclasses import dataclass, field

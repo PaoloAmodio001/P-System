@@ -45,7 +45,7 @@ class DecisionContext:
 
 class DecisionEngine:
     """
-    Central decision engine for X-System.
+    Central decision engine for P-System.
 
     Pipeline:
 

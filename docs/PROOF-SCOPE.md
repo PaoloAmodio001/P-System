@@ -1,4 +1,4 @@
-# X-System Proof Scope
+# P-System Proof Scope
 
 The implementation distinguishes five different claims:
 

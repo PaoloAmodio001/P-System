@@ -38,7 +38,7 @@ def read_files():
 files = read_files()
 
 print("=" * 80)
-print("X-SYSTEM ARCHITECTURE STATIC AUDIT")
+print("P-SYSTEM ARCHITECTURE STATIC AUDIT")
 print("=" * 80)
 print(f"Python files scanned: {len(files)}")
 print()

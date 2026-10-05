@@ -22,7 +22,7 @@ from network.secure_transport import (
 
 
 def _create_bad_tls_config():
-    directory = Path(tempfile.mkdtemp(prefix="xsystem-p14-bad-"))
+    directory = Path(tempfile.mkdtemp(prefix="psystem-p14-bad-"))
 
     ca_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -34,7 +34,7 @@ def _create_bad_tls_config():
     ca_subject = x509.Name([
         x509.NameAttribute(
             NameOID.COMMON_NAME,
-            "X-System P14 Bad CA",
+            "P-System P14 Bad CA",
         )
     ])
 

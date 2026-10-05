@@ -5,7 +5,7 @@ from proof.ledger import ProofLedger
 
 def render_markdown(ledger: ProofLedger) -> str:
     lines = [
-        "# X-System Fundamental Proof Report",
+        "# P-System Fundamental Proof Report",
         "",
         "| ID | Property | Status |",
         "|---|---|---|",

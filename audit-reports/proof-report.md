@@ -1,4 +1,4 @@
-# X-System Fundamental Proof Report
+# P-System Fundamental Proof Report
 
 | ID | Property | Status |
 |---|---|---|

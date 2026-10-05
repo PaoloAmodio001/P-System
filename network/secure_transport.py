@@ -13,7 +13,7 @@ MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 @dataclass(frozen=True)
 class TLSConfig:
     """
-    Explicit trust configuration for X-System node transport.
+    Explicit trust configuration for P-System node transport.
 
     certificate:
         Local node certificate.
@@ -25,14 +25,14 @@ class TLSConfig:
         Trust anchor used to authenticate remote node certificates.
 
     server_hostname:
-        TLS hostname/SAN used by the client.  X-System additionally
+        TLS hostname/SAN used by the client.  P-System additionally
         verifies the node identity carried by the application handshake.
     """
 
     certificate: str
     private_key: str
     ca_file: str
-    server_hostname: str = "x-system"
+    server_hostname: str = "p-system"
 
 
 class SecureTransport:
