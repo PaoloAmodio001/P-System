@@ -1,0 +1,6 @@
+name = "PSystem"
+version = "0.1.0"
+defaultTargets = ["PSystem"]
+
+[[lean_lib]]
+name = "PSystem"

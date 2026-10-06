@@ -33,3 +33,9 @@ Thumbs.db
 
 # Local forensic / verification archives
 backups/
+
+# Lean generated build artifacts
+formal/lean/.lake/
+
+# Local Lean backup snapshots
+formal/lean/PSystem/*.before-*

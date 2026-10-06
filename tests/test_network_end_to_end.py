@@ -87,6 +87,7 @@ def test_signed_transfer_end_to_end_over_tcp():
     restored = received["event"]
 
     assert restored.transfer == transfer
+    assert restored.transfer.event_id() == transfer.event_id()
     assert restored.public_key == signed.public_key
     assert restored.signature == signed.signature
     assert restored.verify()
