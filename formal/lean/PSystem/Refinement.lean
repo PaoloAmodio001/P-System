@@ -1144,6 +1144,24 @@ theorem R1_4_exact_knowledge_membership
   · exact hrep.2
 
 /--
+R1.5 — implementation ordering represents the formal causal order.
+
+This is the abstract ordering property corresponding to the concrete
+derivation invariant: every direct causal dependency is respected.
+The concrete Python `_topological_order` implementation is expected
+to establish this invariant; the theorem below derives the full
+transitive topological-order property from it.
+-/
+def DirectOrderRepresentation
+    (formalEvents : List Event)
+    (position : Event → Nat) : Prop :=
+  ∀ a b,
+    a ∈ formalEvents →
+    b ∈ formalEvents →
+    DirectParent a b →
+    BeforeInOrder position a b
+
+/--
 R1.5 — implementation ordering represents a formal topological order.
 -/
 def OrderRepresentation
@@ -1165,13 +1183,27 @@ def TopologicalRefinement
   TopologicalOrder formalEvents position
 
 /--
-R1.5 — the concrete derivation order must respect the formal causal
-order.
+R1.5 — the concrete derivation-order obligation is the direct-parent
+ordering invariant produced by the topological derivation algorithm.
 -/
 def DerivationOrderRefinement
     (formalEvents : List Event)
     (position : Event → Nat) : Prop :=
-  OrderRepresentation [] formalEvents position
+  DirectOrderRepresentation formalEvents position
+
+/--
+R1.5 — the formal event collection is causally closed.
+
+Every direct causal predecessor of an event represented in the
+formal collection is itself represented in that collection.
+-/
+def CausallyClosedEvents
+    (formalEvents : List Event) : Prop :=
+  ∀ child,
+    child ∈ formalEvents →
+    ∀ ancestor,
+      CausalBefore ancestor child →
+      ancestor ∈ formalEvents
 
 /--
 R1.5 — a formal topological order preserves every causal dependency.
@@ -1189,16 +1221,36 @@ theorem R1_5_topological_order_refinement
   exact horder a b ha hb hcausal
 
 /--
-R1.5 — the concrete derivation order is causally valid whenever its
-position function satisfies the formal topological-order predicate.
+R1.5 — direct-parent ordering is sufficient to establish the full
+topological order because `CausalBefore` is the transitive closure
+of `DirectParent`.
 -/
+theorem R1_5_causal_membership
+    (events : List Event)
+    (hclosed : CausallyClosedEvents events)
+    (ancestor descendant : Event)
+    (hdescendant : descendant ∈ events)
+    (hcausal : CausalBefore ancestor descendant) :
+    ancestor ∈ events := by
+  exact hclosed descendant hdescendant ancestor hcausal
+
 theorem R1_5_derivation_order_is_causal
     (events : List Event)
     (position : Position)
+    (hclosed : CausallyClosedEvents events)
     (horder : DerivationOrderRefinement events position) :
     TopologicalOrder events position := by
   intro a b ha hb hcausal
-  exact horder a b ha hb hcausal
+  induction hcausal with
+  | direct hdirect =>
+      exact horder _ _ ha hb hdirect
+  | @trans a b c hab hbc ihab ihbc =>
+      have hmid : b ∈ events :=
+        R1_5_causal_membership
+          events hclosed b c hb hbc
+      exact Nat.lt_trans
+        (ihab ha hmid)
+        (ihbc hmid hb)
 
 /--
 R1.5 — a direct parent is ordered before its child.
@@ -1210,10 +1262,9 @@ theorem R1_5_direct_parent_precedes_child
     (hparent : parent ∈ events)
     (hchild : child ∈ events)
     (hdirect : DirectParent parent child)
-    (horder : TopologicalOrder events position) :
+    (horder : DerivationOrderRefinement events position) :
     position parent < position child := by
-  exact horder parent child hparent hchild
-    (CausalBefore.direct hdirect)
+  exact horder parent child hparent hchild hdirect
 
 /--
 R1.5 — causal ancestry is preserved by the implementation order.
@@ -1225,22 +1276,29 @@ theorem R1_5_causal_ancestry_precedes_descendant
     (hancestor : ancestor ∈ events)
     (hdescendant : descendant ∈ events)
     (hcausal : CausalBefore ancestor descendant)
-    (horder : TopologicalOrder events position) :
+    (hclosed : CausallyClosedEvents events)
+    (horder : DerivationOrderRefinement events position) :
     position ancestor < position descendant := by
-  exact horder ancestor descendant
+  exact R1_5_derivation_order_is_causal
+    events position hclosed horder
+    ancestor descendant
     hancestor hdescendant hcausal
 
 /--
-R1.5 — a cyclic dependency cannot be represented by a valid
-topological execution order.
+R1.5 — a valid topological order implies acyclicity.
+The acyclicity property is derived from the irreflexivity
+of the natural-number order.
 -/
-theorem R1_5_acyclicity_required_for_order
+theorem R1_5_topological_order_implies_acyclicity
     (events : List Event)
     (position : Position)
-    (hacyclic : Acyclic events)
-    (_horder : TopologicalOrder events position) :
+    (horder : TopologicalOrder events position) :
     Acyclic events := by
-  exact hacyclic
+  intro e he
+  intro hself
+  have hlt : position e < position e :=
+    horder e e he he hself
+  exact Nat.lt_irrefl _ hlt
 
 /--
 R1.6 — implementation local events represent the formal operational
