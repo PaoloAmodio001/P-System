@@ -581,10 +581,468 @@ def ExactKnowledgeRepresentation
   KnowledgeRepresentationComplete implementationEvents formalKnowledge
 
 /--
-R1.4 — soundness of implementation-to-formal knowledge representation.
-Every implementation event represented in the concrete knowledge
-has a corresponding formal event.
+R1.4.1 — knowledge representation is extensional in event membership.
+
+The concrete implementation stores knowledge as a set of events
+(`frozenset[Transfer]`). The formal representation therefore depends
+only on which events are present, not on the order in which the formal
+events are listed.
 -/
+def KnowledgeMembershipEquivalent
+    (formalA formalB : List Event) : Prop :=
+  ∀ e, e ∈ formalA ↔ e ∈ formalB
+
+/--
+R1.4.1 — equivalent formal knowledge memberships preserve
+implementation-to-formal representation.
+
+If two formal knowledge lists contain exactly the same formal events,
+then a knowledge representation valid for one is valid for the other.
+-/
+theorem R1_4_1_representation_extensional
+    (implementationEvents : List ImplEvent)
+    (formalA formalB : List Event)
+    (hrep : KnowledgeRepresentation implementationEvents formalA)
+    (heq : KnowledgeMembershipEquivalent formalA formalB) :
+    KnowledgeRepresentation implementationEvents formalB := by
+  intro i hi
+  obtain ⟨e, he, hrepresentation⟩ := hrep i hi
+  exact ⟨e, (heq e).mp he, hrepresentation⟩
+
+/--
+R1.4.1 — completeness is also extensional in formal knowledge
+membership.
+-/
+theorem R1_4_1_completeness_extensional
+    (implementationEvents : List ImplEvent)
+    (formalA formalB : List Event)
+    (hcomplete :
+      KnowledgeRepresentationComplete implementationEvents formalA)
+    (heq : KnowledgeMembershipEquivalent formalA formalB) :
+    KnowledgeRepresentationComplete implementationEvents formalB := by
+  intro e he
+  obtain ⟨i, hi, hrepresentation⟩ := hcomplete e ((heq e).mpr he)
+  exact ⟨i, hi, hrepresentation⟩
+
+/--
+R1.4.1 — exact knowledge representation is preserved by membership
+equivalence of the formal representation.
+-/
+theorem R1_4_1_exact_representation_extensional
+    (implementationEvents : List ImplEvent)
+    (formalA formalB : List Event)
+    (hrep :
+      ExactKnowledgeRepresentation implementationEvents formalA)
+    (heq : KnowledgeMembershipEquivalent formalA formalB) :
+    ExactKnowledgeRepresentation implementationEvents formalB := by
+  constructor
+  · exact R1_4_1_representation_extensional
+      implementationEvents formalA formalB hrep.1 heq
+  · exact R1_4_1_completeness_extensional
+      implementationEvents formalA formalB hrep.2 heq
+
+
+
+/--
+R1.4.2 — formal knowledge merge is represented by set union.
+
+The concrete implementation merges partial knowledge by taking the
+union of the two event sets. The formal representation therefore
+uses the corresponding membership union.
+-/
+def KnowledgeMerge
+    (formalA formalB : List Event) : List Event :=
+  formalA ++ formalB
+
+/--
+R1.4.2 — every event from either knowledge component is present
+in the merged formal knowledge.
+-/
+theorem R1_4_2_merge_membership_left
+    (formalA formalB : List Event)
+    (e : Event)
+    (he : e ∈ formalA) :
+    e ∈ KnowledgeMerge formalA formalB := by
+  exact List.mem_append.mpr (Or.inl he)
+
+/--
+R1.4.2 — every event from either knowledge component is present
+in the merged formal knowledge.
+-/
+theorem R1_4_2_merge_membership_right
+    (formalA formalB : List Event)
+    (e : Event)
+    (he : e ∈ formalB) :
+    e ∈ KnowledgeMerge formalA formalB := by
+  exact List.mem_append.mpr (Or.inr he)
+
+/--
+R1.4.2 — representation of implementation knowledge is preserved
+when the represented formal knowledge is merged with another
+formally represented knowledge set.
+-/
+theorem R1_4_2_merge_representation
+    (implementationA implementationB : List ImplEvent)
+    (formalA formalB : List Event)
+    (hrepA :
+      KnowledgeRepresentation implementationA formalA)
+    (hrepB :
+      KnowledgeRepresentation implementationB formalB) :
+    KnowledgeRepresentation
+      (implementationA ++ implementationB)
+      (KnowledgeMerge formalA formalB) := by
+  intro i hi
+  have hsource :
+      i ∈ implementationA ∨ i ∈ implementationB :=
+    List.mem_append.mp hi
+  cases hsource with
+  | inl hiA =>
+      obtain ⟨e, he, hrepresentation⟩ := hrepA i hiA
+      exact ⟨e, R1_4_2_merge_membership_left formalA formalB e he,
+        hrepresentation⟩
+  | inr hiB =>
+      obtain ⟨e, he, hrepresentation⟩ := hrepB i hiB
+      exact ⟨e, R1_4_2_merge_membership_right formalA formalB e he,
+        hrepresentation⟩
+
+/--
+R1.4.2 — if both implementation knowledge sets are completely
+represented, their merged implementation knowledge is completely
+represented by the merged formal knowledge.
+-/
+theorem R1_4_2_merge_completeness
+    (implementationA implementationB : List ImplEvent)
+    (formalA formalB : List Event)
+    (hcompleteA :
+      KnowledgeRepresentationComplete implementationA formalA)
+    (hcompleteB :
+      KnowledgeRepresentationComplete implementationB formalB) :
+    KnowledgeRepresentationComplete
+      (implementationA ++ implementationB)
+      (KnowledgeMerge formalA formalB) := by
+  intro e he
+  have hsource :
+      e ∈ formalA ∨ e ∈ formalB :=
+    List.mem_append.mp he
+  cases hsource with
+  | inl heA =>
+      obtain ⟨i, hi, hrepresentation⟩ := hcompleteA e heA
+      exact ⟨i, List.mem_append.mpr (Or.inl hi), hrepresentation⟩
+  | inr heB =>
+      obtain ⟨i, hi, hrepresentation⟩ := hcompleteB e heB
+      exact ⟨i, List.mem_append.mpr (Or.inr hi), hrepresentation⟩
+
+/--
+R1.4.2 — exact knowledge representation is preserved by merge.
+-/
+theorem R1_4_2_exact_merge_representation
+    (implementationA implementationB : List ImplEvent)
+    (formalA formalB : List Event)
+    (hrep :
+      ExactKnowledgeRepresentation implementationA formalA)
+    (hrepB :
+      ExactKnowledgeRepresentation implementationB formalB) :
+    ExactKnowledgeRepresentation
+      (implementationA ++ implementationB)
+      (KnowledgeMerge formalA formalB) := by
+  constructor
+  · exact R1_4_2_merge_representation
+      implementationA implementationB formalA formalB
+      hrep.1 hrepB.1
+  · exact R1_4_2_merge_completeness
+      implementationA implementationB formalA formalB
+      hrep.2 hrepB.2
+
+
+/--
+R1.4.3 — identity preservation.
+
+Within the represented concrete event domain, an implementation event ID
+cannot be related to two distinct formal event IDs.
+-/
+theorem R1_4_3_identity_preserved
+    (refinement : ConcreteEventIdRefinement)
+    (concreteId : String)
+    (formalA formalB : EventId)
+    (hA :
+      ConcreteIdRel refinement concreteId formalA)
+    (hB :
+      ConcreteIdRel refinement concreteId formalB) :
+    formalA = formalB := by
+  exact hA.symm.trans hB
+
+/--
+R1.4.3 — distinct represented concrete identities remain distinct
+formal identities.
+-/
+theorem R1_4_3_distinct_identities_preserved
+    (refinement : ConcreteEventIdRefinement)
+    (concreteA concreteB : String)
+    (hA : concreteA ∈ refinement.representedIds)
+    (hB : concreteB ∈ refinement.representedIds)
+    (hneq : concreteA ≠ concreteB)
+    (formalA formalB : EventId)
+    (hrelA :
+      ConcreteIdRel refinement concreteA formalA)
+    (hrelB :
+      ConcreteIdRel refinement concreteB formalB) :
+    formalA ≠ formalB := by
+  intro heq
+  apply hneq
+  exact refinement.injectiveOn concreteA concreteB hA hB
+    (hrelA.trans heq |>.trans hrelB.symm)
+
+/--
+R1.4.3 — identity preservation is compatible with event representation.
+
+If the same concrete event ID is represented twice, the corresponding
+formal event IDs are equal.
+-/
+theorem R1_4_3_event_identity_preserved
+    (refinement : ConcreteEventIdRefinement)
+    (concreteId : String)
+    (iA iB : ImplEvent)
+    (eA eB : Event)
+    (hA :
+      FullEventRepresentation
+        refinement.encode concreteId [] iA eA)
+    (hB :
+      FullEventRepresentation
+        refinement.encode concreteId [] iB eB) :
+    eA.id = eB.id := by
+  exact R1_4_3_identity_preserved
+    refinement concreteId eA.id eB.id hA.2.1 hB.2.1
+
+
+/--
+R1.4.4 — parent preservation.
+
+If a concrete event declares a concrete parent ID, its formal
+representation contains the corresponding formal parent ID.
+-/
+theorem R1_4_4_parent_preservation
+    (refinement : ConcreteEventIdRefinement)
+    (concreteId : String)
+    (concreteParents : List String)
+    (i : ImplEvent)
+    (e : Event)
+    (parentId : String)
+    (hrepresentation :
+      FullEventRepresentation
+        refinement.encode
+        concreteId
+        concreteParents
+        i
+        e)
+    (hparent :
+      parentId ∈ concreteParents) :
+    ∃ formalParent,
+      formalParent ∈ e.parents ∧
+      ConcreteIdRel refinement parentId formalParent := by
+  exact hrepresentation.2.2 parentId hparent
+
+/--
+R1.4.4 — parent preservation is stable under reconstruction of
+the same concrete event identity.
+
+If the reconstructed event has the same concrete parent IDs,
+the corresponding formal parent relation remains available.
+-/
+theorem R1_4_4_reconstructed_parent_preservation
+    (refinement : ConcreteEventIdRefinement)
+    (concreteId : String)
+    (concreteParents reconstructedParents : List String)
+    (i : ImplEvent)
+    (e : Event)
+    (hrepresentation :
+      FullEventRepresentation
+        refinement.encode
+        concreteId
+        reconstructedParents
+        i
+        e)
+    (hparents :
+      ∀ parentId,
+        parentId ∈ concreteParents →
+        parentId ∈ reconstructedParents) :
+    ∀ parentId,
+      parentId ∈ concreteParents →
+      ∃ formalParent,
+        formalParent ∈ e.parents ∧
+        ConcreteIdRel refinement parentId formalParent := by
+  intro parentId hparent
+  exact R1_4_4_parent_preservation
+    refinement
+    concreteId
+    reconstructedParents
+    i
+    e
+    parentId
+    hrepresentation
+    (hparents parentId hparent)
+
+
+/--
+R1.4.5 — causal closure of formal knowledge.
+
+A formal knowledge domain is causally closed when every direct causal
+parent of every known event is itself present in the knowledge domain.
+-/
+def CausallyClosedKnowledge
+    (formalKnowledge : List Event) : Prop :=
+  ∀ e,
+    e ∈ formalKnowledge →
+    ∀ parent,
+      DirectParent parent e →
+      parent ∈ formalKnowledge
+
+/--
+R1.4.5 — causal closure propagates along the complete causal relation.
+
+If an event belongs to a causally closed formal knowledge domain, every
+formal causal ancestor of that event also belongs to the domain.
+-/
+theorem R1_4_5_causal_ancestor_mem
+    (formalKnowledge : List Event)
+    (hclosed :
+      CausallyClosedKnowledge formalKnowledge)
+    (ancestor e : Event)
+    (he : e ∈ formalKnowledge)
+    (hcausal : CausalBefore ancestor e) :
+    ancestor ∈ formalKnowledge := by
+  induction hcausal with
+  | direct hdirect =>
+      exact hclosed _ he _ hdirect
+  | trans hab hbc ihab ihbc =>
+      exact ihab (ihbc he)
+
+theorem R1_4_5_causal_completeness
+    (implementationEvents : List ImplEvent)
+    (formalKnowledge : List Event)
+    (hcomplete :
+      KnowledgeRepresentationComplete
+        implementationEvents
+        formalKnowledge)
+    (hclosed :
+      CausallyClosedKnowledge formalKnowledge)
+    (ancestor e : Event)
+    (he : e ∈ formalKnowledge)
+    (hcausal : CausalBefore ancestor e) :
+    ∃ i, i ∈ implementationEvents ∧
+      EventRepresentation i ancestor := by
+  have hancestor :
+      ancestor ∈ formalKnowledge :=
+    R1_4_5_causal_ancestor_mem
+      formalKnowledge hclosed ancestor e he hcausal
+  exact hcomplete ancestor hancestor
+
+/--
+R1.4.5 — direct causal parents are implementation-represented under
+causal closure.
+-/
+theorem R1_4_5_direct_parent_causal_completeness
+    (implementationEvents : List ImplEvent)
+    (formalKnowledge : List Event)
+    (hcomplete :
+      KnowledgeRepresentationComplete
+        implementationEvents
+        formalKnowledge)
+    (hclosed :
+      CausallyClosedKnowledge formalKnowledge)
+    (parent e : Event)
+    (he : e ∈ formalKnowledge)
+    (hdirect : DirectParent parent e) :
+    ∃ i, i ∈ implementationEvents ∧
+      EventRepresentation i parent := by
+  have hparent :
+      parent ∈ formalKnowledge :=
+    hclosed e he parent hdirect
+  exact hcomplete parent hparent
+
+
+/--
+R1.4.6 — reconciliation preserves exact knowledge representation.
+
+If two implementation knowledge domains are exactly represented by their
+formal knowledge domains, reconciliation by knowledge merge preserves
+exact representation of the resulting knowledge domain.
+-/
+theorem R1_4_6_reconciliation_preserves_representation
+    (implementationA implementationB : List ImplEvent)
+    (formalA formalB : List Event)
+    (hA :
+      ExactKnowledgeRepresentation
+        implementationA formalA)
+    (hB :
+      ExactKnowledgeRepresentation
+        implementationB formalB) :
+    ExactKnowledgeRepresentation
+      (implementationA ++ implementationB)
+      (KnowledgeMerge formalA formalB) := by
+  exact R1_4_2_exact_merge_representation
+    implementationA implementationB formalA formalB
+    hA hB
+
+/--
+R1.4.6 — reconciliation preserves implementation membership.
+
+Every implementation event present before reconciliation remains
+represented after the merged knowledge domain is constructed.
+-/
+theorem R1_4_6_reconciliation_preserves_membership
+    (implementationA implementationB : List ImplEvent)
+    (formalA formalB : List Event)
+    (hA :
+      ExactKnowledgeRepresentation
+        implementationA formalA)
+    (hB :
+      ExactKnowledgeRepresentation
+        implementationB formalB)
+    (i : ImplEvent)
+    (hi : i ∈ implementationA ∨ i ∈ implementationB) :
+    ∃ e,
+      e ∈ KnowledgeMerge formalA formalB ∧
+      EventRepresentation i e := by
+  cases hi with
+  | inl hiA =>
+      obtain ⟨e, he, hrepresentation⟩ :=
+        hA.1 i hiA
+      exact ⟨e,
+        R1_4_2_merge_membership_left formalA formalB e he,
+        hrepresentation⟩
+  | inr hiB =>
+      obtain ⟨e, he, hrepresentation⟩ :=
+        hB.1 i hiB
+      exact ⟨e,
+        R1_4_2_merge_membership_right formalA formalB e he,
+        hrepresentation⟩
+
+/--
+R1.4.6 — reconciliation preserves formal knowledge membership.
+
+Every formal event present in either represented knowledge domain remains
+represented by an implementation event after reconciliation.
+-/
+theorem R1_4_6_reconciliation_preserves_formal_membership
+    (implementationA implementationB : List ImplEvent)
+    (formalA formalB : List Event)
+    (hA :
+      ExactKnowledgeRepresentation
+        implementationA formalA)
+    (hB :
+      ExactKnowledgeRepresentation
+        implementationB formalB)
+    (e : Event)
+    (he :
+      e ∈ KnowledgeMerge formalA formalB) :
+    ∃ i,
+      i ∈ implementationA ++ implementationB ∧
+      EventRepresentation i e := by
+  exact R1_4_2_merge_completeness
+    implementationA implementationB formalA formalB
+    hA.2 hB.2 e he
+
+
 theorem R1_4_knowledge_representation_sound
     (implementationEvents : List ImplEvent)
     (formalKnowledge : List Event)
