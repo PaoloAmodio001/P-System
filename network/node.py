@@ -490,7 +490,24 @@ class Node:
             ValueError,
         ):
             connection.close()
-            self._record_reconnect_failure(peer.node_id)
+
+            # Un tentativo concorrente fallito non deve segnare come
+            # fallito un peer che dispone già di una connessione valida.
+            with self._peer_connections_lock:
+                current = self.peer_connections.get(peer.node_id)
+
+                if current is not None and current.connected:
+                    with self._reconnect_state_lock:
+                        state = self._reconnect_state.setdefault(
+                            peer.node_id,
+                            PeerReconnectState(),
+                        )
+                        state.next_retry = (
+                            time.monotonic() + self.RECONNECT_BASE_DELAY
+                        )
+                else:
+                    self._record_reconnect_failure(peer.node_id)
+
             return False
 
         if handshake.node_id != peer.node_id:
@@ -576,17 +593,15 @@ class Node:
         return True
 
     def _peer_disconnected(self, connection) -> None:
-        disconnected_node_id = None
-
         with self._peer_connections_lock:
             for node_id, current in list(self.peer_connections.items()):
                 if current is connection:
                     self.peer_connections.pop(node_id, None)
-                    disconnected_node_id = node_id
-                    break
 
-        if disconnected_node_id is not None:
-            self._record_reconnect_failure(disconnected_node_id)
+                    # Aggiorna il backoff prima di consentire la
+                    # registrazione concorrente di una sostituzione.
+                    self._record_reconnect_failure(node_id)
+                    break
 
     def _disconnect_peer_connection(
         self,
@@ -600,9 +615,9 @@ class Node:
                 return False
 
             self.peer_connections.pop(node_id, None)
+            self._record_reconnect_failure(node_id)
 
         expected_connection.close()
-        self._record_reconnect_failure(node_id)
 
         # Conserva self.peers per consentire la riconnessione automatica.
         return True

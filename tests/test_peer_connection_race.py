@@ -87,3 +87,45 @@ def test_stale_connection_cannot_remove_replacement():
         assert replacement.connected
     finally:
         node.stop()
+
+
+def test_failed_connection_attempt_preserves_live_peer_state(monkeypatch):
+    from types import SimpleNamespace
+
+    node = Node(
+        "race-A",
+        State({"alice": 10}),
+        port=0,
+    )
+    peer_id = "race-B"
+    existing = FakeConnection(initiated_locally=False)
+    node.peer_connections[peer_id] = existing
+
+    class FailedConnection:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def connect(self, peer, tls_config):
+            raise ConnectionError("simulated concurrent connection failure")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("network.node.PeerConnection", FailedConnection)
+
+    peer = SimpleNamespace(
+        node_id=peer_id,
+        host="127.0.0.1",
+        port=12345,
+    )
+
+    try:
+        assert node.open_peer_connection(peer) is False
+        assert node.peer_connections[peer_id] is existing
+        assert existing.connected
+
+        state = node._reconnect_state[peer_id]
+        assert state.attempts == 0
+        assert state.next_retry > 0
+    finally:
+        node.stop()
