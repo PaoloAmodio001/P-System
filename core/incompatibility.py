@@ -18,4 +18,4 @@ def incompatible(first: Transfer, second: Transfer) -> bool:
     if first.nonce != second.nonce:
         return False
 
-    return first != second
+    return first.event_id() != second.event_id()

@@ -147,3 +147,34 @@ def test_tampered_signature_is_rejected():
     )
 
     assert not proof.verify()
+
+def test_reordered_parents_are_not_equivocation():
+    identity = Identity.create()
+    parent_a = Transfer("alice", "bob", 1, 0)
+    parent_b = Transfer("carol", "dave", 1, 0)
+
+    first = Transfer(
+        "eve", "frank", 1, 0,
+        parents=(parent_a.event_id(), parent_b.event_id()),
+    )
+    reordered = Transfer(
+        "eve", "frank", 1, 0,
+        parents=(parent_b.event_id(), parent_a.event_id()),
+    )
+
+    signed_first = SignedTransfer.create(identity, first)
+    signed_reordered = SignedTransfer(
+        transfer=reordered,
+        public_key=signed_first.public_key,
+        signature=signed_first.signature,
+    )
+
+    proof = EquivocationProof(
+        first=signed_first,
+        second=signed_reordered,
+    )
+
+    assert signed_first.verify()
+    assert signed_reordered.verify()
+    assert first.event_id() == reordered.event_id()
+    assert not proof.verify()

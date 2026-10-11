@@ -90,3 +90,19 @@ def test_different_amount_same_nonce_is_incompatible():
     )
 
     assert incompatible(a, b)
+
+def test_reordered_parents_are_not_incompatible():
+    parent_a = Transfer("alice", "bob", 1, 0)
+    parent_b = Transfer("carol", "dave", 1, 0)
+
+    first = Transfer(
+        "eve", "frank", 1, 0,
+        parents=(parent_a.event_id(), parent_b.event_id()),
+    )
+    reordered = Transfer(
+        "eve", "frank", 1, 0,
+        parents=(parent_b.event_id(), parent_a.event_id()),
+    )
+
+    assert first.event_id() == reordered.event_id()
+    assert not incompatible(first, reordered)

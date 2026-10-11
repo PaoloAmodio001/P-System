@@ -32,7 +32,7 @@ class EquivocationProof:
             return False
 
         # Devono essere realmente differenti.
-        if first_tx == second_tx:
+        if first_tx.event_id() == second_tx.event_id():
             return False
 
         return True

@@ -16,7 +16,7 @@ class ConflictResolver:
         if a.nonce != b.nonce:
             return False
 
-        return a != b
+        return a.event_id() != b.event_id()
 
     @staticmethod
     def compatible(events: list[Transfer]) -> bool:
