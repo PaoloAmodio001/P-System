@@ -38,3 +38,34 @@ def test_reordered_parents_keep_executed_lifecycle(request):
 
     signed_reordered = SignedTransfer.create(identity, reordered)
     assert node.signed_event_lifecycle(signed_reordered) == EventLifecycle.EXECUTED
+
+
+def test_reordered_parents_are_not_received_twice():
+    node = Node(
+        node_id="canonical-dedup-test",
+        initial_state=State({"alice": 10}),
+        port=0,
+    )
+    try:
+        parent_a = Transfer("alice", "x", 1, 0)
+        parent_b = Transfer(
+            "alice", "y", 1, 1, (parent_a.event_id(),)
+        )
+        assert node.receive(parent_a, broadcast=False)
+        assert node.receive(parent_b, broadcast=False)
+
+        parents = (parent_a.event_id(), parent_b.event_id())
+        transfer = Transfer("alice", "bob", 1, 2, parents)
+        reordered = Transfer(
+            "alice", "bob", 1, 2, tuple(reversed(parents))
+        )
+
+        assert transfer.event_id() == reordered.event_id()
+        assert node.receive(transfer, broadcast=False)
+        assert not node.receive(reordered, broadcast=False)
+        assert sum(
+            event.event_id() == transfer.event_id()
+            for event in node.events
+        ) == 1
+    finally:
+        node.stop()

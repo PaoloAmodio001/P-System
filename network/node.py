@@ -314,7 +314,7 @@ class Node:
         preserved in knowledge and conflict state, but it is NOT applied
         to the local projection. No winner is selected.
         """
-        if event in self.events:
+        if any(existing.event_id() == event.event_id() for existing in self.events):
             return False
 
         conflicting = [
