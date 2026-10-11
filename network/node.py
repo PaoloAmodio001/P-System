@@ -665,7 +665,10 @@ class Node:
             # Promotion must cross the normal execution boundary. Never
             # mutate local_events/state directly.
             accepted = self.receive(event.transfer, broadcast=False)
-            if accepted or event.transfer in self.events:
+            if accepted or any(
+                known.event_id() == event.transfer.event_id()
+                for known in self.events
+            ):
                 if event not in self.received:
                     self.received.append(event)
             changed = True

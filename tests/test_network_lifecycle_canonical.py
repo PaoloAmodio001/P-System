@@ -69,3 +69,42 @@ def test_reordered_parents_are_not_received_twice():
         ) == 1
     finally:
         node.stop()
+
+
+def test_pending_signed_reordered_transfer_is_recorded_on_retry():
+    identity, claim = identity_with_claim("alice")
+    node = Node(
+        node_id="canonical-retry-test",
+        initial_state=State({"alice": 10}),
+        port=0,
+    )
+    try:
+        parent_a = Transfer("alice", "x", 1, 0)
+        parent_b = Transfer(
+            "alice", "y", 1, 1, (parent_a.event_id(),)
+        )
+        assert node.receive(parent_a, broadcast=False)
+        assert node.receive(parent_b, broadcast=False)
+
+        parents = (parent_a.event_id(), parent_b.event_id())
+        transfer = Transfer("alice", "bob", 1, 2, parents)
+        reordered = Transfer(
+            "alice", "bob", 1, 2, tuple(reversed(parents))
+        )
+        assert transfer.event_id() == reordered.event_id()
+        assert transfer != reordered
+
+        assert node.receive(transfer, broadcast=False)
+
+        signed = SignedTransfer.create(identity, reordered)
+        assert not node.receive_signed(signed, broadcast=False)
+        assert signed in node.pending_signed_events[signed.identity_id]
+
+        assert node.register_identity_claim(claim)
+        assert not node.pending_signed_events.get(signed.identity_id)
+        assert any(
+            received.transfer.event_id() == transfer.event_id()
+            for received in node.received
+        )
+    finally:
+        node.stop()
