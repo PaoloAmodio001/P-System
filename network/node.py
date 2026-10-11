@@ -764,13 +764,16 @@ class Node:
             return EventLifecycle.PENDING_AUTHORIZATION
         if not self._verify_signed_identity(event):
             return EventLifecycle.REJECTED
-        if event.transfer in self.local_events:
+        if any(
+            local_event.event_id() == event.transfer.event_id()
+            for local_event in self.local_events
+        ):
             return EventLifecycle.EXECUTED
-        if event.transfer in self.events:
+        if any(known.event_id() == event.transfer.event_id() for known in self.events):
             if any(
                 ConflictResolver.conflicting(existing, event.transfer)
                 for existing in self.events
-                if existing != event.transfer
+                if existing.event_id() != event.transfer.event_id()
             ):
                 return EventLifecycle.CONFLICTED
             return EventLifecycle.AUTHORIZED
