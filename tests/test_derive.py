@@ -111,3 +111,85 @@ def test_topological_order_all_parents_precede_child():
 
     assert ids.index(first.event_id()) < child_position
     assert ids.index(second.event_id()) < child_position
+
+
+def test_topological_order_rejects_missing_parent():
+    event = Transfer(
+        "alice",
+        "bob",
+        3,
+        0,
+        parents=("0" * 64,),
+    )
+
+    try:
+        StateDeriver._topological_order([event])
+    except ValueError as error:
+        assert "UNKNOWN PARENT" in str(error)
+    else:
+        raise AssertionError("MISSING PARENT WAS ACCEPTED")
+
+
+def test_apply_events_rejects_missing_parent():
+    initial = State({"alice": 10, "bob": 0})
+    event = Transfer(
+        "alice",
+        "bob",
+        3,
+        0,
+        parents=("0" * 64,),
+    )
+
+    try:
+        StateDeriver.apply_events(initial, [event])
+    except ValueError as error:
+        assert "UNKNOWN PARENT" in str(error)
+    else:
+        raise AssertionError("MISSING PARENT WAS ACCEPTED")
+
+
+def test_topological_order_deduplicates_identical_events():
+    event = Transfer("alice", "bob", 3, 0)
+
+    ordered = StateDeriver._topological_order([event, event])
+
+    assert len(ordered) == 1
+    assert ordered[0] == event
+    assert ordered[0].event_id() == event.event_id()
+
+
+def test_topological_order_parent_precedes_child_for_permutations():
+    from itertools import permutations
+
+    first = Transfer("alice", "bob", 4, 0)
+    second = Transfer(
+        "bob", "carol", 3, 0,
+        parents=(first.event_id(),),
+    )
+    third = Transfer(
+        "carol", "dave", 2, 0,
+        parents=(second.event_id(),),
+    )
+    events = [first, second, third]
+
+    for permutation in permutations(events):
+        ordered = StateDeriver._topological_order(list(permutation))
+        ids = [event.event_id() for event in ordered]
+        assert len(ids) == len(set(ids)) == 3
+        assert ids.index(first.event_id()) < ids.index(second.event_id())
+        assert ids.index(second.event_id()) < ids.index(third.event_id())
+        assert ids.index(first.event_id()) < ids.index(third.event_id())
+
+
+def test_topological_order_independent_events_is_deterministic():
+    events = [
+        Transfer("alice", "bob", 1, 0),
+        Transfer("carol", "dave", 2, 0),
+        Transfer("eve", "frank", 3, 0),
+    ]
+
+    expected = sorted(event.event_id() for event in events)
+
+    for permutation in __import__("itertools").permutations(events):
+        ordered = StateDeriver._topological_order(list(permutation))
+        assert [event.event_id() for event in ordered] == expected

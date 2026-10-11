@@ -1774,4 +1774,240 @@ theorem R1_7_conflict_symmetric
   exact ⟨hsender.symm, hnonce.symm, Ne.symm hne⟩
 
 
+
+/--
+R1.6.1 — representation of a concrete event sequence.
+
+The relation is structural: every implementation event represents the
+corresponding formal event, preserving the semantic transfer fields.
+-/
+inductive EventSequenceRepresentation :
+    List ImplEvent → List Event → Prop
+  | nil :
+      EventSequenceRepresentation [] []
+  | cons
+      (i : ImplEvent)
+      (e : Event)
+      (is : List ImplEvent)
+      (es : List Event)
+      (hevent : EventRepresentation i e)
+      (htail : EventSequenceRepresentation is es) :
+      EventSequenceRepresentation (i :: is) (e :: es)
+
+/--
+R1.6.1 — executable implementation event sequence.
+
+Each event is executable against the state produced by the preceding
+implementation events.
+-/
+def ImplSequenceExecutable :
+    (balance : Identity → Nat) →
+    (nonce : Identity → Nonce) →
+    List ImplEvent →
+    Prop
+  | _, _, [] => True
+  | balance, nonce, i :: rest =>
+      ImplExecutable balance nonce i ∧
+      ImplSequenceExecutable
+        (ImplApplyBalance balance i)
+        (ImplApplyNonce nonce i)
+        rest
+
+/--
+R1.6.1 — concrete sequential state transition.
+
+This is the total-function semantic lifting of the concrete
+single-event implementation transition to an event sequence.
+-/
+def ImplApplyEvents :
+    State →
+    List ImplEvent →
+    State
+  | s, [] => s
+  | s, i :: rest =>
+      ImplApplyEvents
+        { balance := ImplApplyBalance s.balance i
+          nonce := ImplApplyNonce s.nonce i }
+        rest
+
+/--
+R1.6.1 — sequential implementation refinement.
+
+If an implementation event sequence represents a formal event
+sequence and every implementation event is executable at the state
+reached by its predecessors, then the sequential implementation
+transition represents the formal `ApplyEvents` transition.
+
+The proof is by induction over the represented event sequence and
+reuses the already established single-event theorem
+`R1_2b_state_transition_refinement`.
+-/
+theorem R1_6_1_sequence_state_transition_refinement
+    (s : State)
+    (formalState : State)
+    (implEvents : List ImplEvent)
+    (formalEvents : List Event)
+    (hstate : StateRepresentation s.balance s.nonce formalState)
+    (hrep : EventSequenceRepresentation implEvents formalEvents)
+    (hexec : ImplSequenceExecutable s.balance s.nonce implEvents) :
+    StateRepresentation
+      (ImplApplyEvents s implEvents).balance
+      (ImplApplyEvents s implEvents).nonce
+      (ApplyEvents formalState formalEvents) := by
+  revert s formalState
+  induction hrep with
+  | nil =>
+      intro s formalState hstate hexec
+      simpa [ImplApplyEvents, ApplyEvents] using hstate
+
+  | @cons i e is es hevent htail ih =>
+      intro s formalState hstate hexec
+      rcases hexec with ⟨himpl, hrest⟩
+
+      have hstep :=
+        R1_2b_state_transition_refinement
+          s.balance
+          s.nonce
+          formalState
+          i
+          e
+          hstate
+          hevent
+          himpl
+
+      have hrest_refined :=
+        ih
+          { balance := ImplApplyBalance s.balance i
+            nonce := ImplApplyNonce s.nonce i }
+          (ApplyEvent formalState e)
+          hstep
+          hrest
+
+      simpa [ImplApplyEvents, ApplyEvents] using hrest_refined
+
+
+
+/--
+R1.6.2 — a topological position function refines direct-parent order.
+
+Every direct causal dependency is respected by a topological position.
+-/
+theorem R1_6_2_direct_parent_order_refinement
+    (formalEvents : List Event)
+    (position : Position)
+    (htop : TopologicalOrder formalEvents position)
+    (parent child : Event)
+    (hparent : parent ∈ formalEvents)
+    (hchild : child ∈ formalEvents)
+    (hdirect : DirectParent parent child) :
+    position parent < position child := by
+  exact htop parent child hparent hchild (CausalBefore.direct hdirect)
+
+/--
+R1.6.2 — a topological position respects transitive causality.
+
+Every causal ancestor precedes its descendant in the represented order.
+-/
+theorem R1_6_2_causal_order_refinement
+    (formalEvents : List Event)
+    (position : Position)
+    (htop : TopologicalOrder formalEvents position)
+    (ancestor descendant : Event)
+    (hancestor : ancestor ∈ formalEvents)
+    (hdescendant : descendant ∈ formalEvents)
+    (hcausal : CausalBefore ancestor descendant) :
+    position ancestor < position descendant := by
+  exact htop ancestor descendant hancestor hdescendant hcausal
+
+/--
+R1.6.2 — a topological order is acyclic.
+
+No event can causally precede itself when its position strictly
+increases along every causal relation.
+-/
+theorem R1_6_2_topological_order_acyclic
+    (formalEvents : List Event)
+    (position : Position)
+    (htop : TopologicalOrder formalEvents position) :
+    Acyclic formalEvents := by
+  intro e he hself
+  have hlt : position e < position e :=
+    htop e e he he hself
+  exact Nat.lt_irrefl _ hlt
+
+
+/--
+R1.6.3 — direct-parent ordering invariant.
+
+This is the minimal ordering invariant required from a concrete
+topological-order implementation: every declared direct parent must
+occur strictly before its child.
+-/
+def DirectParentOrderInvariant
+    (formalEvents : List Event)
+    (position : Position) : Prop :=
+  ∀ parent child,
+    parent ∈ formalEvents →
+    child ∈ formalEvents →
+    DirectParent parent child →
+    position parent < position child
+
+/--
+R1.6.3 — the direct-parent ordering invariant implies a full
+topological order for causally closed event collections.
+
+Causal closure guarantees that every intermediate event in a
+transitive causal chain is represented in the event collection.
+-/
+theorem R1_6_3_direct_parent_invariant_implies_topological
+    (formalEvents : List Event)
+    (position : Position)
+    (hclosed : CausallyClosedKnowledge formalEvents)
+    (hinvariant :
+      DirectParentOrderInvariant formalEvents position) :
+    TopologicalOrder formalEvents position := by
+  intro a b ha hb hcausal
+  induction hcausal with
+  | direct hdirect =>
+      exact hinvariant _ _ ha hb hdirect
+
+  | @trans a b c hab hbc ihab ihbc =>
+      have hb_mem : b ∈ formalEvents :=
+        R1_4_5_causal_ancestor_mem
+          formalEvents
+          hclosed
+          b
+          c
+          hb
+          hbc
+
+      have h_ab : position a < position b :=
+        ihab ha hb_mem
+
+      have h_bc : position b < position c :=
+        ihbc hb_mem hb
+
+      exact Nat.lt_trans h_ab h_bc
+
+/--
+R1.6.3 — direct-parent ordering is sufficient for acyclicity when
+the represented event collection is causally closed.
+-/
+theorem R1_6_3_direct_parent_invariant_acyclic
+    (formalEvents : List Event)
+    (position : Position)
+    (hclosed : CausallyClosedKnowledge formalEvents)
+    (hinvariant :
+      DirectParentOrderInvariant formalEvents position) :
+    Acyclic formalEvents := by
+  exact R1_6_2_topological_order_acyclic
+    formalEvents
+    position
+    (R1_6_3_direct_parent_invariant_implies_topological
+      formalEvents
+      position
+      hclosed
+      hinvariant)
+
+
 end PSystem

@@ -1,0 +1,60 @@
+import PSystem.Refinement
+
+namespace PSystem
+
+/--
+R1.7 — An event is ready when every declared parent ID
+belongs to the set of already processed IDs.
+-/
+def R17Ready
+    (processed : List EventId)
+    (event : Event) : Prop :=
+  ∀ parentId, parentId ∈ event.parents → parentId ∈ processed
+
+/--
+R1.7 — If an event is selected as ready, every declared parent
+ID is already processed.
+-/
+theorem r17_ready_parent_processed
+    (processed : List EventId)
+    (event : Event)
+    (hready : R17Ready processed event)
+    (parentId : EventId)
+    (hparent : parentId ∈ event.parents) :
+    parentId ∈ processed := by
+  exact hready parentId hparent
+
+
+/--
+R1.7 — One abstract topological-sort step.
+
+The selected event must still be pending and every declared
+parent ID must already occur among the processed event IDs.
+The step appends the selected event to the processed sequence.
+-/
+def R17Step
+    (processed : List Event)
+    (remaining : List Event)
+    (selected : Event)
+    (processedNext : List Event)
+    (remainingNext : List Event) : Prop :=
+  selected ∈ remaining ∧
+  R17Ready (processed.map Event.id) selected ∧
+  processedNext = processed ++ [selected] ∧
+  remainingNext = remaining.filter (fun event => event.id != selected.id)
+
+/--
+R1.7 — Every parent ID of an event selected by a valid step
+belongs to the IDs in the processed sequence before the step.
+-/
+theorem r17_step_parent_precedes_append
+    (processed remaining : List Event)
+    (selected : Event)
+    (processedNext remainingNext : List Event)
+    (hstep : R17Step processed remaining selected processedNext remainingNext)
+    (parentId : EventId)
+    (hparent : parentId ∈ selected.parents) :
+    parentId ∈ processed.map Event.id := by
+  exact hstep.2.1 parentId hparent
+
+end PSystem

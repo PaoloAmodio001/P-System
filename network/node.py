@@ -543,7 +543,18 @@ class Node:
         )
         thread.start()
 
-        self._record_reconnect_success(handshake.node_id)
+        # Serializza il controllo del successo con la callback di
+        # disconnessione, che usa lo stesso lock prima di aggiornare
+        # il backoff. Non dichiarare successo se la connessione è
+        # già stata rimossa o chiusa.
+        with self._peer_connections_lock:
+            if (
+                self.peer_connections.get(handshake.node_id) is not connection
+                or not connection.connected
+            ):
+                return False
+
+            self._record_reconnect_success(handshake.node_id)
 
         return True
 

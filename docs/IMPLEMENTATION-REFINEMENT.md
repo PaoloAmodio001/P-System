@@ -152,3 +152,33 @@ Therefore the current status is:
 but:
 
 `Python implementation refinement: OPEN`
+
+## R1.7 — Causal ordering refinement
+
+Concrete implementation:
+- `core/derive.py::StateDeriver._topological_order`
+- `core/event.py::Transfer.event_id`
+- `core/resolver.py::ConflictResolver.compatible`
+
+Required concrete properties:
+1. Every declared parent ID belongs to the represented event-ID domain.
+2. Every parent precedes its child in the returned order.
+3. The order is deterministic for the same set of event IDs and dependencies.
+4. Repeated identical event IDs are deduplicated; this behavior is part of
+   the implementation contract and must be specified consistently.
+5. Conflicting transfers are rejected before state execution.
+
+Current evidence:
+- Python regression tests exercise parent ordering, transitive ordering,
+  missing-parent rejection, conflict rejection, and duplicate-ID behavior.
+- Lean proves that a direct-parent ordering invariant implies a complete
+  topological order under causal closure.
+
+Open obligation:
+- Prove that the concrete Python algorithm establishes the formal
+  direct-parent ordering invariant for all inputs admitted by the contract.
+- Establish the event-ID and parent representation relation, including
+  the represented-domain injectivity assumption.
+- Tests and Lean compilation alone do not discharge this refinement proof.
+
+Status: EMPIRICALLY TESTED; FORMAL PYTHON-TO-LEAN REFINEMENT OPEN.

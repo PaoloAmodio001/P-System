@@ -1,0 +1,196 @@
+import PSystem.Refinement
+
+namespace PSystem
+
+/--
+R1.7 — An event is ready when every declared parent ID
+belongs to the set of already processed IDs.
+-/
+def R17Ready
+    (processed : List EventId)
+    (event : Event) : Prop :=
+  ∀ parentId, parentId ∈ event.parents → parentId ∈ processed
+
+/--
+R1.7 — If an event is selected as ready, every declared parent
+ID is already processed.
+-/
+theorem r17_ready_parent_processed
+    (processed : List EventId)
+    (event : Event)
+    (hready : R17Ready processed event)
+    (parentId : EventId)
+    (hparent : parentId ∈ event.parents) :
+    parentId ∈ processed := by
+  exact hready parentId hparent
+
+
+/--
+R1.7 — One abstract topological-sort step.
+
+The selected event must still be pending and every declared
+parent ID must already occur among the processed event IDs.
+The step appends the selected event to the processed sequence.
+-/
+def R17Step
+    (processed : List Event)
+    (remaining : List Event)
+    (selected : Event)
+    (processedNext : List Event)
+    (remainingNext : List Event) : Prop :=
+  selected ∈ remaining ∧
+  R17Ready (processed.map Event.id) selected ∧
+  processedNext = processed ++ [selected] ∧
+  remainingNext = remaining.filter (fun event => event.id != selected.id)
+
+/--
+R1.7 — Every parent ID of an event selected by a valid step
+belongs to the IDs in the processed sequence before the step.
+-/
+theorem r17_step_parent_precedes_append
+    (processed remaining : List Event)
+    (selected : Event)
+    (processedNext remainingNext : List Event)
+    (hstep : R17Step processed remaining selected processedNext remainingNext)
+    (parentId : EventId)
+    (hparent : parentId ∈ selected.parents) :
+    parentId ∈ processed.map Event.id := by
+  exact hstep.2.1 parentId hparent
+
+
+inductive ValidSequence (allEvents : List Event) :
+    List Event → Prop
+  | nil : ValidSequence allEvents []
+  | append
+      {processed : List Event}
+      {event : Event}
+      (hprev : ValidSequence allEvents processed)
+      (hevent : event ∈ allEvents)
+      (hfresh :
+        ∀ old, old ∈ processed → old.id ≠ event.id)
+      (hready : R17Ready (processed.map Event.id) event) :
+      ValidSequence allEvents (processed ++ [event])
+
+theorem sequence_subset
+    (allEvents ordered : List Event)
+    (hseq : ValidSequence allEvents ordered) :
+    ∀ e, e ∈ ordered → e ∈ allEvents := by
+  induction hseq with
+  | nil =>
+      intro e he
+      simp at he
+  | @append processed event hprev hevent hfresh hready ih =>
+      intro e he
+      simp only [List.mem_append, List.mem_singleton] at he
+      rcases he with he | he
+      · exact ih e he
+      · subst e
+        exact hevent
+
+
+def BeforeInList
+    (parent child : Event)
+    (ordered : List Event) : Prop :=
+  ∃ pre post,
+    ordered = pre ++ parent :: post ∧
+    child ∈ post
+
+def UniqueEventIds (events : List Event) : Prop :=
+  ∀ a b, a ∈ events → b ∈ events → a.id = b.id → a = b
+
+theorem before_in_list_preserved_by_append
+    (ordered : List Event)
+    (parent child extra : Event)
+    (hbefore : BeforeInList parent child ordered) :
+    BeforeInList parent child (ordered ++ [extra]) := by
+  obtain ⟨pre, post, horder, hchild⟩ := hbefore
+  refine ⟨pre, post ++ [extra], ?_, ?_⟩
+  · simp [horder, List.append_assoc]
+  · simp [hchild]
+
+theorem existing_parent_precedes_appended_child
+    (processed : List Event)
+    (parent child : Event)
+    (hparent : parent ∈ processed)
+    (hchild : child ∉ processed) :
+    BeforeInList parent child (processed ++ [child]) := by
+  induction processed with
+  | nil =>
+      simp at hparent
+  | cons head tail ih =>
+      simp only [List.mem_cons] at hparent
+      simp only [List.mem_cons] at hchild
+      rcases hparent with hhead | htail
+      · subst head
+        exact ⟨[], tail ++ [child], by simp, by simp⟩
+      · obtain ⟨pre, post, horder, hchildPost⟩ :=
+          ih htail (by
+            intro hc
+            apply hchild
+            exact Or.inr hc)
+        exact ⟨head :: pre, post, by
+          simp [horder, List.cons_append], hchildPost⟩
+
+theorem parent_precedes_in_valid_sequence
+    (allEvents ordered : List Event)
+    (hseq : ValidSequence allEvents ordered)
+    (hunique : UniqueEventIds allEvents)
+    (parent child : Event)
+    (hparentAll : parent ∈ allEvents)
+    (hchildOrdered : child ∈ ordered)
+    (hdirect : DirectParent parent child) :
+    BeforeInList parent child ordered := by
+  induction hseq with
+  | nil =>
+      simp at hchildOrdered
+  | @append processed event hprev hevent hfresh hready ih =>
+      simp only [List.mem_append, List.mem_singleton] at hchildOrdered
+      rcases hchildOrdered with hchildOld | hchildNew
+      · have hbefore : BeforeInList parent child processed :=
+          ih hchildOld
+        exact before_in_list_preserved_by_append
+          processed parent child event hbefore
+      · subst child
+        have hpid : parent.id ∈ processed.map Event.id :=
+          hready parent.id hdirect
+        obtain ⟨other, hother, hid⟩ := List.mem_map.mp hpid
+        have hotherAll : other ∈ allEvents :=
+          sequence_subset allEvents processed hprev other hother
+        have heq : other = parent :=
+          hunique other parent hotherAll hparentAll hid
+        have hparentProcessed : parent ∈ processed := by
+          rw [← heq]
+          exact hother
+        have heventFresh : event ∉ processed := by
+          intro hc
+          have hne := hfresh event hc
+          exact hne rfl
+        exact existing_parent_precedes_appended_child
+          processed parent event hparentProcessed heventFresh
+
+
+/--
+R1.7 — A valid sequence contains no repeated event identifiers.
+This follows from the freshness condition required at every append.
+-/
+theorem r17_valid_sequence_unique_ids
+    (allEvents ordered : List Event)
+    (hseq : ValidSequence allEvents ordered) :
+    UniqueEventIds ordered := by
+  induction hseq with
+  | nil =>
+      intro a b ha
+      simp at ha
+  | @append processed event hprev hevent hfresh hready ih =>
+      intro a b ha hb hab
+      simp only [List.mem_append, List.mem_singleton] at ha hb
+      rcases ha with ha | ha <;>
+        rcases hb with hb | hb
+      · exact ih ha hb hab
+      · subst b
+        exact False.elim (hfresh a ha hab)
+      · subst a
+        exact False.elim (hfresh b hb hab.symm)
+      · rfl
+
+end PSystem

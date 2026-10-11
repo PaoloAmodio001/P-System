@@ -129,3 +129,60 @@ def test_failed_connection_attempt_preserves_live_peer_state(monkeypatch):
         assert state.next_retry > 0
     finally:
         node.stop()
+
+def test_immediate_disconnect_during_thread_start_is_not_success(monkeypatch):
+    from types import SimpleNamespace
+
+    import network.node as node_module
+    from network.peer import Peer
+
+    node = Node("race-A", State({"alice": 10}), port=0)
+    peer_id = "race-B"
+
+    class DisconnectedConnection:
+        def __init__(self, **kwargs):
+            self.initiated_locally = True
+            self.connected = True
+            self.on_disconnect = None
+
+        def connect(self, peer, tls_config):
+            return SimpleNamespace(
+                node_id=peer.node_id,
+                host=peer.host,
+                port=peer.port,
+            )
+
+        def close(self):
+            self.connected = False
+
+        def receive_loop(self, handler):
+            pass
+
+    class ImmediateDisconnectThread:
+        def __init__(self, target, args=(), kwargs=None, daemon=None):
+            pass
+
+        def start(self):
+            connection = node.peer_connections[peer_id]
+            connection.connected = False
+            connection.on_disconnect(connection)
+
+    peer = Peer(peer_id, "127.0.0.1", 12345)
+    node.add_peer(peer)
+
+    try:
+        monkeypatch.setattr(
+            node_module, "PeerConnection", DisconnectedConnection
+        )
+        monkeypatch.setattr(
+            node_module.threading, "Thread", ImmediateDisconnectThread
+        )
+
+        assert node.open_peer_connection(peer) is False
+        assert peer_id not in node.peer_connections
+
+        state = node._reconnect_state[peer_id]
+        assert state.attempts >= 1
+        assert state.next_retry > 0
+    finally:
+        node.stop()
