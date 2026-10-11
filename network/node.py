@@ -97,6 +97,7 @@ class Node:
         self.peer_decisions = {}
         self.peers: dict[str, Peer] = {}
         self.peer_connections: dict[str, PeerConnection] = {}
+        self._peer_connections_lock = threading.RLock()
         self.peer_announced_events: dict[str, set[str]] = {}
         self._reconnect_state: dict[str, PeerReconnectState] = {}
 
@@ -137,12 +138,12 @@ class Node:
             self._reconnect_thread.join(timeout=1.0)
             self._reconnect_thread = None
 
-        for connection in list(
-            self.peer_connections.values()
-        ):
-            connection.close()
+        with self._peer_connections_lock:
+            connections = list(self.peer_connections.values())
+            self.peer_connections.clear()
 
-        self.peer_connections.clear()
+        for connection in connections:
+            connection.close()
 
         self._server_controller.stop()
         self._server = None
@@ -162,7 +163,13 @@ class Node:
                 )
 
                 if connection is not None and connection.connected:
-                    continue
+                    prefer_outgoing = self.node_id < peer.node_id
+                    connection_is_preferred = (
+                        getattr(connection, "initiated_locally", True)
+                        == prefer_outgoing
+                    )
+                    if connection_is_preferred or not prefer_outgoing:
+                        continue
 
                 with self._reconnect_state_lock:
                     state = self._reconnect_state.setdefault(
@@ -443,7 +450,7 @@ class Node:
             OSError,
             TimeoutError,
         ):
-            self.remove_peer(peer.node_id)
+            self._disconnect_peer_connection(peer.node_id, connection)
             return False
 
         return True
@@ -453,8 +460,17 @@ class Node:
             return False
 
         existing = self.peer_connections.get(peer.node_id)
+        prefer_outgoing = self.node_id < peer.node_id
+
         if existing is not None and existing.connected:
-            return True
+            existing_is_preferred = (
+                getattr(existing, "initiated_locally", True)
+                == prefer_outgoing
+            )
+            if existing_is_preferred:
+                return True
+            if not prefer_outgoing:
+                return False
 
         connection = PeerConnection(
             node_id=self.node_id,
@@ -493,7 +509,10 @@ class Node:
             handshake.node_id,
             connection,
         ):
-            return False
+            # Una connessione concorrente può aver già registrato
+            # una connessione valida verso lo stesso peer.
+            current = self.peer_connections.get(handshake.node_id)
+            return current is not None and current.connected
 
         self.peer_announced_events.setdefault(
             handshake.node_id,
@@ -516,39 +535,84 @@ class Node:
         node_id: str,
         connection: PeerConnection,
     ) -> bool:
-        existing = self.peer_connections.get(node_id)
+        # In caso di connessioni simultanee, preferire quella
+        # iniziata dal nodo con ID lessicograficamente inferiore.
+        close_existing = None
+        reject_candidate = False
 
-        if existing is not None and existing is not connection:
-            if existing.connected:
-                connection.close()
-                return False
+        with self._peer_connections_lock:
+            existing = self.peer_connections.get(node_id)
 
-        self.peer_connections[node_id] = connection
+            if existing is connection:
+                return True
+
+            if existing is not None and existing.connected:
+                prefer_outgoing = self.node_id < node_id
+                existing_preferred = (
+                    getattr(existing, "initiated_locally", True)
+                    == prefer_outgoing
+                )
+                candidate_preferred = (
+                    getattr(connection, "initiated_locally", True)
+                    == prefer_outgoing
+                )
+
+                if existing_preferred or not candidate_preferred:
+                    reject_candidate = True
+                else:
+                    self.peer_connections[node_id] = connection
+                    close_existing = existing
+            else:
+                self.peer_connections[node_id] = connection
+                close_existing = existing
+
+        if reject_candidate:
+            connection.close()
+            return False
+
+        if close_existing is not None:
+            close_existing.close()
+
         return True
 
     def _peer_disconnected(self, connection) -> None:
-        for node_id, current in list(
-            self.peer_connections.items()
-        ):
-            if current is connection:
-                self.peer_connections.pop(
-                    node_id,
-                    None,
-                )
-                self._record_reconnect_failure(node_id)
-                return
+        disconnected_node_id = None
+
+        with self._peer_connections_lock:
+            for node_id, current in list(self.peer_connections.items()):
+                if current is connection:
+                    self.peer_connections.pop(node_id, None)
+                    disconnected_node_id = node_id
+                    break
+
+        if disconnected_node_id is not None:
+            self._record_reconnect_failure(disconnected_node_id)
+
+    def _disconnect_peer_connection(
+        self,
+        node_id: str,
+        expected_connection: PeerConnection,
+    ) -> bool:
+        # Non rimuovere una connessione sostitutiva se è fallita
+        # una vecchia connessione usata da un invio precedente.
+        with self._peer_connections_lock:
+            if self.peer_connections.get(node_id) is not expected_connection:
+                return False
+
+            self.peer_connections.pop(node_id, None)
+
+        expected_connection.close()
+        self._record_reconnect_failure(node_id)
+
+        # Conserva self.peers per consentire la riconnessione automatica.
+        return True
 
     def remove_peer(self, node_id: str) -> None:
         self.peers.pop(node_id, None)
-        self.peer_announced_events.pop(
-            node_id,
-            None,
-        )
+        self.peer_announced_events.pop(node_id, None)
 
-        connection = self.peer_connections.pop(
-            node_id,
-            None,
-        )
+        with self._peer_connections_lock:
+            connection = self.peer_connections.pop(node_id, None)
 
         if connection is not None:
             connection.close()
@@ -735,7 +799,7 @@ class Node:
                 OSError,
                 TimeoutError,
             ):
-                self.remove_peer(peer.node_id)
+                self._disconnect_peer_connection(peer.node_id, connection)
 
         self.announced_identities.add(identity_id)
 
@@ -774,7 +838,7 @@ class Node:
                 OSError,
                 TimeoutError,
             ):
-                self.remove_peer(peer.node_id)
+                self._disconnect_peer_connection(peer.node_id, connection)
 
     def state_root(self) -> str:
         return self.state.root()
@@ -842,7 +906,7 @@ class Node:
             OSError,
             TimeoutError,
         ):
-            self.remove_peer(peer.node_id)
+            self._disconnect_peer_connection(peer.node_id, connection)
             return False
 
         return True
@@ -883,7 +947,7 @@ class Node:
             OSError,
             TimeoutError,
         ):
-            self.remove_peer(peer.node_id)
+            self._disconnect_peer_connection(peer.node_id, connection)
 
     def send_decision_context(self, peer) -> None:
         if not self.open_peer_connection(peer):
@@ -907,7 +971,7 @@ class Node:
             OSError,
             TimeoutError,
         ):
-            self.remove_peer(peer.node_id)
+            self._disconnect_peer_connection(peer.node_id, connection)
 
     def merge_events(self, events, broadcast: bool = True):
         changed = False

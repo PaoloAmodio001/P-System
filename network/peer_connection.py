@@ -21,6 +21,7 @@ class PeerConnection:
         self.remote_handshake = None
         self.tls_config = None
         self.on_disconnect = None
+        self.initiated_locally = True
 
     @property
     def connected(self) -> bool:
@@ -90,6 +91,7 @@ class PeerConnection:
 
         peer_connection.connection = connection
         peer_connection.remote_handshake = handshake
+        peer_connection.initiated_locally = False
 
         return peer_connection
 

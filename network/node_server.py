@@ -25,6 +25,7 @@ class NodeServer:
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind((self.node.host, self.node.port))
         self.server.listen()
+        self.server.settimeout(0.2)
 
         self.node.port = self.server.getsockname()[1]
         self.running = True
@@ -54,6 +55,8 @@ class NodeServer:
         while self.running:
             try:
                 connection, _ = self.server.accept()
+            except socket.timeout:
+                continue
             except OSError:
                 break
 
