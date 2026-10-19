@@ -8,6 +8,11 @@ import threading
 import time
 import uuid
 from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import psutil
@@ -99,6 +104,12 @@ def main():
                 errors.append(f"risposta non valida al messaggio {i}")
                 continue
             latencies.append(elapsed)
+            elapsed_total = max(time.perf_counter() - wall_start, 1e-9)
+            print(
+                f"LIVE throughput={len(latencies) / elapsed_total:.3f} "
+                f"LIVE latency_ms={elapsed * 1000:.3f}",
+                flush=True,
+            )
             app_bytes += len(json.dumps(msg, separators=(",", ":"), sort_keys=True).encode())
             app_bytes += len(json.dumps(reply, separators=(",", ":"), sort_keys=True).encode())
     except Exception as exc:

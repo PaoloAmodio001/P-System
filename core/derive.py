@@ -1,50 +1,55 @@
 from core.state import State
-from core.event import Transfer
+from core.event import Transfer, deduplicate_events
 from core.resolver import ConflictResolver
 
 
 class StateDeriver:
     @staticmethod
     def _topological_order(events: list[Transfer]) -> list[Transfer]:
+        import heapq
+
+        unique_events = deduplicate_events(events)
         by_id = {
             event.event_id(): event
-            for event in events
+            for event in unique_events
         }
 
-        for event in events:
-            for parent in event.parents:
-                if parent not in by_id:
-                    raise ValueError(
-                        f"UNKNOWN PARENT: {parent}"
-                    )
+        parents_by_id = {}
+        children = {event_id: [] for event_id in by_id}
+        indegree = {}
+
+        for event_id, event in by_id.items():
+            parent_ids = set(event.parents)
+            unknown = parent_ids - by_id.keys()
+            if unknown:
+                parent = min(unknown)
+                raise ValueError(f"UNKNOWN PARENT: {parent}")
+
+            parents_by_id[event_id] = parent_ids
+            indegree[event_id] = len(parent_ids)
+
+            for parent_id in parent_ids:
+                children[parent_id].append(event_id)
+
+        ready = [
+            event_id
+            for event_id, degree in indegree.items()
+            if degree == 0
+        ]
+        heapq.heapify(ready)
 
         result = []
-        remaining = set(by_id)
+        while ready:
+            event_id = heapq.heappop(ready)
+            result.append(by_id[event_id])
 
-        while remaining:
-            ready = []
+            for child_id in children[event_id]:
+                indegree[child_id] -= 1
+                if indegree[child_id] == 0:
+                    heapq.heappush(ready, child_id)
 
-            for event_id in remaining:
-                event = by_id[event_id]
-
-                if all(
-                    parent not in remaining
-                    for parent in event.parents
-                ):
-                    ready.append(event)
-
-            if not ready:
-                raise ValueError(
-                    "CYCLIC EVENT DEPENDENCY"
-                )
-
-            ready.sort(
-                key=lambda event: event.event_id()
-            )
-
-            for event in ready:
-                result.append(event)
-                remaining.remove(event.event_id())
+        if len(result) != len(by_id):
+            raise ValueError("CYCLIC EVENT DEPENDENCY")
 
         return result
 

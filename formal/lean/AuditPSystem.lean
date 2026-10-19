@@ -1,0 +1,169 @@
+import PSystem.P01
+import PSystem.P02
+import PSystem.P03
+import PSystem.P04
+import PSystem.P05
+import PSystem.P06
+import PSystem.P07
+import PSystem.P08
+import PSystem.P09
+import PSystem.P10
+import PSystem.P11
+import PSystem.P12
+import PSystem.P13
+import PSystem.P14
+import PSystem.P15
+import PSystem.P16
+import PSystem.R17Topological
+import PSystem.R17Completeness
+import PSystem.R17Constructive
+
+#check PSystem.P01_invalid_transfer_preserves_state
+#print axioms PSystem.P01_invalid_transfer_preserves_state
+#check PSystem.P01_executable_transfer_applies
+#print axioms PSystem.P01_executable_transfer_applies
+#check PSystem.P02_causal_dependencies_preserved
+#print axioms PSystem.P02_causal_dependencies_preserved
+#check PSystem.P02_direct_parent_is_causal
+#print axioms PSystem.P02_direct_parent_is_causal
+#check PSystem.P02_causal_transitivity
+#print axioms PSystem.P02_causal_transitivity
+#check PSystem.P03_conflict_excludes_compatibility
+#print axioms PSystem.P03_conflict_excludes_compatibility
+#check PSystem.P03_compatible_pair_not_conflict
+#print axioms PSystem.P03_compatible_pair_not_conflict
+#check PSystem.P04_independence_preserves_executability
+#print axioms PSystem.P04_independence_preserves_executability
+#check PSystem.P04_independent_events_commute
+#print axioms PSystem.P04_independent_events_commute
+#check PSystem.P04_independent_list_reordering
+#print axioms PSystem.P04_independent_list_reordering
+#check PSystem.P05_relevant_knowledge_determines_decision
+#print axioms PSystem.P05_relevant_knowledge_determines_decision
+#check PSystem.P05_open_boundary_blocks_closure
+#print axioms PSystem.P05_open_boundary_blocks_closure
+#check PSystem.P06_irrelevant_extension_preserves_relevant_projection
+#print axioms PSystem.P06_irrelevant_extension_preserves_relevant_projection
+#check PSystem.P06_irrelevant_extension_preserves_decision
+#print axioms PSystem.P06_irrelevant_extension_preserves_decision
+#check PSystem.P07_tampered_payload_rejected
+#print axioms PSystem.P07_tampered_payload_rejected
+#check PSystem.P07_valid_signature_binds_payload
+#print axioms PSystem.P07_valid_signature_binds_payload
+#check PSystem.P08_signature_without_identity_binding_not_authorized
+#print axioms PSystem.P08_signature_without_identity_binding_not_authorized
+#check PSystem.P08_authorized_implies_identity_binding
+#print axioms PSystem.P08_authorized_implies_identity_binding
+#check PSystem.P09_multi_node_convergence
+#print axioms PSystem.P09_multi_node_convergence
+#check PSystem.P10_duplicate_rejected
+#print axioms PSystem.P10_duplicate_rejected
+#check PSystem.P10_fresh_ingress_extends_knowledge
+#print axioms PSystem.P10_fresh_ingress_extends_knowledge
+#check PSystem.P11_replay_is_not_fresh_execution
+#print axioms PSystem.P11_replay_is_not_fresh_execution
+#check PSystem.P11_execution_history_replay_invariant
+#print axioms PSystem.P11_execution_history_replay_invariant
+#check PSystem.P12_unauthorized_promotion_preserves_state
+#print axioms PSystem.P12_unauthorized_promotion_preserves_state
+#check PSystem.P12_authorized_promotion_applies
+#print axioms PSystem.P12_authorized_promotion_applies
+#check PSystem.P13_concurrent_ingress_linearizes
+#print axioms PSystem.P13_concurrent_ingress_linearizes
+#check PSystem.P13_independent_linearizations_are_deterministic
+#print axioms PSystem.P13_independent_linearizations_are_deterministic
+#check PSystem.P13_duplicate_ingress_is_not_fresh
+#print axioms PSystem.P13_duplicate_ingress_is_not_fresh
+#check PSystem.P14_secure_transport_boundary
+#print axioms PSystem.P14_secure_transport_boundary
+#check PSystem.P14_missing_transport_property_rejected
+#print axioms PSystem.P14_missing_transport_property_rejected
+#check PSystem.P15_equivocation_is_conflict
+#print axioms PSystem.P15_equivocation_is_conflict
+#check PSystem.P15_conflict_excludes_joint_execution
+#print axioms PSystem.P15_conflict_excludes_joint_execution
+#check PSystem.P15_conflict_not_jointly_executable
+#print axioms PSystem.P15_conflict_not_jointly_executable
+#check PSystem.P15_conflict_evidence_preserves_conflict
+#print axioms PSystem.P15_conflict_evidence_preserves_conflict
+#check PSystem.P15_conflict_evidence_alternatives_distinct
+#print axioms PSystem.P15_conflict_evidence_alternatives_distinct
+#check PSystem.P15_first_is_winner_candidate
+#print axioms PSystem.P15_first_is_winner_candidate
+#check PSystem.P15_second_is_winner_candidate
+#print axioms PSystem.P15_second_is_winner_candidate
+#check PSystem.P15_no_unique_winner_from_conflict_evidence
+#print axioms PSystem.P15_no_unique_winner_from_conflict_evidence
+#check PSystem.P15_conflict_evidence_excludes_joint_execution
+#print axioms PSystem.P15_conflict_evidence_excludes_joint_execution
+#check PSystem.P16_backoff_bounded
+#print axioms PSystem.P16_backoff_bounded
+#check PSystem.P16_backoff_initial
+#print axioms PSystem.P16_backoff_initial
+#check PSystem.P16_backoff_positive
+#print axioms PSystem.P16_backoff_positive
+#check PSystem.P16_success_resets_retry_state
+#print axioms PSystem.P16_success_resets_retry_state
+#check PSystem.P16_retry_is_scheduled_later
+#print axioms PSystem.P16_retry_is_scheduled_later
+#check PSystem.P16_retryTime_succ
+#print axioms PSystem.P16_retryTime_succ
+#check PSystem.P16_retryTime_strictly_increasing
+#print axioms PSystem.P16_retryTime_strictly_increasing
+#check PSystem.P16_retryTime_ge_index
+#print axioms PSystem.P16_retryTime_ge_index
+#check PSystem.P16_eventual_retry_hits_stable_availability
+#print axioms PSystem.P16_eventual_retry_hits_stable_availability
+#check PSystem.P16_conditional_eventual_reconnection
+#print axioms PSystem.P16_conditional_eventual_reconnection
+#check PSystem.P16_no_unconditional_liveness
+#print axioms PSystem.P16_no_unconditional_liveness
+#check PSystem.r17_ready_parent_processed
+#print axioms PSystem.r17_ready_parent_processed
+#check PSystem.r17_step_parent_precedes_append
+#print axioms PSystem.r17_step_parent_precedes_append
+#check PSystem.sequence_subset
+#print axioms PSystem.sequence_subset
+#check PSystem.before_in_list_preserved_by_append
+#print axioms PSystem.before_in_list_preserved_by_append
+#check PSystem.existing_parent_precedes_appended_child
+#print axioms PSystem.existing_parent_precedes_appended_child
+#check PSystem.parent_precedes_in_valid_sequence
+#print axioms PSystem.parent_precedes_in_valid_sequence
+#check PSystem.r17_valid_sequence_unique_ids
+#print axioms PSystem.r17_valid_sequence_unique_ids
+#check PSystem.r17_complete_membership
+#print axioms PSystem.r17_complete_membership
+#check PSystem.r17_constructive_sequence_subset
+#print axioms PSystem.r17_constructive_sequence_subset
+#check PSystem.r17_constructive_unique_ids
+#print axioms PSystem.r17_constructive_unique_ids
+#check PSystem.r17_ready_iff_no_remaining_parent
+#print axioms PSystem.r17_ready_iff_no_remaining_parent
+#check PSystem.r17_not_ready_has_remaining_parent
+#print axioms PSystem.r17_not_ready_has_remaining_parent
+#check PSystem.r17_no_ready_implies_remaining_parent
+#print axioms PSystem.r17_no_ready_implies_remaining_parent
+#check PSystem.r17_exists_causally_minimal
+#print axioms PSystem.r17_exists_causally_minimal
+#check PSystem.r17_exists_ready_event
+#print axioms PSystem.r17_exists_ready_event
+#check PSystem.r17_ready_parents_in_processed
+#print axioms PSystem.r17_ready_parents_in_processed
+#check PSystem.r17_filter_preserves_partition
+#print axioms PSystem.r17_filter_preserves_partition
+#check PSystem.r17_filter_preserves_disjoint_ids
+#print axioms PSystem.r17_filter_preserves_disjoint_ids
+#check PSystem.r17_selected_disjoint_filtered_remainder
+#print axioms PSystem.r17_selected_disjoint_filtered_remainder
+#check PSystem.r17_filter_length_lt_of_rejected
+#print axioms PSystem.r17_filter_length_lt_of_rejected
+#check PSystem.r17_filter_selected_length_lt
+#print axioms PSystem.r17_filter_selected_length_lt
+#check PSystem.r17_constructive_extend
+#print axioms PSystem.r17_constructive_extend
+#check PSystem.r17_constructive_complete_ordering
+#print axioms PSystem.r17_constructive_complete_ordering
+#check PSystem.r17_resolved_parent_is_direct
+#print axioms PSystem.r17_resolved_parent_is_direct
+#print axioms PSystem.r17_constructive_complete_ordering

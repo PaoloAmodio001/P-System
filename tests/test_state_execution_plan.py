@@ -171,3 +171,15 @@ def test_many_independent_events_are_all_parallel():
     assert len(plan.parallel) == 6
     assert not plan.ordered
     assert not plan.conflicts
+
+def test_state_execution_plan_deduplicates_identical_events():
+    from core.state_execution_plan import build_state_execution_plan
+
+    first = Transfer("alice", "bob", 3, 0)
+    plan = build_state_execution_plan(State(), [first, first])
+
+    assert plan.parallel_execution is not None
+    assert plan.parallel_execution.event_ids == (first.event_id(),)
+    assert plan.parallel == ()
+    assert not plan.ordered
+    assert not plan.conflicts

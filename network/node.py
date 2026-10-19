@@ -2,7 +2,7 @@ import socket
 import threading
 import time
 
-from core.event import Transfer
+from core.event import Transfer, deduplicate_events, event_payload
 from core.proof import apply_transfer, verify_transfer
 from core.conflict_state import ConflictState
 from core.resolver import ConflictResolver
@@ -17,6 +17,7 @@ from core.equivocation_state import EquivocationState
 from core.event_lifecycle import EventLifecycle
 from core.state import State
 from core.derive import StateDeriver
+from core.verifiable_view import build_verifiable_view
 from network.message import (
     decode_signed_transfer,
     encode_signed_transfer,
@@ -218,64 +219,77 @@ class Node:
     def _rebuild_local_projection(self):
         """
         Rebuild the operational projection from canonical knowledge.
-
-        self.events is the source of truth for what this node knows.
-
-        Only events whose complete causal ancestry is known and whose
-        execution is compatible with the local projection are included
-        in self.local_events.
-
-        Conflicting alternatives are never resolved by choosing a winner.
-        They remain in knowledge/conflict state.
+        Preserve executed conflict participants and causal dependencies.
         """
+        unique_events = deduplicate_events(self.events)
+
+        # Calcola e riutilizza gli ID durante questa ricostruzione.
+        event_id_by_obj = {
+            id(event): event.event_id()
+            for event in unique_events
+        }
         known = {
-            event.event_id(): event
-            for event in self.events
+            event_id_by_obj[id(event)]: event
+            for event in unique_events
+        }
+        parent_ids_by_obj = {
+            id(event): set(event.parents)
+            for event in unique_events
         }
 
-        # First identify explicit conflicts.
+        # Dopo deduplicate_events(), l'integrità degli ID è già verificata.
+        # Eventi con mittente o nonce differenti non possono confliggere.
+        groups = {}
+        for event in unique_events:
+            key = (event.sender, event.nonce)
+            groups.setdefault(key, []).append(event)
+
         conflicting_ids = set()
+        for group in groups.values():
+            for index, first in enumerate(group):
+                for second in group[index + 1:]:
+                    if ConflictResolver.conflicting(first, second):
+                        conflicting_ids.add(event_id_by_obj[id(first)])
+                        conflicting_ids.add(event_id_by_obj[id(second)])
 
-        for first_index, first in enumerate(self.events):
-            for second in self.events[first_index + 1:]:
-                if ConflictResolver.conflicting(first, second):
-                    conflicting_ids.add(first.event_id())
-                    conflicting_ids.add(second.event_id())
+        previously_executed_ids = {
+            event.event_id()
+            for event in self.local_events
+        }
+        retained_conflict_ids = (
+            conflicting_ids & previously_executed_ids
+        )
 
-        # Events participating in conflicts are never selected into the
-        # executable local projection.
         candidates = [
             event
-            for event in self.events
-            if event.event_id() not in conflicting_ids
+            for event in unique_events
+            if (
+                event_id_by_obj[id(event)] not in conflicting_ids
+                or event_id_by_obj[id(event)] in retained_conflict_ids
+            )
         ]
 
-        # Iteratively select events whose complete causal ancestry is
-        # available and whose addition keeps the projection valid.
         selected = []
+        selected_ids = set()
 
         changed = True
         while changed:
             changed = False
 
             for event in candidates:
-                if event in selected:
+                event_id = event_id_by_obj[id(event)]
+
+                if event_id in selected_ids:
                     continue
 
-                selected_ids = {
-                    item.event_id()
-                    for item in selected
-                }
+                parent_ids = parent_ids_by_obj[id(event)]
 
-                if not set(event.parents).issubset(
-                    known.keys()
-                ):
+                if not parent_ids.issubset(known.keys()):
                     continue
 
-                # Every causal parent must itself be executable in the
-                # local projection. This prevents a child from bypassing
-                # an unresolved parent.
-                if not set(event.parents).issubset(selected_ids):
+                # Un evento è eseguibile solo se tutti i genitori
+                # causali sono già inclusi nella proiezione.
+                if not parent_ids.issubset(selected_ids):
                     continue
 
                 candidate = selected + [event]
@@ -289,10 +303,10 @@ class Node:
                     continue
 
                 selected.append(event)
+                selected_ids.add(event_id)
                 changed = True
 
         self.local_events = selected
-
         self.state = StateDeriver.apply_events(
             self._initial_state,
             list(self.local_events),
@@ -314,7 +328,11 @@ class Node:
         preserved in knowledge and conflict state, but it is NOT applied
         to the local projection. No winner is selected.
         """
-        if any(existing.event_id() == event.event_id() for existing in self.events):
+        for existing in self.events:
+            if existing.event_id() != event.event_id():
+                continue
+            if event_payload(existing) != event_payload(event):
+                raise ValueError("DUPLICATE EVENT ID WITH DIFFERENT CONTENT")
             return False
 
         conflicting = [
@@ -787,15 +805,14 @@ class Node:
         connection,
     ) -> None:
         for claim in list(self.identities.values()):
-            SecureTransport.send(
-                connection,
+            connection.send(
                 {
                     "type": "IDENTITY_CLAIM",
                     "identity_id": claim.identity_id,
                     "alias": claim.alias,
                     "public_key": claim.public_key.hex(),
                     "signature": claim.signature.hex(),
-                },
+                }
             )
 
     def broadcast_identity_claim(
@@ -871,6 +888,15 @@ class Node:
                 TimeoutError,
             ):
                 self._disconnect_peer_connection(peer.node_id, connection)
+
+    def canonical_view(self):
+        """Return a deterministic view of all events known by this node."""
+        canonical_events = deduplicate_events(self.events)
+        canonical_events.sort(key=lambda event: event.event_id())
+        return build_verifiable_view(
+            self._initial_state,
+            canonical_events,
+        )
 
     def state_root(self) -> str:
         return self.state.root()

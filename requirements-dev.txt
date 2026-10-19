@@ -1,0 +1,3 @@
+# Sviluppo e test
+-r requirements-optional.txt
+pytest

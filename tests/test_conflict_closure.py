@@ -144,3 +144,31 @@ def test_conflict_closure_does_not_choose_winner():
     assert first.event_id() in closure.event_ids
     assert second.event_id() in closure.event_ids
     assert len(closure.conflicts) == 1
+
+def test_conflict_scan_rejects_same_id_with_different_payload():
+    class ForcedIdEvent:
+        def __init__(self, receiver, amount):
+            self.sender = "alice"
+            self.receiver = receiver
+            self.amount = amount
+            self.nonce = 0
+            self.parents = ()
+
+        def event_id(self):
+            return "a" * 64
+
+        def canonical(self):
+            return (
+                f"{self.sender}|{self.receiver}|{self.amount}|"
+                f"{self.nonce}|{self.parents}"
+            ).encode()
+
+    first = ForcedIdEvent("bob", 3)
+    second = ForcedIdEvent("carol", 4)
+
+    try:
+        find_conflicts([first, second])
+    except ValueError as exc:
+        assert str(exc) == "DUPLICATE EVENT ID WITH DIFFERENT CONTENT"
+    else:
+        raise AssertionError("La scansione dei conflitti ha accettato ID ambiguo")

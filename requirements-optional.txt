@@ -1,0 +1,4 @@
+# Dashboard e benchmark
+-r requirements.txt
+psutil
+matplotlib

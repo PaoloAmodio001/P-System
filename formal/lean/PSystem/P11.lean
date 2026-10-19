@@ -2,26 +2,12 @@ import PSystem.Basic
 
 namespace PSystem
 
-/--
-Execution knowledge records events that have already been applied.
--/
-def Executed
-    (event : Event)
-    (events : List Event) : Prop :=
+def Executed (event : Event) (events : List Event) : Prop :=
   event ∈ events
 
-/--
-A replay is an ingress of evidence for an event that has already
-been executed.
--/
-def Replay
-    (event : Event)
-    (executed : List Event) : Prop :=
+def Replay (event : Event) (executed : List Event) : Prop :=
   Executed event executed
 
-/--
-P11 — Replay is not a new executable event.
--/
 theorem P11_replay_is_not_fresh_execution
     (event : Event)
     (executed : List Event)
@@ -29,14 +15,53 @@ theorem P11_replay_is_not_fresh_execution
     ¬ (¬ Executed event executed) := by
   exact fun h_not_executed => h_not_executed h_replay
 
+/-- Operational state coupled with its execution history. -/
+structure ExecutionLedger where
+  state : State
+  executed : List Event
+
+/-- Executability can be decided from the concrete state and event. -/
+def executableDecidable
+    (s : State)
+    (e : Event) :
+    Decidable (Executable s e) := by
+  unfold Executable
+  infer_instance
+
 /--
-Reapplying the same execution history is observationally idempotent.
+Apply an event at most once. Previously executed events are ignored.
+New events are applied only when executable.
+-/
+def ApplyOnce
+    (ledger : ExecutionLedger)
+    (event : Event) : ExecutionLedger := by
+  letI : Decidable (Executable ledger.state event) :=
+    executableDecidable ledger.state event
+  exact
+    if event ∈ ledger.executed then
+      ledger
+    else if Executable ledger.state event then
+      { state := ApplyEvent ledger.state event
+        executed := event :: ledger.executed }
+    else
+      ledger
+
+/--
+P11: replaying an event already in the ledger preserves the
+entire ledger, including state and execution history.
 -/
 theorem P11_execution_history_replay_invariant
-    (s : State)
-    (executed : List Event) :
-    ApplyEvents s executed =
-      ApplyEvents s executed := by
-  rfl
+    (ledger : ExecutionLedger)
+    (event : Event)
+    (h_replay : event ∈ ledger.executed) :
+    ApplyOnce ledger event = ledger := by
+  simp [ApplyOnce, h_replay]
+
+theorem P11_replay_preserves_history
+    (ledger : ExecutionLedger)
+    (event : Event)
+    (h_replay : event ∈ ledger.executed) :
+    (ApplyOnce ledger event).executed = ledger.executed := by
+  simp [ApplyOnce, h_replay]
 
 end PSystem

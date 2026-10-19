@@ -66,6 +66,10 @@ class PeerConnection:
             if handshake.node_id == self.node_id:
                 raise ValueError("INVALID PEER IDENTITY")
 
+            # Il timeout breve serve solo per stabilire la connessione.
+            # La connessione TLS persistente deve poter restare inattiva.
+            connection.settimeout(None)
+
             self.connection = connection
             self.remote_handshake = handshake
             self.tls_config = tls_config
@@ -119,24 +123,39 @@ class PeerConnection:
         while self.connected:
             try:
                 message = self.receive()
-            except (
-                ConnectionError,
-                OSError,
-                TimeoutError,
-            ):
-                self.close()
-                if self.on_disconnect is not None:
-                    self.on_disconnect(self)
+            except (ConnectionError, OSError, TimeoutError):
+                self._close_and_notify()
                 return
 
-            handler(message, self)
+            try:
+                handler(message, self)
+            except (ValueError, KeyError, TypeError, IndexError):
+                self._close_and_notify()
+                return
+            except Exception:
+                self._close_and_notify()
+                raise
+
+    def _close_and_notify(self) -> None:
+        self.close()
+        callback = self.on_disconnect
+        if callback is not None:
+            callback(self)
 
     def close(self) -> None:
         if self.connection is None:
             return
 
+        connection = self.connection
         try:
-            self.connection.close()
+            # Interrompe anche eventuali recv bloccanti in altri thread.
+            shutdown = getattr(connection, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            connection.close()
         finally:
             self.connection = None
             self.remote_handshake = None

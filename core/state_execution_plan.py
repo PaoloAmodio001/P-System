@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from core.event import Transfer
+from core.event import Transfer, deduplicate_events
 from core.state import State
 from core.execution_index import ExecutionIndex
 from core.parallel_execution import ParallelExecution
@@ -42,6 +42,7 @@ def build_state_execution_plan(
     initial: State,
     events: list[Transfer],
 ) -> StateExecutionPlan:
+    events = deduplicate_events(events)
     parallel = []
     ordered = []
     conflicts = []

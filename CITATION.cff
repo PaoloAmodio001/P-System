@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "Please cite P-System if you use this software in your research."
+title: "P-System: Deterministic Event Processing for Distributed Systems"
+authors:
+  - family-names: "Amodio"
+    given-names: "Paolo"
+version: "0.1.0"
+license: "Apache-2.0"
+type: software
+abstract: >-
+  Experimental Python implementation and Lean 4 formal model exploring
+  deterministic event processing, causal ordering, canonical event
+  identity, conflict handling, and local state projection in distributed
+  systems.
+keywords:
+  - distributed systems
+  - event processing
+  - formal verification
+  - Lean 4
+  - causal ordering

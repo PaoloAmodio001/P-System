@@ -106,3 +106,14 @@ def test_execution_plan_contains_implicit_parallel_execution():
         event.event_id()
         for event in events
     )
+
+def test_execution_plan_deduplicates_identical_events():
+    first = Transfer("alice", "bob", 3, 0)
+    plan = build_execution_plan(State(), [first, first])
+
+    assert plan.parallel_execution is not None
+    assert plan.parallel_execution.event_ids == (first.event_id(),)
+    assert plan.parallel == ()
+    assert plan.parallel_event_count == 1
+    assert not plan.ordered
+    assert not plan.conflicts

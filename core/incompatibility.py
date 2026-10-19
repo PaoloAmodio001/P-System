@@ -1,21 +1,25 @@
-from core.event import Transfer
+from core.event import Transfer, event_payload
 
 
 def incompatible(first: Transfer, second: Transfer) -> bool:
     """
     Determina se due transfer sono intrinsecamente incompatibili.
 
-    Due eventi sono incompatibili quando:
-    - appartengono allo stesso sender;
-    - usano lo stesso nonce;
-    - sono eventi differenti.
-
-    Non determina quale evento sia corretto.
+    Eventi con lo stesso ID devono avere lo stesso contenuto canonico.
+    Un ID riutilizzato per contenuti differenti è un errore di integrità.
     """
+    first_id = first.event_id()
+    second_id = second.event_id()
+
+    if first_id == second_id:
+        if event_payload(first) != event_payload(second):
+            raise ValueError("DUPLICATE EVENT ID WITH DIFFERENT CONTENT")
+        return False
+
     if first.sender != second.sender:
         return False
 
     if first.nonce != second.nonce:
         return False
 
-    return first.event_id() != second.event_id()
+    return True

@@ -193,3 +193,62 @@ def test_topological_order_independent_events_is_deterministic():
     for permutation in __import__("itertools").permutations(events):
         ordered = StateDeriver._topological_order(list(permutation))
         assert [event.event_id() for event in ordered] == expected
+
+
+
+def test_topological_order_rejects_cycle():
+    class FixedIdEvent:
+        def __init__(self, identifier, parents):
+            self.identifier = identifier
+            self.parents = parents
+
+        def event_id(self):
+            return self.identifier
+
+    first = FixedIdEvent("first", ("second",))
+    second = FixedIdEvent("second", ("first",))
+
+    try:
+        StateDeriver._topological_order([first, second])
+    except ValueError as error:
+        assert str(error) == "CYCLIC EVENT DEPENDENCY"
+    else:
+        raise AssertionError("CYCLIC DEPENDENCY WAS ACCEPTED")
+
+
+def test_deduplicate_events_keeps_identical_duplicates_once():
+    from core.event import deduplicate_events, Transfer
+
+    event = Transfer("alice", "bob", 3, 0)
+    result = deduplicate_events([event, event])
+
+    assert result == [event]
+
+
+def test_deduplicate_events_rejects_same_id_different_content():
+    import pytest
+    from core.event import deduplicate_events
+
+    class FixedIdEvent:
+        def __init__(self, identifier, amount):
+            self.identifier = identifier
+            self.sender = "alice"
+            self.receiver = "bob"
+            self.amount = amount
+            self.nonce = 0
+            self.parents = ()
+
+        def event_id(self):
+            return self.identifier
+
+        def canonical(self):
+            return str(self.amount).encode()
+
+    first = FixedIdEvent("same-id", 3)
+    second = FixedIdEvent("same-id", 4)
+
+    with pytest.raises(
+        ValueError,
+        match="DUPLICATE EVENT ID WITH DIFFERENT CONTENT",
+    ):
+        deduplicate_events([first, second])

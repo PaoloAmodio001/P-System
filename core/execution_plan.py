@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from core.event import Transfer
+from core.event import Transfer, deduplicate_events
 from core.incompatibility import incompatible
 from core.commutativity import commute
 from core.execution_index import ExecutionIndex
@@ -51,6 +51,7 @@ def build_execution_plan(
     events: list[Transfer],
 ) -> ExecutionPlan:
 
+    events = deduplicate_events(events)
     ordered = []
     conflicts = []
 

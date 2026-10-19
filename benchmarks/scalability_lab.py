@@ -21,6 +21,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import psutil
 
+try:
+    import matplotlib.pyplot as plt
+    PLOT_AVAILABLE = True
+except Exception as exc:
+    plt = None
+    PLOT_AVAILABLE = False
+    print(f"Dashboard grafico non disponibile: {exc}")
+
 from network.node import Node
 import network.node_tls_identity as tls_identity
 
@@ -57,6 +65,47 @@ def main():
     print(f"RSS massimo del processo: {args.max_rss_gib:.2f} GiB")
     print(f"RAM minima libera: {args.min_available_gib:.2f} GiB")
     print("Interrompi in qualsiasi momento con Ctrl+C.\n")
+
+    fig = None
+    axes = {}
+    lines = {}
+    plot_data = {"time": [], "nodes": [], "rate": [], "rss": [], "cpu": []}
+
+    if PLOT_AVAILABLE:
+        try:
+            plt.ion()
+            fig, grid = plt.subplots(2, 2, figsize=(12, 7))
+            fig.canvas.manager.set_window_title(
+                "P-System - Live Scalability Monitor"
+            )
+            axes = {
+                "nodes": grid[0, 0],
+                "rate": grid[0, 1],
+                "rss": grid[1, 0],
+                "cpu": grid[1, 1],
+            }
+            titles = {
+                "nodes": ("Nodi creati", "Nodi"),
+                "rate": ("Velocita di creazione", "Nodi/s"),
+                "rss": ("Memoria del processo", "MiB RSS"),
+                "cpu": ("CPU del processo", "Percentuale"),
+            }
+            for key, axis in axes.items():
+                title, ylabel = titles[key]
+                axis.set_title(title)
+                axis.set_xlabel("Tempo (s)")
+                axis.set_ylabel(ylabel)
+                axis.grid(True, alpha=0.3)
+                lines[key], = axis.plot([], [], marker="o", markersize=3)
+            fig.tight_layout()
+            plt.show(block=False)
+            plt.pause(0.1)
+            print("Dashboard live aperto.")
+        except Exception as exc:
+            print(f"Dashboard non disponibile: {exc}")
+            if plt is not None:
+                plt.close("all")
+            fig = None
 
     try:
         while True:
@@ -122,6 +171,33 @@ def main():
                 ),
             }
             results.append(row)
+
+            if fig is not None:
+                try:
+                    plot_data["time"].append(row["elapsed_seconds"])
+                    plot_data["nodes"].append(row["nodes"])
+                    plot_data["rate"].append(row["nodes_per_second"])
+                    plot_data["rss"].append(row["process_rss_mib"])
+                    plot_data["cpu"].append(row["process_cpu_percent"])
+
+                    values = {
+                        "nodes": plot_data["nodes"],
+                        "rate": plot_data["rate"],
+                        "rss": plot_data["rss"],
+                        "cpu": plot_data["cpu"],
+                    }
+                    for key, axis in axes.items():
+                        lines[key].set_data(plot_data["time"], values[key])
+                        axis.relim()
+                        axis.autoscale_view()
+
+                    fig.canvas.draw_idle()
+                    plt.pause(0.001)
+                except Exception as exc:
+                    print(f"Dashboard disattivato: {exc}")
+                    plt.close("all")
+                    fig = None
+
 
             print(
                 f"nodi={row['nodes']:>7} | "
@@ -191,6 +267,14 @@ def main():
             directory = tls_state.get("directory")
             if directory:
                 shutil.rmtree(directory, ignore_errors=True)
+
+    if fig is not None:
+        try:
+            plt.ioff()
+            print("Benchmark terminato. Chiudi il grafico per uscire.")
+            plt.show()
+        except Exception as exc:
+            print(f"Chiusura dashboard: {exc}")
 
     return 0
 

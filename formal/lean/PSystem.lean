@@ -17,3 +17,12 @@ import PSystem.P15
 import PSystem.P16
 import PSystem.Refinement
 import PSystem.R17Topological
+import PSystem.R17Constructive
+import PSystem.R17OrderBridge
+import PSystem.R17Deterministic
+import PSystem.R17MinimumProof
+import PSystem.R17MinimumReadyProof
+import PSystem.R17MinimumSelection
+import PSystem.R17ReadyBoolProof
+import PSystem.R17MinimumSelectionBridge
+import PSystem.R17MinimumSelectionUnique

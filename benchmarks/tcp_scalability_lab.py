@@ -16,6 +16,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import psutil
+
+try:
+    import matplotlib.pyplot as plt
+    PLOT_AVAILABLE = True
+except Exception as exc:
+    plt = None
+    PLOT_AVAILABLE = False
+    print(f"Dashboard grafico non disponibile: {exc}")
 from network.node import Node
 from network.peer import Peer
 import network.node_tls_identity as tls_identity
@@ -24,12 +32,17 @@ import network.node_tls_identity as tls_identity
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--max-nodes", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=10,
+                        help="Peer da aggiungere per gruppo")
+    parser.add_argument("--batch-interval", type=float, default=5.0,
+                        help="Secondi minimi tra gruppi successivi")
     parser.add_argument("--max-seconds", type=float, default=120)
     parser.add_argument("--max-rss-gib", type=float, default=2.0)
     parser.add_argument("--min-available-gib", type=float, default=3.0)
     args = parser.parse_args()
 
-    if args.max_nodes < 2 or args.max_seconds <= 0:
+    if (args.max_nodes < 2 or args.max_seconds <= 0
+            or args.batch_size < 1 or args.batch_interval < 0):
         parser.error("Servono almeno 2 nodi e un tempo positivo.")
     if args.max_rss_gib <= 0 or args.min_available_gib < 0:
         parser.error("Limiti di memoria non validi.")
@@ -46,7 +59,9 @@ def main():
     errors = []
     stop_reason = "test completato"
     initial_available_gib = psutil.virtual_memory().available / 2**30
-    targets = [n for n in (2, 5, 10, 20) if n <= args.max_nodes]
+    # nodes include il nodo centrale: il primo gruppo aggiunge batch_size peer.
+    targets = list(range(min(1 + args.batch_size, args.max_nodes),
+                         args.max_nodes + 1, args.batch_size))
     if not targets or targets[-1] != args.max_nodes:
         targets.append(args.max_nodes)
 
@@ -57,12 +72,73 @@ def main():
     print(f"RSS massimo: {args.max_rss_gib:.2f} GiB")
     print(f"RAM libera minima: {args.min_available_gib:.2f} GiB")
 
+    fig = None
+    plot_axes = {}
+    plot_lines = {}
+    plot_data = {
+        "time": [],
+        "nodes": [],
+        "peers": [],
+        "rss": [],
+        "cpu": [],
+        "threads": [],
+    }
+
+    if PLOT_AVAILABLE:
+        try:
+            plt.ion()
+            fig, grid = plt.subplots(2, 2, figsize=(12, 7))
+            fig.canvas.manager.set_window_title(
+                "P-System - TCP/TLS Live Scalability Monitor"
+            )
+            plot_axes = {
+                "nodes": grid[0, 0],
+                "peers": grid[0, 1],
+                "rss": grid[1, 0],
+                "cpu": grid[1, 1],
+            }
+            titles = {
+                "nodes": ("Nodi avviati", "Nodi"),
+                "peers": ("Peer TLS connessi", "Peer"),
+                "rss": ("Memoria RSS del processo", "MiB"),
+                "cpu": ("CPU del processo", "%"),
+            }
+            for key, axis in plot_axes.items():
+                title, ylabel = titles[key]
+                axis.set_title(title)
+                axis.set_xlabel("Tempo trascorso (s)")
+                axis.set_ylabel(ylabel)
+                axis.grid(True, alpha=0.3)
+                plot_lines[key], = axis.plot([], [], marker="o")
+            fig.tight_layout()
+            plt.show(block=False)
+            plt.pause(0.1)
+            print("Dashboard TCP/TLS live aperto.")
+        except Exception as exc:
+            print(f"Dashboard disattivato: {exc}")
+            if plt is not None:
+                plt.close("all")
+            fig = None
+
+    last_stage_completed = None
     try:
-        central = Node(f"tcp-lab-{timestamp}-central", host="127.0.0.1", port=0)
+        central = Node(f"tcp-lab-{timestamp}-0000-central", host="127.0.0.1", port=0)
         nodes.append(central)
         central.start()
 
         for target in targets:
+            if last_stage_completed is not None and args.batch_interval > 0:
+                while time.monotonic() - last_stage_completed < args.batch_interval:
+                    if time.monotonic() - started >= args.max_seconds:
+                        stop_reason = "tempo massimo raggiunto tra i gruppi"
+                        raise StopIteration
+                    if process.memory_info().rss / 2**30 >= args.max_rss_gib:
+                        stop_reason = "limite RSS raggiunto tra i gruppi"
+                        raise StopIteration
+                    if psutil.virtual_memory().available / 2**30 <= args.min_available_gib:
+                        stop_reason = "soglia RAM libera raggiunta tra i gruppi"
+                        raise StopIteration
+                    time.sleep(min(0.1, args.batch_interval))
             stage_start = time.monotonic()
             stage_connections = 0
 
@@ -111,6 +187,11 @@ def main():
                     raise StopIteration
 
                 stage_connections += 1
+                # Evento testuale per aggiornare la topologia durante la crescita.
+                elapsed_now = time.monotonic() - started
+                rss_now = process.memory_info().rss / 2**20
+                peers_now = sum(1 for c in central.peer_connections.values() if c.connected)
+                print(f"nodi={len(nodes)} | peer={peers_now} | RSS={rss_now:.1f} MiB | tempo={elapsed_now:.1f}s", flush=True)
 
             elapsed = time.monotonic() - started
             memory = psutil.virtual_memory()
@@ -132,6 +213,33 @@ def main():
                 "errors": list(errors),
             }
             measurements.append(row)
+            last_stage_completed = time.monotonic()
+
+            if fig is not None:
+                try:
+                    plot_data["time"].append(row["elapsed_seconds"])
+                    plot_data["nodes"].append(row["nodes_started"])
+                    plot_data["peers"].append(row["central_connected_peers"])
+                    plot_data["rss"].append(row["process_rss_mib"])
+                    plot_data["cpu"].append(row["process_cpu_percent"])
+                    plot_data["threads"].append(row["total_python_threads"])
+
+                    values = {
+                        "nodes": plot_data["nodes"],
+                        "peers": plot_data["peers"],
+                        "rss": plot_data["rss"],
+                        "cpu": plot_data["cpu"],
+                    }
+                    for key, axis in plot_axes.items():
+                        plot_lines[key].set_data(plot_data["time"], values[key])
+                        axis.relim()
+                        axis.autoscale_view()
+                    fig.canvas.draw_idle()
+                    plt.pause(0.001)
+                except Exception as exc:
+                    print(f"Dashboard disattivato durante il test: {exc}")
+                    plt.close("all")
+                    fig = None
             print(
                 f"nodi={row['nodes_started']:>3} | "
                 f"peer={row['central_connected_peers']:>3} | "
@@ -217,6 +325,14 @@ def main():
 
         nodes.clear()
         gc.collect()
+
+    if fig is not None:
+        try:
+            plt.ioff()
+            print("Test TCP/TLS terminato. Chiudi il grafico per uscire.")
+            plt.show()
+        except Exception as exc:
+            print(f"Chiusura dashboard: {exc}")
 
     return 0 if not errors and not cleanup_errors and not remaining_threads else 1
 

@@ -46,3 +46,11 @@ def test_parallel_execution_does_not_materialize_pairs():
 
     assert len(parallel.event_ids) == 100
     assert not hasattr(parallel, "pairs")
+
+def test_parallel_execution_deduplicates_identical_events():
+    first = Transfer("alice", "bob", 3, 0)
+    parallel = ParallelExecution((first, first))
+
+    assert parallel.event_ids == (first.event_id(),)
+    assert len(parallel.events) == 1
+    assert not parallel.is_parallel(first, first)

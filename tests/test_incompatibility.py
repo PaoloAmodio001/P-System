@@ -106,3 +106,31 @@ def test_reordered_parents_are_not_incompatible():
 
     assert first.event_id() == reordered.event_id()
     assert not incompatible(first, reordered)
+
+def test_same_id_with_different_payload_is_rejected():
+    class ForcedIdEvent:
+        def __init__(self, receiver, amount):
+            self.sender = "alice"
+            self.receiver = receiver
+            self.amount = amount
+            self.nonce = 0
+            self.parents = ()
+
+        def event_id(self):
+            return "a" * 64
+
+        def canonical(self):
+            return (
+                f"{self.sender}|{self.receiver}|{self.amount}|"
+                f"{self.nonce}|{self.parents}"
+            ).encode()
+
+    first = ForcedIdEvent("bob", 3)
+    second = ForcedIdEvent("carol", 4)
+
+    try:
+        incompatible(first, second)
+    except ValueError as exc:
+        assert str(exc) == "DUPLICATE EVENT ID WITH DIFFERENT CONTENT"
+    else:
+        raise AssertionError("ID duplicato con contenuto differente accettato")

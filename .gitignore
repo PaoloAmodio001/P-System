@@ -39,3 +39,6 @@ formal/lean/.lake/
 
 # Local Lean backup snapshots
 formal/lean/PSystem/*.before-*
+
+# Generated Lean audit output
+formal/lean/AuditPSystem.log

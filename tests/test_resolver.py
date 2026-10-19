@@ -77,3 +77,58 @@ def test_reordered_parents_are_not_a_conflict():
     assert first.event_id() == reordered.event_id()
     assert ConflictResolver.conflicting(first, reordered) is False
     assert ConflictResolver.compatible([first, reordered])
+
+
+def test_resolver_rejects_same_id_with_different_payload():
+    class ForcedIdEvent:
+        def __init__(self, amount):
+            self.sender = "alice"
+            self.receiver = "bob"
+            self.amount = amount
+            self.nonce = 0
+            self.parents = ()
+
+        def event_id(self):
+            return "a" * 64
+
+        def canonical(self):
+            return str(self.amount).encode()
+
+    first = ForcedIdEvent(3)
+    second = ForcedIdEvent(4)
+
+    try:
+        ConflictResolver.conflicting(first, second)
+    except ValueError as exc:
+        assert str(exc) == "DUPLICATE EVENT ID WITH DIFFERENT CONTENT"
+    else:
+        raise AssertionError("ID identico con payload diverso accettato")
+
+    try:
+        ConflictResolver.compatible([first, second])
+    except ValueError as exc:
+        assert str(exc) == "DUPLICATE EVENT ID WITH DIFFERENT CONTENT"
+    else:
+        raise AssertionError("La compatibilità ha accettato ID duplicati incoerenti")
+
+
+def test_resolver_accepts_identical_payload_with_same_id():
+    class ForcedIdEvent:
+        def __init__(self):
+            self.sender = "alice"
+            self.receiver = "bob"
+            self.amount = 3
+            self.nonce = 0
+            self.parents = ()
+
+        def event_id(self):
+            return "a" * 64
+
+        def canonical(self):
+            return b"identical-payload"
+
+    first = ForcedIdEvent()
+    second = ForcedIdEvent()
+
+    assert not ConflictResolver.conflicting(first, second)
+    assert ConflictResolver.compatible([first, second])

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.event import Transfer
+from core.event import Transfer, deduplicate_events
 from core.execution_index import ExecutionIndex
 
 
@@ -11,6 +11,7 @@ class ParallelExecution:
     events: tuple[Transfer, ...]
 
     def __post_init__(self):
+        self.events = tuple(deduplicate_events(self.events))
         self._index = ExecutionIndex()
         self._index.add_all(self.events)
 
