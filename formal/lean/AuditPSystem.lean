@@ -163,3 +163,18 @@ import PSystem
 #print axioms PSystem.QuorumExamples.forged_run_not_unforgeable
 
 #print axioms PSystem.QuorumExamples.fork_with_faulty_receiver
+
+-- QuorumDerive.lean
+#print axioms PSystem.Quorum.logInvariant_step
+
+#print axioms PSystem.Quorum.logInvariant_foldl
+
+#print axioms PSystem.Quorum.logInvariant_runNode
+
+#print axioms PSystem.Quorum.executed_valid
+
+#print axioms PSystem.Quorum.executed_ids_nodup
+
+#print axioms PSystem.Quorum.state_is_derive
+
+#print axioms PSystem.Quorum.same_executed_same_state

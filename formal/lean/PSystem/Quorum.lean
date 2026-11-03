@@ -8,7 +8,7 @@ namespace PSystem.Quorum
 The protocol of an honest node, in the style of FastPay: a validator signs
 at most one event per `(sender, nonce)`, and a node executes an event only
 with a certificate signed by a quorum. This module has only definitions; the
-results are in `QuorumSafety`.
+results are in `QuorumSafety` and `QuorumDerive`.
 
 The adversary is not a part of the model but a quantifier. A run gives each
 node its own arbitrary list of inputs (`Fin n → List Input`), and results
