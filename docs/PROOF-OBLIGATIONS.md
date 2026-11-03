@@ -16,11 +16,59 @@
 - `OPEN`: proof or refinement obligation remains open.
 
 No Python property is currently `REFINEMENT`: no theorem relates the
-Python implementation to the Lean model.
+Python implementation to the Lean model. The correspondence between
+`StateDeriver` and the Lean model `derive` is `EMPIRICAL` (differential
+test, see below).
+
+## Main result: convergence of the state derivation
+
+Modules `Derive`, `Convergence`, `Soundness`, `Completeness` and
+`Agreement` in `formal/lean/PSystem/` (2026-11-03). `derive` is an
+executable model of the Python `StateDeriver` after commit `538ee51`:
+among the causally ready events, run the one with the smallest id that
+is currently executable; reject the batch if none can run.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `executable_runs_same_state` | Two executable runs of the same events, in any two orders, reach the same state. Accounts may be shared and causal chains may interleave | FORMAL |
+| `equivalent_knowledge_same_state` | Two nodes knowing the same events (as sets) reach the same state with any valid execution of their knowledge; the permutation is derived, not assumed | FORMAL |
+| `derive_sound` | If `derive` returns a state, it is the state of a valid execution (each event once, parents first, every step executable) | FORMAL |
+| `derive_complete` | If any valid execution exists, `derive` succeeds | FORMAL |
+| `derive_eq_none_iff` | `derive` rejects exactly when no valid execution exists | FORMAL |
+| `derive_knowledge_invariant` | Two nodes knowing the same events compute the same result: the same state, or both reject | FORMAL |
+| `derive_perm_invariant` | The result does not depend on the order in which events arrived | FORMAL |
+| `tests/test_lean_differential.py` | `StateDeriver` and the Lean `derive` agree on 3000 random histories (961 accepted, 2039 rejected) | EMPIRICAL |
+
+Hypotheses are only about the inputs: the same events are known, and
+event ids are distinct (Python: `deduplicate_events`). Nothing is
+assumed about executions, about permutations between them, about
+independence of accounts or about absence of conflicts. The completeness
+proof does not use the minimum-id rule: any ready and executable choice
+is complete; the rule only makes the choice deterministic.
+
+Axioms used: `propext`, `Quot.sound`, `Classical.choice` (standard).
+
+Scope and limits of this result:
+
+- It is a property of the model. The link to Python is the differential
+  test, not a refinement proof.
+- Event ids are `Nat` in Lean and fixed-length SHA-256 hex strings in
+  Python; the test passes them as `int(hex, 16)`, which preserves order.
+- Amounts are `Nat`; negative amounts (rejected by Python) are not tested.
+- Signatures, networking, synchronisation and adversaries are not
+  modelled. The result says nothing about which events a node knows,
+  only about what it derives from them.
+- Mathematically it formalises that transfers commute as long as no
+  account is overdrawn; the contribution is the machine-checked link
+  from that fact to the deterministic algorithm used by the code.
 
 ## Current Lean baseline
 
 - 16 modules P01–P16 with 51 theorem declarations (plus 39 in `Basic.lean`).
+- Convergence modules `Derive`, `Convergence`, `Soundness`, `Completeness`,
+  `Agreement`: 44 theorem declarations, written with the criteria above
+  (the main results are listed in the previous section; the others are
+  supporting lemmas).
 - `lake build`: passing.
 - No `sorry`, `admit`, `axiom`, `opaque` or `native_decide`.
 
@@ -35,6 +83,10 @@ A Lean theorem establishes a property of the formal model only. It does
 not establish that the Python implementation refines that model.
 
 ## Known limitations of the formal model
+
+The first two points apply to `Basic.lean`, the P-modules and R17. The
+convergence modules avoid both: they require `ExecutableRun` and use no
+independence hypothesis.
 
 - `ApplyEvent` does not check `Executable`: it uses truncated `Nat`
   subtraction, while the Python implementation rejects invalid
@@ -64,11 +116,11 @@ IDs match the Lean files `formal/lean/PSystem/Pxx.lean`.
 | P06 | Adding an irrelevant event preserves the relevant projection and the decision | FORMAL | Small `filter` lemma |
 | P07 | Tampered payload is rejected | TRIVIAL | `SignatureValid` is string equality; no cryptography |
 | P08 | Authorization requires identity binding | TRIVIAL | Projection of a conjunction; unused hypothesis `_h_signature` |
-| P09 | Two nodes converge | CONDITIONAL | Assumes `EventPermutation` and full account disjointness |
+| P09 | Two nodes converge | CONDITIONAL | Assumes `EventPermutation` and full account disjointness. Superseded by `derive_knowledge_invariant` |
 | P10 | A duplicate is not fresh | TRIVIAL | `P -> not not P`; unused hypothesis `_h_fresh` |
 | P11 | Replaying an executed event leaves the ledger unchanged | TRIVIAL | First branch of the `ApplyOnce` definition |
 | P12 | Unauthorized promotion leaves the state unchanged | TRIVIAL | `if` on an arbitrary `next` state; reconciliation not modelled |
-| P13 | Concurrent ingress linearizes | TRIVIAL / CONDITIONAL | `ValidLinearization` is defined as `EventPermutation`; determinism assumes it |
+| P13 | Concurrent ingress linearizes | TRIVIAL / CONDITIONAL | `ValidLinearization` is defined as `EventPermutation`; determinism assumes it. Superseded by `derive_perm_invariant` |
 | P14 | Secure transport satisfies its boundary conditions | TRIVIAL / ASSUMPTION | `exact h` on abstract `Prop` fields |
 | P15 | Equivocation is a conflict; conflicting events are not jointly compatible | TRIVIAL | `Equivocation` has the same definition as `Conflict`; **not** Byzantine safety |
 | P16 | Bounded exponential backoff; reconnection if connection succeeds when the peer is available | CONDITIONAL | Backoff arithmetic is FORMAL (small); eventual reconnection assumes `h_success`. **Not** liveness |
@@ -102,19 +154,19 @@ The two genuine results are:
   every direct parent precedes its child. Supported by
   `parent_precedes_in_valid_sequence` and `r17_constructive_extend`.
 
-Open gaps found by the review:
+Gaps found by the review, and their status:
 
-- The two results are not connected: no theorem relates a valid causal
-  sequence to the state produced by `ApplyEvents`, so there is no proof
-  that causally ordered histories with shared accounts converge.
-- `r17MinimumReadyEvent` is proved correct for one step, but no theorem
-  iterates it into a complete sequence; the completeness proof uses an
-  arbitrary ready event, not the minimum-id choice.
-- Since commit `538ee51` the Python `StateDeriver` selects the smallest
-  ready id **that is currently executable**. R17 models the smallest
-  ready id unconditionally, i.e. the earlier behaviour that rejected
-  valid histories. R17 therefore no longer describes the implementation.
-- `R17Step` is only used in a restatement.
+- *Resolved by the convergence modules.* The two results were not
+  connected: no theorem related a valid causal sequence to the state.
+  `Convergence` and `Soundness` now do, for histories with shared accounts.
+- *Resolved.* `r17MinimumReadyEvent` was proved for one step only.
+  `executionOrder` (`Derive`) iterates the choice to the end, with
+  soundness and completeness proved.
+- *Still true for R17.* Since `538ee51` Python selects the smallest ready
+  id **that is currently executable**; R17 models the smallest ready id
+  unconditionally (the earlier behaviour). `Derive` models the current
+  behaviour; R17 does not describe the implementation.
+- *Open.* `R17Step` is only used in a restatement.
 
 ### Related refinement theorem
 
@@ -123,6 +175,8 @@ Open gaps found by the review:
 `EventPermutation executionA executionB`, and the knowledge-equivalence
 hypothesis is discarded (`_hknowledge`). They do not connect what nodes
 know to what they execute. The two definitions are identical.
+Superseded by `derive_knowledge_invariant`, which derives the
+permutation from the knowledge equivalence.
 
 ## Cross-cutting obligations
 
@@ -134,6 +188,10 @@ All definitions must be mutually consistent.
 
 Every executable implementation transition must correspond to a valid
 specification transition.
+
+Status: `OPEN` as a proof. For the state derivation the correspondence
+between `StateDeriver` and `derive` is `EMPIRICAL`
+(`tests/test_lean_differential.py`).
 
 ### O3 — Completeness of relevance
 

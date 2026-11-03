@@ -47,7 +47,9 @@ python -m pip install -r requirements-dev.txt
 
 Activate the Python environment and run `pytest -q`. Build the formal model with `cd formal/lean && lake build`.
 
-The development results previously recorded were 440 passing Python tests and a successful Lean build. These results describe specific runs, not universal guarantees.
+The current run records 449 passing Python tests and a successful Lean build. These results describe specific runs, not universal guarantees.
+
+Main verified result (Lean, model level): two nodes that know the same events compute the same state, or both reject the batch, independently of arrival order, shared accounts and causal chains (`derive_knowledge_invariant`). The Python `StateDeriver` agrees with that model on 3000 random histories (`tests/test_lean_differential.py`); this is empirical evidence, not a refinement proof. See `docs/PROOF-OBLIGATIONS.md` for status labels and limits.
 
 The Lean model and Python implementation are separate artifacts. A successful Lean build does not establish complete refinement of the implementation or prove every system-wide safety and liveness property.
 
