@@ -34,7 +34,7 @@ Prove:
 - compatible-order convergence;
 - conflict preservation;
 - no arbitrary winner;
-- Byzantine equivocation safety;
+- Byzantine equivocation safety (quorum mode: obligation O7 in `PROOF-OBLIGATIONS.md`);
 - reconciliation safety.
 
 ### Phase 3 — Decision theory

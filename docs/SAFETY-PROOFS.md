@@ -60,6 +60,12 @@ solely from arrival order.
 
 ---
 
+Quorum mode changes this: at most one alternative obtains a certificate,
+and which one depends on the network (`docs/FORMAL-SPECIFICATION.md`, 13.1).
+No node chooses, but one alternative can take effect.
+
+---
+
 ## Theorem S6 — Byzantine Equivocation
 
 For:

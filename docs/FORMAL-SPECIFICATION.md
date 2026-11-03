@@ -258,7 +258,32 @@ Then:
 The system must preserve evidence of conflicting alternatives.
 
 Conflict handling MUST NOT arbitrarily select one alternative merely
-because it was observed first.
+because it was observed first. In quorum mode (13.1) this rule binds
+execution; the vote is the one action that does depend on what a
+validator observed first.
+
+### 13.1 Quorum mode
+
+Status: specified, not implemented in Python. Proof status: obligation
+O7 in `docs/PROOF-OBLIGATIONS.md`.
+
+A fixed committee of `n = 3f+1` validators, known to all nodes, of which
+at most `f` are faulty.
+
+- Vote: an honest validator signs at most one event per `(sender, nonce)`,
+  the first valid one it receives. A vote is a lock, not an execution.
+- Execution: a node executes an event only with a certificate carrying
+  valid signatures of `2f+1` distinct committee members, and only when the
+  event is causally ready and executable on the node's current state.
+- No node chooses between alternatives. Consequently, which alternative
+  is certified depends on the order in which validators receive messages,
+  and possibly none is: an equivocating sender can block its own account
+  at that nonce. The derived state still depends only on the set of
+  certified events, never on their arrival order.
+- Two certificates for conflicting events mean that more than `f`
+  validators are faulty, outside the assumptions. A node stops and reports
+  it; it does not choose.
+- Evidence of uncertified conflicting alternatives is preserved.
 
 ---
 
@@ -272,7 +297,7 @@ Required safety properties include:
 - deterministic state transition;
 - causal ordering;
 - conflict preservation;
-- no arbitrary conflict winner;
+- no arbitrary conflict winner (no node chooses; for quorum mode see 13.1);
 - authenticated event integrity;
 - Byzantine equivocation detection;
 - decision-status correctness;

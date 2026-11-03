@@ -19,3 +19,9 @@ Passing tests, benchmarks, or simulations do not automatically produce a formal 
 ## Explicit non-claims
 
 The system must not claim Byzantine fault tolerance, transport confidentiality, complete network liveness, or global consensus unless a matching model, assumptions, and proof are present.
+
+The current implementation does not prevent forks between honest nodes: two nodes that first receive different conflicting alternatives detect the conflict but keep different states (`tests/test_p15_byzantine_safety.py` asserts this).
+
+## Quorum mode (planned)
+
+Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is not implemented. Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`, which is `OPEN`. When discharged, O7 will cover safety only, for a fixed committee of `n = 3f+1` validators, in the Lean model. It will not establish liveness, totality, committee reconfiguration, recovery from lost votes, or the security of Ed25519 and SHA-256.

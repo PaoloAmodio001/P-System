@@ -244,3 +244,28 @@ Core safety theorems should be translated into a proof assistant
 and checked by its trusted kernel.
 
 Status: done for the state derivation (main result above).
+
+### O7 — Byzantine safety in quorum mode
+
+For `n = 3f+1` validators, certificates of `2f+1` distinct signers and at
+most `f` faulty validators, prove in the Lean model:
+
+- `no_double_spend`: two honest nodes, possibly the same, never execute
+  different events with the same `(sender, nonce)`. The statement must
+  cover two distinct nodes: for one node the nonce check already gives the
+  property, which is not a result;
+- `state_is_derive`: the state of a node is what `derive` computes from
+  the events it executed;
+- `convergence_after_exchange`: two honest nodes that exchange their logs
+  reach the same state;
+- non-vacuity: a run with an equivocating sender satisfies the hypotheses
+  and executes an event, and conflicting events do get executed with a
+  smaller quorum or with `f+1` faulty validators.
+
+Each node receives its own arbitrary list of messages; no hypothesis may
+say that honest nodes see the same messages.
+
+`ASSUMPTION`, stated in the theorems: signatures cannot be forged. Signing
+is idealised; nothing is proved about Ed25519 or SHA-256.
+
+Status: `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`.

@@ -2,13 +2,21 @@
 
 ## Cos'è il progetto
 
-Registro distribuito di trasferimenti senza consenso: identità degli eventi via SHA-256 canonico, ordinamento causale deterministico, double spend rilevato tramite (sender, nonce), nessun vincitore arbitrario nei conflitti. Implementazione Python in `core/` e `network/`, modello formale Lean 4 in `formal/lean/`.
+Registro distribuito di trasferimenti senza consenso: identità degli eventi via SHA-256 canonico, ordinamento causale deterministico, double spend rilevato tramite (sender, nonce), nessun nodo sceglie tra alternative in conflitto. Implementazione Python in `core/` e `network/`, modello formale Lean 4 in `formal/lean/`.
 
 Riferimenti da cui partire per il posizionamento:
 
 - Guerraoui et al., "The Consensus Number of a Cryptocurrency" (PODC 2019)
 - FastPay (Baudet et al., 2020), Astro (Collins et al., DSN 2020)
 - p-org/P (linguaggio di modellazione di sistemi distribuiti, nome simile)
+
+## Modello a quorum: decisioni prese
+
+In sviluppo, stato in `docs/PROOF-OBLIGATIONS.md` (obbligo O7). L'implementazione Python attuale non lo realizza ancora e ammette fork tra nodi onesti (`tests/test_p15_byzantine_safety.py`).
+
+- Nessun nodo sceglie tra alternative: un evento si esegue solo con un certificato di 2f+1 firme. Un nodo onesto vota la prima alternativa valida che riceve, ma il voto è un blocco, non un'esecuzione. Quale alternativa ottiene il certificato dipende quindi dalla rete, e può non ottenerlo nessuna: va detto, non nascosto.
+- Comitato fisso di n = 3f+1 nodi: il sistema resta senza consenso ma diventa permissioned. La riconfigurazione è fuori dal modello.
+- La proprietà da dimostrare riguarda due nodi onesti, anche diversi. Per un singolo nodo la assicura già il controllo del nonce, e non è un risultato.
 
 ## Obiettivo
 
