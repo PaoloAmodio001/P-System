@@ -210,3 +210,17 @@ import PSystem
 #print axioms PSystem.QuorumExamples.exchange_run_diverges_then_converges
 
 #print axioms PSystem.QuorumExamples.no_convergence_with_small_quorum
+
+-- QuorumSafety.lean (delivered certificates, authorization)
+#print axioms PSystem.Quorum.delivered_certs_common_voter
+
+#print axioms PSystem.Quorum.delivered_certs_agree
+
+#print axioms PSystem.Quorum.votes_authorized_foldl
+
+#print axioms PSystem.Quorum.votes_authorized
+
+#print axioms PSystem.Quorum.executed_authorized
+
+-- QuorumNonVacuity.lean (authorization witness)
+#print axioms PSystem.QuorumExamples.authorization_needs_unforgeable

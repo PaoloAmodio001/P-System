@@ -162,4 +162,16 @@ theorem no_convergence_with_small_quorum :
       (run 2 (smallQuorum 2 ++ (run 2 (smallQuorum 1)).log.map .certificate)).state.balance "bob" := by
   exact ⟨unforgeableB_sound (by decide +kernel), by decide +kernel⟩
 
+/-- A check that refuses the event `b` and accepts everything else. -/
+def refuseB (e : Event) : Bool := e.id != b.id
+
+/--
+`executed_authorized` needs `Unforgeable`: with a forged signature, an honest node
+executes `b` although every validator's check refuses it.
+-/
+theorem authorization_needs_unforgeable :
+    refuseB b = false ∧
+    b ∈ (runNode vf 3 refuseB initial (forged 2)).executed := by
+  decide +kernel
+
 end PSystem.QuorumExamples
