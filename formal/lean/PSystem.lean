@@ -31,3 +31,4 @@ import PSystem.DeriveExamples
 import PSystem.Convergence
 import PSystem.Soundness
 import PSystem.Completeness
+import PSystem.Agreement
