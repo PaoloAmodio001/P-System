@@ -1,10 +1,10 @@
 import PSystem.QuorumExamples
-import PSystem.QuorumSafety
+import PSystem.QuorumConvergence
 
 namespace PSystem.QuorumExamples
 
 /-!
-# `no_double_spend` is not vacuous and its hypotheses matter (obligation O7)
+# The Byzantine results are not vacuous and their hypotheses matter (obligation O7)
 
 Concrete witnesses for `n = 4`, `f = 1`, on the runs of `QuorumExamples`.
 
@@ -19,6 +19,11 @@ Concrete witnesses for `n = 4`, `f = 1`, on the runs of `QuorumExamples`.
 These are computations on one instance, not general properties, and they do
 not show tightness for other values of `f`. Their job is to show that the
 main theorem says something and that its hypotheses are used.
+
+For `convergence_after_exchange`: `exchange_run_diverges_then_converges` is a run
+where two honest nodes are in different states before the exchange and in the same
+state after it, and `no_convergence_with_small_quorum` shows that it fails with
+quorum `2f`.
 
 `unforgeableB_sound` connects the Boolean check used by the `#guard` lines to
 the `Unforgeable` hypothesis of the theorem.
@@ -121,5 +126,40 @@ theorem fork_with_faulty_receiver :
     b ∈ (run 3 (faultyReceiver 0)).executed ∧ a ∈ (run 3 (faultyReceiver 1)).executed := by
   refine ⟨by decide, unforgeableB_sound (by decide +kernel), by decide, by decide, ?_⟩
   decide +kernel
+
+/-- Everyone votes for the three compatible events; node 1 gets certificates for
+`x, y` and node 2 for `x, z`. -/
+def exchangeRun : Fin 4 → List (Input 4 Sg)
+  | 1 => [x, y, z].map .voteRequest ++ certsFor [x, y]
+  | 2 => [x, y, z].map .voteRequest ++ certsFor [x, z]
+  | 3 => [x, y, z].map .voteRequest
+  | _ => []
+
+/--
+The hypotheses of `convergence_after_exchange` hold in a run where two honest
+nodes really differ before the exchange. After it they are in the same state,
+by the theorem, and each has executed an event it did not have.
+-/
+theorem exchange_run_diverges_then_converges :
+    Unforgeable vf [0] 3 (fun _ => yes) initial exchangeRun ∧
+    (run 3 (exchangeRun 1)).state.balance "bob" ≠
+      (run 3 (exchangeRun 2)).state.balance "bob" ∧
+    z ∉ (run 3 (exchangeRun 1)).executed ∧
+    z ∈ (run 3 (exchangeRun 1 ++ (run 3 (exchangeRun 2)).log.map .certificate)).executed ∧
+    (run 3 (exchangeRun 1 ++ (run 3 (exchangeRun 2 ++ [])).log.map .certificate)).state =
+      (run 3 (exchangeRun 2 ++ (run 3 (exchangeRun 1 ++ [])).log.map .certificate)).state := by
+  have hsig : Unforgeable vf [0] 3 (fun _ => yes) initial exchangeRun :=
+    unforgeableB_sound (by decide +kernel)
+  refine ⟨hsig, by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
+  exact convergence_after_exchange (n := 4) (f := 1) (u := 1) (v := 2) rfl [0]
+    (by decide) vf (fun _ => yes) initial exchangeRun hsig (by decide) (by decide)
+
+/-- With quorum `2f` two honest nodes stay in different states after the exchange:
+each holds a conflicting event, so the one it receives can never run. -/
+theorem no_convergence_with_small_quorum :
+    Unforgeable vf [0] 2 (fun _ => yes) initial smallQuorum ∧
+    (run 2 (smallQuorum 1 ++ (run 2 (smallQuorum 2)).log.map .certificate)).state.balance "bob" ≠
+      (run 2 (smallQuorum 2 ++ (run 2 (smallQuorum 1)).log.map .certificate)).state.balance "bob" := by
+  exact ⟨unforgeableB_sound (by decide +kernel), by decide +kernel⟩
 
 end PSystem.QuorumExamples

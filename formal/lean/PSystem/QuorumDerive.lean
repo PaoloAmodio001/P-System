@@ -16,7 +16,7 @@ Main results:
   `derive_knowledge_invariant` to the quorum model.
 
 Neither says that nodes execute the same events. That needs delivery and the
-quorum hypotheses, and it is `convergence_after_exchange`, still open.
+quorum hypotheses, and it is `convergence_after_exchange` in `QuorumConvergence`.
 
 Method: the log only grows at the end, like `ValidSequence`, and each execution
 checks what the next step of a valid execution requires.

@@ -178,3 +178,35 @@ import PSystem
 #print axioms PSystem.Quorum.state_is_derive
 
 #print axioms PSystem.Quorum.same_executed_same_state
+
+-- QuorumConvergence.lean
+#print axioms PSystem.Quorum.sumBy_le_of_covered
+
+#print axioms PSystem.Quorum.sentCount_cons_self
+
+#print axioms PSystem.Quorum.sentCount_cons_other
+
+#print axioms PSystem.Quorum.applyEvent_nonce_self
+
+#print axioms PSystem.Quorum.applyEvent_nonce_other
+
+#print axioms PSystem.Quorum.nonce_range
+
+#print axioms PSystem.Quorum.nonce_exists
+
+#print axioms PSystem.Quorum.executable_catch_up
+
+#print axioms PSystem.Quorum.replay_step
+
+#print axioms PSystem.Quorum.replay
+
+#print axioms PSystem.Quorum.coherent_of_honest
+
+#print axioms PSystem.Quorum.exchange_executes_union
+
+#print axioms PSystem.Quorum.convergence_after_exchange
+
+-- QuorumNonVacuity.lean (convergence witnesses)
+#print axioms PSystem.QuorumExamples.exchange_run_diverges_then_converges
+
+#print axioms PSystem.QuorumExamples.no_convergence_with_small_quorum
