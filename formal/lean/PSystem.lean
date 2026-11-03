@@ -26,3 +26,5 @@ import PSystem.R17MinimumSelection
 import PSystem.R17ReadyBoolProof
 import PSystem.R17MinimumSelectionBridge
 import PSystem.R17MinimumSelectionUnique
+import PSystem.Derive
+import PSystem.DeriveExamples
