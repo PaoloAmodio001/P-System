@@ -357,5 +357,18 @@ say that honest nodes see the same messages.
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
 Status: done for the Lean model (sections above); the witnesses cover only
-`n = 4`, `f = 1`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
+`n = 4`, `f = 1`.
+
+The link to Python is `EMPIRICAL`, not `REFINEMENT`, and so far covers only
+`QuorumReplica` (`network/quorum.py`), which no node uses yet.
+`tests/test_quorum_differential.py` compares it with `runNode` after each input,
+on adversarial random inputs. `tests/test_quorum_differential_mutations.py` checks
+that the comparison notices each rule being broken.
+
+Three seeds run by default, with `pytest -q`. **Before merging `byzantine-quorum`
+into `main`, run all fifteen:**
+
+    PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py
+
+On 2026-11-04 the fifteen seeds (45000 cases) gave no difference. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
 quorum mode is not implemented in Python yet.

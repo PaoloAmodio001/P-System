@@ -51,6 +51,8 @@ The current run records 449 passing Python tests and a successful Lean build. Th
 
 Main verified result (Lean, model level): two nodes that know the same events compute the same state, or both reject the batch, independently of arrival order, shared accounts and causal chains (`derive_knowledge_invariant`). The Python `StateDeriver` agrees with that model on 3000 random histories (`tests/test_lean_differential.py`); this is empirical evidence, not a refinement proof. See `docs/PROOF-OBLIGATIONS.md` for status labels and limits.
 
+The differential test of the quorum replica runs three seeds by default. Before merging `byzantine-quorum` into `main`, run all fifteen: `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py`.
+
 The Lean model and Python implementation are separate artifacts. A successful Lean build does not establish complete refinement of the implementation or prove every system-wide safety and liveness property.
 
 See `docs/FORMAL-SPECIFICATION.md`, `docs/IMPLEMENTATION-REFINEMENT.md`, `docs/FORMAL-VERIFICATION-ROADMAP.md`, `docs/PROOF-OBLIGATIONS.md`, and `docs/PROOF-SCOPE.md`.
