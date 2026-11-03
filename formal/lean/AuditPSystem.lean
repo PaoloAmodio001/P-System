@@ -146,3 +146,20 @@ import PSystem
 #print axioms PSystem.Quorum.no_double_spend
 
 #print axioms PSystem.Quorum.same_id_same_event
+
+-- QuorumNonVacuity.lean
+#print axioms PSystem.QuorumExamples.unforgeableB_sound
+
+#print axioms PSystem.QuorumExamples.a_b_conflict
+
+#print axioms PSystem.QuorumExamples.equivocation_run_satisfies_hypotheses
+
+#print axioms PSystem.QuorumExamples.fork_with_small_quorum
+
+#print axioms PSystem.QuorumExamples.fork_with_too_many_faults
+
+#print axioms PSystem.QuorumExamples.fork_with_forged_signature
+
+#print axioms PSystem.QuorumExamples.forged_run_not_unforgeable
+
+#print axioms PSystem.QuorumExamples.fork_with_faulty_receiver
