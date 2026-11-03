@@ -33,7 +33,7 @@ automatically prove that the Python implementation satisfies it.
 | Reconciliation preserves event knowledge | None | Network reconciliation and canonical-view tests | EMPIRICAL |
 | Retry delays are bounded, positive and unbounded in time | `backoff_bounded`, `backoff_positive`, `retryTime_ge_index`, `retry_hits_stable_availability` (`Backoff.lean`), properties of the formula | Reconnect and retry tests | FORMAL (formula only); not liveness |
 | Network security and authorization | None; no cryptography is modelled | Signature, authorization and TLS tests | EMPIRICAL |
-| Honest nodes never execute conflicting events (quorum mode) | None yet; planned under obligation O7 in `docs/PROOF-OBLIGATIONS.md` | None; quorum mode is not implemented | OPEN; not claimed |
+| Honest nodes never execute conflicting events (quorum mode) | `no_double_spend` (`QuorumSafety.lean`), with unforgeable signatures as a hypothesis | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python) |
 | The current implementation prevents forks between honest nodes | None | `tests/test_p15_byzantine_safety.py` asserts the opposite: the nodes detect the conflict and keep different states | Not claimed; false for the current code |
 | Byzantine fault tolerance, including liveness | No theorem | None | OPEN; not claimed |
 | Performance advantage | No theorem establishes a performance advantage | Benchmark execution and comparative baseline required | OPEN |

@@ -62,6 +62,37 @@ Scope and limits of this result:
   account is overdrawn; the contribution is the machine-checked link
   from that fact to the deterministic algorithm used by the code.
 
+## Byzantine safety in quorum mode (part of O7)
+
+Module `QuorumSafety` in `formal/lean/PSystem/` (2026-11-03), on the model in
+`Quorum`.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `no_double_spend` | With `n = 3f+1`, at most `f` faulty validators, quorum `2f+1` and unforgeable signatures, two honest nodes, possibly the same, never execute different events with the same `(sender, nonce)` | FORMAL (model) |
+| `same_id_same_event` | Under the same hypotheses, two events executed by honest nodes with the same id are the same event; no collision-resistance hypothesis | FORMAL (model) |
+| `common_honest_voter` | Under the same hypotheses, an honest validator voted for both of two events executed by honest nodes | FORMAL (model) |
+| `quorum_intersection_honest` | Two sets of at least `q` validators out of `n` share a member outside `F` when `n + \|F\| < 2q` | FORMAL (supporting lemma) |
+| `Unforgeable` | A valid signature of an honest validator in a certificate delivered to an honest node implies that validator voted for that event | ASSUMPTION |
+
+Each node has its own arbitrary list of inputs, and no hypothesis says that
+honest nodes see the same messages. Faulty validators are unconstrained.
+
+Axioms used: `propext`, `Quot.sound`, `Classical.choice` (standard).
+
+Scope and limits of this result:
+
+- It is a property of the model. Quorum mode is not implemented in Python,
+  so it says nothing about the current code, which allows forks between
+  honest nodes.
+- That the hypotheses can be satisfied, and that they cannot be dropped, is
+  so far checked only by `#guard` in `QuorumExamples`, not by a theorem.
+- It concerns conflicting events only. It does not relate a node's state to
+  `derive` and does not say that nodes converge.
+- Mathematically it is the known quorum argument (FastPay, Lemma A.1). The
+  contribution is the machine-checked statement against an arbitrary input
+  list per node, not a new idea.
+
 ## Current Lean baseline
 
 | Module | Content |
@@ -74,8 +105,9 @@ Scope and limits of this result:
 | `Backoff` | arithmetic of the retry delay in `network/node.py` |
 | `Quorum` | quorum model for O7: certificates, vote lock, node transitions, `Unforgeable`; definitions only |
 | `QuorumExamples` | executable `#guard` checks of `Quorum` (not theorems) |
+| `QuorumSafety` | Byzantine safety result above |
 
-- 11 modules, 56 theorem declarations, about 1600 lines.
+- 12 modules, 68 theorem declarations, about 1900 lines.
 - `lake build`: passing. No `sorry`, `admit`, `axiom`, `opaque` or
   `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
@@ -97,10 +129,10 @@ not establish that the Python implementation refines that model.
   the truncation impossible; `DeriveExamples` shows that without it the
   order matters.
 - Identity binding and TLS are not modelled. Signatures appear only as
-  abstract parameters of `Quorum`, and no theorem uses them yet.
-- `Quorum` defines the honest protocol and quantifies over arbitrary
-  inputs, but no theorem establishes Byzantine safety yet (O7 is `OPEN`).
-  No theorem establishes Byzantine fault tolerance.
+  abstract parameters of `Quorum`, with unforgeability as a hypothesis.
+- `no_double_spend` covers safety against conflicting events in the quorum
+  model. No theorem establishes liveness or complete Byzantine fault
+  tolerance, and O7 is only partly done.
 - There is no liveness theorem.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
@@ -272,7 +304,7 @@ say that honest nodes see the same messages.
 `ASSUMPTION`, stated in the theorems: signatures cannot be forged. Signing
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
-Status: `OPEN`. The definitions are in `Quorum` and are exercised by the
-`#guard` checks in `QuorumExamples`, which are not proofs: none of the
-theorems above exists yet. The link to Python will be `EMPIRICAL`, not
-`REFINEMENT`.
+Status: partly done. `no_double_spend` is proved (section above).
+`state_is_derive`, `convergence_after_exchange` and the non-vacuity theorems
+are `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
+quorum mode is not implemented in Python yet.
