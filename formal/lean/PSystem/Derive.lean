@@ -1,5 +1,4 @@
-import PSystem.R17Constructive
-import PSystem.R17ReadyBoolProof
+import PSystem.CausalOrder
 
 namespace PSystem
 
