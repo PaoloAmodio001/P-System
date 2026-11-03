@@ -27,7 +27,8 @@ Python implementation to the Lean model.
 Manual review of the 51 P-theorems (2026-11-03): 20 restate a hypothesis
 or a definition, 18 are definitional or rename a `Basic.lean` lemma,
 5 assume the hard part, 10 are small genuine lemmas.
-`Basic.lean`, the R17 modules and `Refinement.lean` have not yet been
+The same review of `Basic.lean` (39) and the R17 modules (38) is
+summarised below. The rest of `Refinement.lean` has not yet been
 reviewed with the same criteria.
 
 A Lean theorem establishes a property of the formal model only. It does
@@ -78,6 +79,42 @@ example `tests/test_sync_order_determinism.py`,
 `tests/test_causal_double_spend.py`, `tests/test_equivocation.py`,
 `tests/test_p14_tls_real.py` and `tests/test_p16_liveness.py`. The
 strength of these tests has not been reviewed one by one.
+
+### `Basic.lean` and R17 (review 2026-11-03)
+
+| Group | Restatement | Definitional / helper | Genuine |
+|---|---|---|---|
+| `Basic.lean` (39) | 10 | 18 | 11 |
+| R17 modules (38) | 5 | 12 | 21 |
+
+Helper lemmas are legitimate building blocks; they are not counted as
+properties. Restatements include `apply_event_deterministic`
+(`x = x` by `rfl`) and `r17MinimumReadyEvent_unique`, which follows from
+the injectivity of `some` (its `hunique` hypothesis is not needed).
+
+The two genuine results are:
+
+- `apply_events_permutation_invariant` (`Basic.lean`) — FORMAL, but
+  limited by `PairwiseIndependent` (see the limitations above).
+- `r17_constructive_complete_ordering_refines_direct_order`
+  (`R17OrderBridge.lean`) — FORMAL: every finite, acyclic event set with
+  unique ids and represented parents has a complete sequence in which
+  every direct parent precedes its child. Supported by
+  `parent_precedes_in_valid_sequence` and `r17_constructive_extend`.
+
+Open gaps found by the review:
+
+- The two results are not connected: no theorem relates a valid causal
+  sequence to the state produced by `ApplyEvents`, so there is no proof
+  that causally ordered histories with shared accounts converge.
+- `r17MinimumReadyEvent` is proved correct for one step, but no theorem
+  iterates it into a complete sequence; the completeness proof uses an
+  arbitrary ready event, not the minimum-id choice.
+- Since commit `538ee51` the Python `StateDeriver` selects the smallest
+  ready id **that is currently executable**. R17 models the smallest
+  ready id unconditionally, i.e. the earlier behaviour that rejected
+  valid histories. R17 therefore no longer describes the implementation.
+- `R17Step` is only used in a restatement.
 
 ### Related refinement theorem
 
