@@ -28,7 +28,6 @@ automatically prove that the Python implementation satisfies it.
 | Network security and authorization | P08_signature_without_identity_binding_not_authorized; P14_secure_transport_boundary | Signature and authorization tests | Limited modeled claims; no blanket security guarantee |
 | Deterministic topological selection | r17_minimum_selection_exists; r17MinimumReadyEvent_is_minimal | Deterministic ordering tests | Review ordering semantics and Python ID comparison |
 | Performance advantage | No theorem establishes a performance advantage | Benchmark execution and comparative baseline required | OPEN |
-| Suitability for lunar or Mars missions | No mission-specific refinement or validation identified | Partition simulation, resource measurements, and mission-relevant baselines required | Research hypothesis only |
 
 The test paths and theorem names above are candidate evidence references
 derived from the current inventory. Verify each exact declaration,
@@ -47,17 +46,7 @@ For every reported benchmark, record:
 
 Do not claim superiority from the existence of benchmark scripts alone.
 
-## 4. Space-mission research boundary
-
-Potential lunar and Mars scenarios include intermittent connectivity,
-delayed reconciliation, duplicate delivery, conflicting event histories,
-and constrained resources.
-
-These scenarios are hypotheses. P-System is not established as a DTN,
-LunaNet, CCSDS, or flight-software replacement. No safety-critical use
-should be inferred from the current test suite or Lean build.
-
-## 5. Release blockers
+## 4. Release blockers
 
 1. Reproduce Python tests and the Lean build from a documented environment.
 2. Inspect each cited theorem statement and its assumptions.
@@ -66,7 +55,7 @@ should be inferred from the current test suite or Lean build.
 5. Curate tracked source files and exclude accidental files and local backups.
 6. Review the complete repository for secrets, licensing issues, and unsupported claims.
 
-## 6. Publication rule
+## 5. Publication rule
 
 Every scientific claim must be marked FORMAL, EMPIRICAL, BENCHMARK,
 ASSUMPTION, or OPEN. Claims may be upgraded only when their specific
