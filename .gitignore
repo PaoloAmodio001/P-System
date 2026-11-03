@@ -42,3 +42,9 @@ formal/lean/PSystem/*.before-*
 
 # Generated Lean audit output
 formal/lean/AuditPSystem.log
+
+# Local backup copies (e.g. file.py.before-fix-20261013, file.backup-20261015, file.bak)
+*.before-*
+*.backup
+*.backup-*
+*.bak
