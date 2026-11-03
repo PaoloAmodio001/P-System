@@ -10,10 +10,12 @@ import pytest
 
 import core.attestation
 from core.attestation import (
+    MAX_EVENT_INTEGER,
     Attestation,
     Committee,
     QuorumCertificate,
     Vote,
+    is_well_formed_event,
     vote_payload,
 )
 from core.event import Transfer
@@ -420,3 +422,164 @@ def test_vote_payload_format_is_fixed():
         + bytes.fromhex(FIXED_ID)
         + b'{"amount":8,"nonce":0,"parents":[],"receiver":"bob","sender":"alice"}'
     )
+
+
+# --- Well-formed events --------------------------------------------------
+
+PARENT = "ab" * 32
+
+MALFORMED_EVENTS = {
+    "negative amount": Transfer("alice", "bob", -1, 0),
+    "bool amount": Transfer("alice", "bob", True, 0),
+    "float amount": Transfer("alice", "bob", 1.0, 0),
+    "string amount": Transfer("alice", "bob", "1", 0),
+    "none amount": Transfer("alice", "bob", None, 0),
+    "amount over the bound": Transfer("alice", "bob", MAX_EVENT_INTEGER + 1, 0),
+    # json refuses to write this many digits: it must not surface as an error.
+    "amount with too many digits": Transfer("alice", "bob", 10**5000, 0),
+    "negative nonce": Transfer("alice", "bob", 1, -1),
+    "bool nonce": Transfer("alice", "bob", 1, False),
+    "nonce over the bound": Transfer("alice", "bob", 1, MAX_EVENT_INTEGER + 1),
+    "non-string sender": Transfer(1, "bob", 1, 0),
+    "empty sender": Transfer("", "bob", 1, 0),
+    # JSON "\ud800" decodes to this, and SQLite cannot store it.
+    "sender with a lone surrogate": Transfer("\ud800", "bob", 1, 0),
+    "non-string receiver": Transfer("alice", None, 1, 0),
+    "empty receiver": Transfer("alice", "", 1, 0),
+    "receiver with a lone surrogate": Transfer("alice", "\udfff", 1, 0),
+    "non-hex parent": Transfer("alice", "bob", 1, 0, ("z" * 64,)),
+    "uppercase parent": Transfer("alice", "bob", 1, 0, ("AB" * 32,)),
+    "short parent": Transfer("alice", "bob", 1, 0, ("ab" * 31,)),
+    "long parent": Transfer("alice", "bob", 1, 0, ("ab" * 33,)),
+    "parent with a newline": Transfer("alice", "bob", 1, 0, (PARENT + "\n",)),
+    "parent with non-ascii digits": Transfer("alice", "bob", 1, 0, ("٠" * 64,)),
+    "non-string parent": Transfer("alice", "bob", 1, 0, (1,)),
+    # Its decimal form looks like an event id.
+    "integer parent of 64 digits": Transfer("alice", "bob", 1, 0, (10**63,)),
+    "parents of mixed type": Transfer("alice", "bob", 1, 0, (PARENT, 1)),
+    "unhashable parent": Transfer("alice", "bob", 1, 0, ([PARENT],)),
+    "parents as a list": Transfer("alice", "bob", 1, 0, [PARENT]),
+    "parents as a string": Transfer("alice", "bob", 1, 0, PARENT),
+    "parents set to none": Transfer("alice", "bob", 1, 0, None),
+}
+
+WELL_FORMED_EVENTS = {
+    "plain": EVENT,
+    # Refused at execution, as in the model, where these are natural numbers.
+    "amount zero": Transfer("alice", "bob", 0, 0),
+    "transfer to self": Transfer("alice", "alice", 1, 0),
+    "largest integers": Transfer("alice", "bob", MAX_EVENT_INTEGER, MAX_EVENT_INTEGER),
+    "one parent": Transfer("alice", "bob", 1, 0, (PARENT,)),
+    "parents in any order": Transfer("alice", "bob", 1, 0, ("cd" * 32, PARENT)),
+    "a sender that is not ascii": Transfer("àlice", "bob", 1, 0),
+}
+
+
+@pytest.mark.parametrize("name", MALFORMED_EVENTS)
+def test_malformed_event_is_recognized(name):
+    assert is_well_formed_event(MALFORMED_EVENTS[name]) is False
+
+
+@pytest.mark.parametrize("name", WELL_FORMED_EVENTS)
+def test_well_formed_event_is_recognized(name):
+    assert is_well_formed_event(WELL_FORMED_EVENTS[name]) is True
+
+
+@pytest.mark.parametrize("value", [None, 1, "event", {}, object()])
+def test_a_value_that_is_not_an_event_is_not_well_formed(value):
+    assert is_well_formed_event(value) is False
+
+
+@pytest.mark.parametrize("name", MALFORMED_EVENTS)
+def test_certificate_on_a_malformed_event_is_invalid_not_an_error(name):
+    committee, identities = make_committee()
+    # Signed for real wherever the canonical form exists, so that only the event
+    # can be the reason for the refusal.
+    event = MALFORMED_EVENTS[name]
+    try:
+        payload = vote_payload(committee, event)
+    except (TypeError, ValueError):
+        payload = b"no canonical form"
+    votes = tuple(
+        Vote(index, identities[index].sign(payload))
+        for index in range(committee.quorum)
+    )
+
+    assert QuorumCertificate(event, votes).verify(committee) is False
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["negative amount", "bool amount", "non-hex parent"],
+)
+def test_malformed_event_is_refused_even_with_valid_signatures(name):
+    # These three have a canonical form, so the signatures do verify: without the
+    # check on the event this certificate is accepted.
+    committee, identities = make_committee()
+    event = MALFORMED_EVENTS[name]
+    payload = vote_payload(committee, event)
+    votes = tuple(
+        Vote(index, identities[index].sign(payload))
+        for index in range(committee.quorum)
+    )
+
+    assert all(vote._verify_payload(committee, payload) for vote in votes)
+    assert QuorumCertificate(event, votes).verify(committee) is False
+
+
+@pytest.mark.parametrize("value", [None, 1, "event", object()])
+def test_certificate_on_a_value_that_is_not_an_event_is_invalid(value):
+    committee, identities = make_committee()
+    votes = votes_from(committee, identities, range(committee.quorum))
+    assert QuorumCertificate(value, votes).verify(committee) is False
+
+
+@pytest.mark.parametrize("name", WELL_FORMED_EVENTS)
+def test_certificate_on_a_well_formed_event_is_valid(name):
+    committee, identities = make_committee()
+    event = WELL_FORMED_EVENTS[name]
+    votes = votes_from(committee, identities, range(committee.quorum), event)
+    assert QuorumCertificate(event, votes).verify(committee) is True
+
+
+@pytest.mark.parametrize(
+    "votes",
+    [None, 1, "votes", [], {}, (None,), (1, 2, 3), ("vote",) * 3, (object(),)],
+)
+def test_certificate_with_votes_of_a_wrong_type_is_invalid_not_an_error(votes):
+    committee, _ = make_committee()
+    assert QuorumCertificate(EVENT, votes).verify(committee) is False
+
+
+def test_certificate_with_votes_in_a_list_is_invalid():
+    # Only a tuple: a frozen dataclass that holds a list has no hash.
+    committee, identities = make_committee()
+    votes = votes_from(committee, identities, range(committee.quorum))
+    assert QuorumCertificate(EVENT, list(votes)).verify(committee) is False
+
+
+@pytest.mark.parametrize("name", MALFORMED_EVENTS)
+def test_vote_on_a_malformed_event_does_not_verify_and_is_not_an_error(name):
+    committee, identities = make_committee()
+    vote = Vote(0, identities[0].sign(b"anything"))
+    assert vote.verify(committee, MALFORMED_EVENTS[name]) is False
+
+
+@pytest.mark.parametrize("name", ["negative amount", "bool amount", "non-hex parent"])
+def test_vote_with_a_real_signature_on_a_malformed_event_does_not_verify(name):
+    committee, identities = make_committee()
+    event = MALFORMED_EVENTS[name]
+    vote = Vote(0, identities[0].sign(vote_payload(committee, event)))
+    assert vote.verify(committee, event) is False
+
+
+@pytest.mark.parametrize("name", MALFORMED_EVENTS)
+def test_no_vote_can_be_created_on_a_malformed_event(name):
+    committee, identities = make_committee()
+    with pytest.raises(ValueError):
+        Vote.create(committee, identities[0], MALFORMED_EVENTS[name])
+
+
+def test_integer_bound_is_fixed():
+    # Changing it changes which events are valid, so nodes would disagree.
+    assert MAX_EVENT_INTEGER == 2**256 - 1

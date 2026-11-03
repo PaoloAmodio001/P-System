@@ -363,7 +363,10 @@ The link to Python is `EMPIRICAL`, not `REFINEMENT`, and so far covers only
 `QuorumReplica` (`network/quorum.py`), which no node uses yet.
 `tests/test_quorum_differential.py` compares it with `runNode` after each input,
 on adversarial random inputs. `tests/test_quorum_differential_mutations.py` checks
-that the comparison notices each rule being broken.
+that the comparison notices each rule being broken. Events the model cannot
+express, because they are malformed or exceed the `2^256 - 1` bound on integers,
+are outside this comparison. `is_well_formed_event` refuses them, and that is
+tested only on the Python side.
 
 Three seeds run by default, with `pytest -q`. **Before merging `byzantine-quorum`
 into `main`, run all fifteen:**

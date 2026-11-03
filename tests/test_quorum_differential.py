@@ -24,7 +24,8 @@ Correspondence between the two sides:
   read back from disk have their real id.
 
 Events are well formed here (natural numbers, hex parents). Malformed ones cannot
-be written in Lean, and are refused before the replica (subphase 5.4).
+be written in Lean, so is_well_formed_event is outside this comparison: its tests
+are in tests/test_quorum_certificate.py and tests/test_quorum_replica.py.
 
 Three seeds run by default. PSYSTEM_DIFF_SEEDS sets the total number of seeds:
 PSYSTEM_DIFF_SEEDS=15 is the run required before merging, see

@@ -8,12 +8,13 @@ restart, and the checks made when a replica starts.
 import pytest
 
 import network.quorum
-from core.attestation import Committee, QuorumCertificate, Vote
+from core.attestation import Committee, QuorumCertificate, Vote, vote_payload
 from core.derive import StateDeriver
 from core.event import Transfer
 from core.state import State
 from crypto.identity import Identity
 from network.quorum import QuorumReplica, SqliteVoteStore, VoteStoreError
+from tests.test_quorum_certificate import MALFORMED_EVENTS
 
 GENESIS = State({"alice": 10})
 A = Transfer("alice", "bob", 8, 0)
@@ -256,3 +257,68 @@ def test_signature_on_one_event_is_not_valid_for_another_with_the_same_id(
     replica = open_replica(path, members, committee)
     assert QuorumCertificate(first, votes).verify(committee)
     assert not replica.handle_certificate(QuorumCertificate(second, votes))
+
+
+# --- Malformed events, which cannot be written in the Lean model -------------
+
+
+@pytest.mark.parametrize("name", MALFORMED_EVENTS)
+def test_malformed_vote_request_is_refused_before_auth_and_takes_no_lock(
+    path, members, committee, name
+):
+    def auth(_event):
+        raise AssertionError("auth must not see a malformed event")
+
+    replica = open_replica(path, members, committee, auth=auth)
+
+    assert replica.handle_vote_request(MALFORMED_EVENTS[name]) is None
+    assert replica.votes() == []
+
+
+def test_malformed_vote_request_does_not_block_the_valid_one(path, members, committee):
+    # Same (sender, nonce) as A. Before the check this signed a negative amount.
+    replica = open_replica(path, members, committee)
+
+    assert replica.handle_vote_request(Transfer("alice", "bob", -8, 0)) is None
+    assert replica.handle_vote_request(A) is not None
+    assert replica.votes() == [A]
+
+
+@pytest.mark.parametrize("value", [None, 1, "event", object()])
+def test_vote_request_that_is_not_an_event_is_refused(path, members, committee, value):
+    replica = open_replica(path, members, committee)
+    assert replica.handle_vote_request(value) is None
+    assert replica.votes() == []
+
+
+@pytest.mark.parametrize("name", MALFORMED_EVENTS)
+def test_malformed_certificate_is_refused_not_an_error(path, members, committee, name):
+    replica = open_replica(path, members, committee)
+    before = replica.state.root()
+
+    assert replica.handle_certificate(QuorumCertificate(MALFORMED_EVENTS[name], ())) is False
+    assert replica.state.root() == before
+    assert replica.log == []
+
+
+@pytest.mark.parametrize("value", [None, 1, "event", object()])
+def test_certificate_on_what_is_not_an_event_is_refused(path, members, committee, value):
+    replica = open_replica(path, members, committee)
+    assert replica.handle_certificate(QuorumCertificate(value, ())) is False
+
+
+def test_certificate_with_a_bool_amount_and_real_signatures_is_not_executed(
+    path, members, committee
+):
+    # `True` passes every check on the amount: it is an int greater than zero.
+    event = Transfer("alice", "bob", True, 0)
+    payload = vote_payload(committee, event)
+    forged = QuorumCertificate(
+        event,
+        tuple(Vote(i, members[i].sign(payload)) for i in range(committee.quorum)),
+    )
+    replica = open_replica(path, members, committee)
+
+    assert replica.handle_certificate(forged) is False
+    assert replica.log == []
+    assert replica.state.nonce("alice") == 0

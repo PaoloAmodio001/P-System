@@ -291,6 +291,12 @@ at most `f` are faulty.
   answer on every node. Aliases do not authorize spending in quorum mode.
 - Only committee members execute events. A node outside the committee (an
   observer) is not part of quorum mode and no result covers it.
+- Only a well-formed event can be voted on or certified: sender and receiver are
+  non-empty strings, amount and nonce are integers from `0` to `2^256 - 1`, and
+  parents are 64 lowercase hex characters. The model has no malformed events, and
+  its natural numbers have no upper bound. So Python refuses more than the model
+  does, never less. A zero amount or a transfer to self is well formed, and is
+  refused at execution, as in the model.
 
 ---
 

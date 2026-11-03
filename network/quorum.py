@@ -11,7 +11,12 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from core.attestation import Committee, QuorumCertificate, Vote
+from core.attestation import (
+    Committee,
+    QuorumCertificate,
+    Vote,
+    is_well_formed_event,
+)
 from core.derive import StateDeriver
 from core.event import Transfer
 from core.state import State
@@ -371,6 +376,9 @@ class QuorumReplica:
         the vote is durably recorded. If that fails the error propagates, and no
         signature exists.
         """
+        if not is_well_formed_event(event):
+            return None
+
         if not self._auth(event):
             return None
 
@@ -391,10 +399,12 @@ class QuorumReplica:
 
     def _can_execute(self, certificate: QuorumCertificate) -> bool:
         # Signatures last: they are the only expensive check, and the result does
-        # not depend on the order because the checks have no side effects.
+        # not depend on the order because the checks have no side effects. The
+        # check on the event comes first, because the others assume it.
         event = certificate.event
         return (
-            self._is_fresh(event)
+            is_well_formed_event(event)
+            and self._is_fresh(event)
             and self._is_ready(event)
             and self._is_executable(event)
             and certificate.verify(self.committee)

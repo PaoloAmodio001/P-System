@@ -54,7 +54,52 @@ class Attestation:
 
 VOTE_DOMAIN = b"P-SYSTEM/QUORUM-VOTE/v1\0"
 ED25519_PUBLIC_KEY_SIZE = 32
+MAX_EVENT_INTEGER = 2**256 - 1
 _ROOT_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_event_integer(value) -> bool:
+    # type() rejects bool, which is an int equal to 0 or 1.
+    return type(value) is int and 0 <= value <= MAX_EVENT_INTEGER
+
+
+def _is_account(value) -> bool:
+    if type(value) is not str or not value:
+        return False
+
+    try:
+        value.encode()
+    except UnicodeEncodeError:
+        return False
+
+    return True
+
+
+def is_well_formed_event(event) -> bool:
+    """
+    Whether `event` is a value of `Event` in the model: amount and nonce are natural
+    numbers, and parents are event ids.
+
+    Python is stricter than the model in one way, a bound on integers. Without one,
+    whether an event has a canonical form depends on the integer limit of the
+    interpreter, so nodes could disagree on it. A zero amount or a transfer to self
+    is well formed: the model refuses them at execution.
+
+    This never raises, whatever the fields hold. Each function below that takes an
+    event from outside checks it here first.
+    """
+    return (
+        isinstance(event, Transfer)
+        and _is_account(event.sender)
+        and _is_account(event.receiver)
+        and _is_event_integer(event.amount)
+        and _is_event_integer(event.nonce)
+        and type(event.parents) is tuple
+        and all(
+            type(parent) is str and _ROOT_PATTERN.fullmatch(parent) is not None
+            for parent in event.parents
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -185,6 +230,9 @@ class Vote:
         Sign a vote. This does not check the vote lock: an honest validator
         must only call it through the lock in the replica.
         """
+        if not is_well_formed_event(event):
+            raise ValueError("MALFORMED EVENT")
+
         validator = committee.index_of(identity.public_key)
 
         if validator is None:
@@ -200,7 +248,7 @@ class Vote:
         committee: Committee,
         event: Transfer,
     ) -> bool:
-        return self._verify_payload(
+        return is_well_formed_event(event) and self._verify_payload(
             committee,
             vote_payload(committee, event),
         )
@@ -235,7 +283,19 @@ class QuorumCertificate:
 
         Signatures are checked last. After the checks on the signers there are
         at most `n` of them, so a large certificate costs no verification.
+
+        The checks on the types have no counterpart in the model, where these
+        values do not exist. Whatever the fields hold, the answer is False and not
+        an exception.
         """
+        if not is_well_formed_event(self.event):
+            return False
+
+        if type(self.votes) is not tuple or not all(
+            type(vote) is Vote for vote in self.votes
+        ):
+            return False
+
         signers = [vote.validator for vote in self.votes]
 
         if not all(committee.has_validator(signer) for signer in signers):
