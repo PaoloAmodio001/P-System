@@ -1,13 +1,18 @@
 # P-System Claim Traceability
 
-Revision inspected: 71d674e
+Revision inspected: 9e8f205 (labels reviewed 2026-11-03)
 Status: preliminary research inventory, not a release certification.
 
 ## 1. Evidence categories
 
-- FORMAL: an identified Lean theorem, whose statement and assumptions must be reviewed.
-- EMPIRICAL: an identified automated test covering a concrete scenario.
+Labels follow `docs/PROOF-OBLIGATIONS.md`:
+
+- FORMAL: machine-checked Lean theorem whose proof does real work.
+- CONDITIONAL: machine-checked, but the hypotheses contain the hard part.
+- TRIVIAL: machine-checked restatement of a hypothesis or definition; not a property.
+- EMPIRICAL: an identified automated test covering concrete scenarios.
 - BENCHMARK: measured results with a documented workload and baseline.
+- ASSUMPTION: explicit environmental or external assumption.
 - OPEN: evidence or implementation refinement is still missing.
 
 A test is not a formal proof. A theorem about the Lean model does not
@@ -15,18 +20,22 @@ automatically prove that the Python implementation satisfies it.
 
 ## 2. Preliminary claim matrix
 
-| Claim | Formal evidence to inspect | Empirical evidence to inspect | Status |
+| Claim | Formal evidence | Empirical evidence | Status |
 |---|---|---|---|
-| Event application is deterministic | apply_event_deterministic | State transition and execution tests | Formal candidate; scope review required |
-| Causal ordering is preserved | R1_5_topological_order_refinement; R1_5_causal_ancestry_precedes_descendant | tests/test_derive.py | Formal candidate; Python refinement open |
-| Conflicting events are not jointly executable | P15_conflict_excludes_joint_execution; R1_7_conflict_excludes_joint_execution | tests/test_conflict_closure.py and resolver tests | Formal candidate; inspect assumptions |
-| Conflicting alternatives are preserved | R1_7_conflict_preserves_alternatives | tests/test_conflict_rebuild_semantics.py and reconciliation tests | Formal candidate; verify test coverage |
-| Duplicate ingress is not fresh execution | P13_duplicate_ingress_is_not_fresh; P11_replay_is_not_fresh_execution | Canonical identity and lifecycle tests | Formal candidate; inspect concrete correspondence |
-| Reconciliation preserves event knowledge | R1_4_6_reconciliation_preserves_representation; R1_4_6_reconciliation_preserves_membership | Network reconciliation and canonical-view tests | Formal candidate; refinement open |
-| Distributed convergence | R1_10_distributed_convergence; R1_10_convergence_simulation | Node reconciliation and state convergence tests | Model-level claim only until assumptions and implementation correspondence are checked |
-| Retry eventually reaches stable availability | P16_eventual_retry_hits_stable_availability; P16_conditional_eventual_reconnection | Reconnect and retry tests | Conditional claim; environmental assumptions required |
-| Network security and authorization | P08_signature_without_identity_binding_not_authorized; P14_secure_transport_boundary | Signature and authorization tests | Limited modeled claims; no blanket security guarantee |
-| Deterministic topological selection | r17_minimum_selection_exists; r17MinimumReadyEvent_is_minimal | Deterministic ordering tests | Review ordering semantics and Python ID comparison |
+| Nodes with the same knowledge derive the same state, or both reject | `derive_knowledge_invariant` (`Agreement.lean`), from `executable_runs_same_state`, `derive_sound`, `derive_complete` | `tests/test_lean_differential.py` (Python vs Lean model, 3000 histories) | FORMAL (model); EMPIRICAL (Python) |
+| State derivation is independent of arrival order | `derive_perm_invariant` | `tests/test_transitive_relevance.py`, `tests/test_sync_order_independence.py`, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Derivation rejects exactly the histories with no valid execution | `derive_eq_none_iff` | `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Event application is deterministic | `apply_event_deterministic` (`x = x` by `rfl`) | State transition and execution tests | TRIVIAL; the meaningful statement is the row above on arrival order |
+| Causal ordering is preserved | `R1_5_causal_ancestry_precedes_descendant` (from direct order and causal closure); `r17_constructive_complete_ordering_refines_direct_order` (such an order exists). `R1_5_topological_order_refinement` is TRIVIAL | `tests/test_derive.py` | FORMAL (model); Python refinement OPEN |
+| Conflicting events are not jointly executable | `P15_conflict_excludes_joint_execution`, `R1_7_conflict_excludes_joint_execution` follow from the definition of `Compatible`. In the derivation model a conflicting pair cannot both run, which is covered by `derive_eq_none_iff` | `tests/test_conflict_closure.py` and resolver tests | TRIVIAL as stated; covered by FORMAL `derive_eq_none_iff` for the derivation |
+| Conflicting alternatives are preserved | `R1_7_conflict_preserves_alternatives` states only `a ≠ b` (projection) | `tests/test_conflict_rebuild_semantics.py` and reconciliation tests | TRIVIAL; preservation is EMPIRICAL only |
+| Duplicate ingress is not fresh execution | `P13_duplicate_ingress_is_not_fresh`, `P11_replay_is_not_fresh_execution` (`P -> not not P`) | `tests/test_sync_idempotence.py`, canonical identity and lifecycle tests | TRIVIAL; EMPIRICAL |
+| Reconciliation preserves event knowledge | `R1_4_6_reconciliation_preserves_representation`, `R1_4_6_reconciliation_preserves_membership`: merge is list append, and `ImplEvent` is a Lean structure, not the Python code | Network reconciliation and canonical-view tests | TRIVIAL; EMPIRICAL |
+| Distributed convergence (R1_10) | `R1_10_distributed_convergence`, `R1_10_convergence_simulation` assume the permutation | Node reconciliation and state convergence tests | CONDITIONAL; superseded by `derive_knowledge_invariant` |
+| Retry eventually reaches stable availability | `P16_conditional_eventual_reconnection` assumes a connection succeeds whenever the peer is available | Reconnect and retry tests | CONDITIONAL; not liveness |
+| Network security and authorization | `P08_signature_without_identity_binding_not_authorized`, `P14_secure_transport_boundary`: no cryptography is modelled | Signature, authorization and TLS tests | TRIVIAL; EMPIRICAL |
+| Deterministic selection of the next event | `selectNext_spec` (current Python rule: smallest ready and executable id). `r17_minimum_selection_exists`, `r17MinimumReadyEvent_is_minimal` model the pre-538ee51 rule | Deterministic ordering tests, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Byzantine fault tolerance | No adversary model | None | OPEN; not claimed |
 | Performance advantage | No theorem establishes a performance advantage | Benchmark execution and comparative baseline required | OPEN |
 
 The test paths and theorem names above are candidate evidence references
@@ -57,6 +66,6 @@ Do not claim superiority from the existence of benchmark scripts alone.
 
 ## 5. Publication rule
 
-Every scientific claim must be marked FORMAL, EMPIRICAL, BENCHMARK,
-ASSUMPTION, or OPEN. Claims may be upgraded only when their specific
+Every scientific claim must be marked FORMAL, CONDITIONAL, TRIVIAL,
+EMPIRICAL, BENCHMARK, ASSUMPTION, or OPEN. Claims may be upgraded only when their specific
 evidence has been reviewed and recorded.
