@@ -88,8 +88,7 @@ Scope and limits of this result:
 - That the hypotheses can be satisfied, and that they cannot be dropped, is
   proved only for `n = 4`, `f = 1` (witnesses below). Tightness for other
   values of `f` is not proved.
-- It concerns conflicting events only. It does not relate a node's state to
-  `derive` and does not say that nodes converge.
+- It concerns conflicting events only and does not say that nodes converge.
 - Mathematically it is the known quorum argument (FastPay, Lemma A.1). The
   contribution is the machine-checked statement against an arbitrary input
   list per node, not a new idea.
@@ -106,6 +105,20 @@ properties:
 | `fork_with_forged_signature`, `forged_run_not_unforgeable` | A forged signature gives a fork; `no_double_spend` implies that run violates `Unforgeable` | FORMAL (witness, `f = 1`) |
 | `fork_with_faulty_receiver` | With the other hypotheses holding, the conclusion fails for a faulty receiver, so `hu` and `hv` are needed | FORMAL (witness, `f = 1`) |
 
+### Link to `derive`
+
+Module `QuorumDerive`, on the same model. These results have no hypothesis
+about quorums, faults or signatures.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `state_is_derive` | For any inputs, `derive` on the events a node executed succeeds and returns the node's state | FORMAL (model) |
+| `same_executed_same_state` | Two nodes that executed the same events, as sets and from one initial state, are in the same state | FORMAL (model) |
+
+`same_executed_same_state` takes the equality of the executed sets as a
+premise. It does not say that nodes reach the same events; that is
+`convergence_after_exchange`, still `OPEN`.
+
 ## Current Lean baseline
 
 | Module | Content |
@@ -120,11 +133,12 @@ properties:
 | `QuorumExamples` | executable `#guard` checks of `Quorum` (not theorems) |
 | `QuorumSafety` | Byzantine safety result above |
 | `QuorumNonVacuity` | witnesses for the hypotheses of `no_double_spend` (`n = 4`) |
+| `QuorumDerive` | link between the quorum model and `derive` |
 
-- 13 modules, 76 theorem declarations (8 of them about the witnesses), about
-  2000 lines.
-- `lake build`: passing. No `sorry`, `admit`, `axiom`, `opaque` or
-  `native_decide`.
+- 14 modules, 83 theorem declarations (8 of them about the witnesses), about
+  2100 lines.
+- `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
+  `opaque` or `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
   use only `propext`, `Quot.sound` and `Classical.choice`.
 
@@ -320,6 +334,6 @@ say that honest nodes see the same messages.
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
 Status: partly done. `no_double_spend` is proved, with non-vacuity witnesses
-for `n = 4`, `f = 1` (section above). `state_is_derive` and
-`convergence_after_exchange` are `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
+for `n = 4`, `f = 1`, and `state_is_derive` is proved (section above).
+`convergence_after_exchange` is `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
 quorum mode is not implemented in Python yet.
