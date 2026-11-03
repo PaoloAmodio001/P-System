@@ -15,9 +15,11 @@ for the inputs:
     V <id> <sender> <receiver> <amount> <nonce> <parents>
     C <id> <sender> <receiver> <amount> <nonce> <parents> <signatures>
 
-`<parents>` is `p,p,...` or `-`. `<signatures>` is `v:s:i,...` or `-`: an entry
-attributed to validator `v`, whose symbolic signature was made by `s` on id `i`.
-It verifies when `s = v` and `i` is the id of the event.
+`<parents>` is `p,p,...` or `-`. `<signatures>` is `v:s:E;v:s:E;...` or `-`: an
+entry attributed to validator `v`, whose symbolic signature was made by `s` on the
+event `E`, written `id|sender|receiver|amount|nonce|parents`. It verifies when
+`s = v` and `E` is the whole event of the certificate, not only its id: Python signs
+the canonical form, so two events with one id do not share signatures there either.
 
 Output, for each case: one line for the state before any input and one after
 each input, computed by `runNode` on that prefix of the inputs, then `---`:
@@ -31,10 +33,11 @@ with exit code 1, never a default value.
 
 open PSystem PSystem.Quorum
 
-abbrev Sg := Nat × EventId
+/-- A symbolic signature: who made it, and on which whole event. -/
+abbrev Sg := Nat × Event
 
 def verifySymbolic {n : Nat} (v : Fin n) (e : Event) (s : Sg) : Bool :=
-  s.1 == v.val && s.2 == e.id
+  s.1 == v.val && s.2 == e
 
 inductive RawInput where
   | vote (e : Event)
@@ -55,15 +58,6 @@ def parseNat (s : String) : Except String Nat :=
 def parseParents (s : String) : Except String (List EventId) :=
   if s = "-" then .ok [] else (s.splitOn ",").mapM parseNat
 
-def parseSig (s : String) : Except String (Nat × Sg) :=
-  match s.splitOn ":" with
-  | [v, signer, id] => do
-      return (← parseNat v, ← parseNat signer, ← parseNat id)
-  | _ => .error s!"bad signature: '{s}'"
-
-def parseSigs (s : String) : Except String (List (Nat × Sg)) :=
-  if s = "-" then .ok [] else (s.splitOn ",").mapM parseSig
-
 def parseEvent (id sender receiver amount nonce parents : String) : Except String Event := do
   return {
     id := ← parseNat id
@@ -73,6 +67,19 @@ def parseEvent (id sender receiver amount nonce parents : String) : Except Strin
     nonce := ← parseNat nonce
     parents := ← parseParents parents
   }
+
+def parseSig (s : String) : Except String (Nat × Sg) :=
+  match s.splitOn ":" with
+  | [v, signer, event] =>
+      match event.splitOn "|" with
+      | [id, sender, receiver, amount, nonce, parents] => do
+          return (← parseNat v, ← parseNat signer,
+            ← parseEvent id sender receiver amount nonce parents)
+      | _ => .error s!"bad signed event: '{event}'"
+  | _ => .error s!"bad signature: '{s}'"
+
+def parseSigs (s : String) : Except String (List (Nat × Sg)) :=
+  if s = "-" then .ok [] else (s.splitOn ";").mapM parseSig
 
 def parseLine (c : RawCase) (line : String) : Except String RawCase :=
   match line.splitOn " " with
