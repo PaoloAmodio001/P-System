@@ -116,8 +116,24 @@ about quorums, faults or signatures.
 | `same_executed_same_state` | Two nodes that executed the same events, as sets and from one initial state, are in the same state | FORMAL (model) |
 
 `same_executed_same_state` takes the equality of the executed sets as a
-premise. It does not say that nodes reach the same events; that is
-`convergence_after_exchange`, still `OPEN`.
+premise. It does not say that nodes reach the same events; the next section does.
+
+### Convergence after exchanging logs
+
+Module `QuorumConvergence`, under the hypotheses of `no_double_spend`.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `exchange_executes_union` | An honest node that receives the log of another honest node ends up having executed exactly the events of both | FORMAL (model) |
+| `convergence_after_exchange` | Two honest nodes that receive each other's logs reach the same state | FORMAL (model) |
+| `exchange_run_diverges_then_converges` | Witness: the hypotheses hold in a run where the states differ before the exchange | FORMAL (witness, `f = 1`) |
+| `no_convergence_with_small_quorum` | Witness: with quorum `2f` the states stay different after the exchange | FORMAL (witness, `f = 1`) |
+
+Limits: delivery of the logs is in the statement, as extra inputs, so this is
+not a liveness result. The nodes must start from one initial state. The result
+covers two nodes; a statement for all honest nodes at once is not proved. It
+says nothing about an event that no honest node has executed: an equivocating
+sender can leave its account blocked.
 
 ## Current Lean baseline
 
@@ -134,9 +150,10 @@ premise. It does not say that nodes reach the same events; that is
 | `QuorumSafety` | Byzantine safety result above |
 | `QuorumNonVacuity` | witnesses for the hypotheses of `no_double_spend` (`n = 4`) |
 | `QuorumDerive` | link between the quorum model and `derive` |
+| `QuorumConvergence` | convergence after exchanging logs |
 
-- 14 modules, 83 theorem declarations (8 of them about the witnesses), about
-  2100 lines.
+- 15 modules, 98 theorem declarations (10 of them about the witnesses), about
+  2600 lines.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
@@ -159,9 +176,8 @@ not establish that the Python implementation refines that model.
   order matters.
 - Identity binding and TLS are not modelled. Signatures appear only as
   abstract parameters of `Quorum`, with unforgeability as a hypothesis.
-- `no_double_spend` covers safety against conflicting events in the quorum
-  model. No theorem establishes liveness or complete Byzantine fault
-  tolerance, and O7 is only partly done.
+- O7 covers safety in the quorum model. No theorem establishes liveness or
+  complete Byzantine fault tolerance.
 - There is no liveness theorem.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
@@ -333,7 +349,6 @@ say that honest nodes see the same messages.
 `ASSUMPTION`, stated in the theorems: signatures cannot be forged. Signing
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
-Status: partly done. `no_double_spend` is proved, with non-vacuity witnesses
-for `n = 4`, `f = 1`, and `state_is_derive` is proved (section above).
-`convergence_after_exchange` is `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
+Status: done for the Lean model (sections above); the witnesses cover only
+`n = 4`, `f = 1`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
 quorum mode is not implemented in Python yet.

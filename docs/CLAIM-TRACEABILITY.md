@@ -35,6 +35,7 @@ automatically prove that the Python implementation satisfies it.
 | Network security and authorization | None; no cryptography is modelled | Signature, authorization and TLS tests | EMPIRICAL |
 | Honest nodes never execute conflicting events (quorum mode) | `no_double_spend` (`QuorumSafety.lean`), with unforgeable signatures as a hypothesis | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python) |
 | A node's state is what `derive` computes from the events it executed (quorum mode) | `state_is_derive` (`QuorumDerive.lean`) | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python) |
+| Two honest nodes that exchange logs reach the same state (quorum mode) | `convergence_after_exchange`, `exchange_executes_union` (`QuorumConvergence.lean`); delivery is in the statement | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python); not liveness |
 | The current implementation prevents forks between honest nodes | None | `tests/test_p15_byzantine_safety.py` asserts the opposite: the nodes detect the conflict and keep different states | Not claimed; false for the current code |
 | Byzantine fault tolerance, including liveness | No theorem | None | OPEN; not claimed |
 | Performance advantage | No theorem establishes a performance advantage | Benchmark execution and comparative baseline required | OPEN |

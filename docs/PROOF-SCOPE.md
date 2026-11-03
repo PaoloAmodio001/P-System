@@ -24,4 +24,4 @@ The current implementation does not prevent forks between honest nodes: two node
 
 ## Quorum mode (planned)
 
-Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is not implemented. Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`, which is only partly done: `no_double_spend` is proved for the Lean model, and the rest is `OPEN`. When discharged, O7 will cover safety only, for a fixed committee of `n = 3f+1` validators, in the Lean model. It will not establish liveness, totality, committee reconfiguration, recovery from lost votes, or the security of Ed25519 and SHA-256.
+Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is not implemented. Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`, which is done for the Lean model and `OPEN` for Python. O7 covers safety only, for a fixed committee of `n = 3f+1` validators, in the Lean model. It does not establish liveness, totality, committee reconfiguration, recovery from lost votes, or the security of Ed25519 and SHA-256.
