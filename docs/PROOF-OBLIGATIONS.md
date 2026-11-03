@@ -86,12 +86,25 @@ Scope and limits of this result:
   so it says nothing about the current code, which allows forks between
   honest nodes.
 - That the hypotheses can be satisfied, and that they cannot be dropped, is
-  so far checked only by `#guard` in `QuorumExamples`, not by a theorem.
+  proved only for `n = 4`, `f = 1` (witnesses below). Tightness for other
+  values of `f` is not proved.
 - It concerns conflicting events only. It does not relate a node's state to
   `derive` and does not say that nodes converge.
 - Mathematically it is the known quorum argument (FastPay, Lemma A.1). The
   contribution is the machine-checked statement against an arbitrary input
   list per node, not a new idea.
+
+Witnesses in module `QuorumNonVacuity`, for `n = 4`, `f = 1`. They are
+computations on one instance, checked by the kernel, and are not counted as
+properties:
+
+| Theorem | What it shows | Status |
+|---|---|---|
+| `equivocation_run_satisfies_hypotheses` | All hypotheses hold in a run where a sender signs two versions, both get honest votes and honest nodes execute one | FORMAL (witness, `f = 1`) |
+| `fork_with_small_quorum` | Quorum `2f`: conflicting events run on two honest nodes, no forgery | FORMAL (witness, `f = 1`) |
+| `fork_with_too_many_faults` | `f+1` faulty validators: the same | FORMAL (witness, `f = 1`) |
+| `fork_with_forged_signature`, `forged_run_not_unforgeable` | A forged signature gives a fork; `no_double_spend` implies that run violates `Unforgeable` | FORMAL (witness, `f = 1`) |
+| `fork_with_faulty_receiver` | With the other hypotheses holding, the conclusion fails for a faulty receiver, so `hu` and `hv` are needed | FORMAL (witness, `f = 1`) |
 
 ## Current Lean baseline
 
@@ -106,8 +119,10 @@ Scope and limits of this result:
 | `Quorum` | quorum model for O7: certificates, vote lock, node transitions, `Unforgeable`; definitions only |
 | `QuorumExamples` | executable `#guard` checks of `Quorum` (not theorems) |
 | `QuorumSafety` | Byzantine safety result above |
+| `QuorumNonVacuity` | witnesses for the hypotheses of `no_double_spend` (`n = 4`) |
 
-- 12 modules, 68 theorem declarations, about 1900 lines.
+- 13 modules, 76 theorem declarations (8 of them about the witnesses), about
+  2000 lines.
 - `lake build`: passing. No `sorry`, `admit`, `axiom`, `opaque` or
   `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
@@ -304,7 +319,7 @@ say that honest nodes see the same messages.
 `ASSUMPTION`, stated in the theorems: signatures cannot be forged. Signing
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
-Status: partly done. `no_double_spend` is proved (section above).
-`state_is_derive`, `convergence_after_exchange` and the non-vacuity theorems
-are `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
+Status: partly done. `no_double_spend` is proved, with non-vacuity witnesses
+for `n = 4`, `f = 1` (section above). `state_is_derive` and
+`convergence_after_exchange` are `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
 quorum mode is not implemented in Python yet.
