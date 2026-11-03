@@ -34,7 +34,6 @@ def run_checks() -> tuple[CheckResult, ...]:
     from core.relevance_graph import RelevanceGraph
     from core.state import State
     from network.node import Node
-    from core.decision_invariance import KnowledgeExtension
     from concurrent.futures import ThreadPoolExecutor
 
     results = []

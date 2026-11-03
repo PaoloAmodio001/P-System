@@ -15,13 +15,6 @@ def test_hidden_event_can_become_relevant_through_hidden_predecessor():
         },
     )
 
-    visible = Transfer(
-        sender="alice",
-        receiver="bob",
-        amount=3,
-        nonce=0,
-    )
-
     hidden_a = Transfer(
         sender="alice",
         receiver="bob",
@@ -104,19 +97,6 @@ def test_transitive_dependency_makes_hidden_chain_relevant():
 
 
 def test_visible_conflict_does_not_remove_hidden_causal_relevance():
-    state = State(
-        balances={
-            "alice": 10,
-            "bob": 0,
-            "carol": 0,
-        },
-        nonces={
-            "alice": 0,
-            "bob": 0,
-            "carol": 0,
-        },
-    )
-
     visible = Transfer(
         sender="alice",
         receiver="bob",

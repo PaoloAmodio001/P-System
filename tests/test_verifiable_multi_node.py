@@ -1,6 +1,5 @@
 from core.event import Transfer
 from core.state import State
-from core.state_view import StateView
 from core.verifiable_view import build_verifiable_view
 from core.partial_knowledge import PartialKnowledge
 from simulator.partition import NetworkPartition

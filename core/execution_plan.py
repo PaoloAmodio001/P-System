@@ -58,8 +58,6 @@ def build_execution_plan(
     index = ExecutionIndex()
     index.add_all(events)
 
-    event_by_id = {event.event_id(): event for event in events}
-
     checked_pairs: set[tuple[str, str]] = set()
 
     for first in events:

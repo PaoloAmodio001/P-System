@@ -1,5 +1,4 @@
 from core.event import Transfer
-from core.state import State
 
 
 def impact_closure(events: list[Transfer]) -> set[str]:

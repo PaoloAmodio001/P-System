@@ -1,6 +1,5 @@
 from core.event import Transfer
 from core.graph_resolution import GraphResolver
-from core.precedence import PrecedenceAttestation
 from core.precedence_graph import PrecedenceGraph
 from core.state import State
 

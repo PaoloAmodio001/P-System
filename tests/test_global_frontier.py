@@ -1,6 +1,5 @@
 from core.event import Transfer
 from core.global_frontier import (
-    GlobalFrontier,
     build_frontier,
 )
 

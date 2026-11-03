@@ -1,8 +1,5 @@
-from core.state import State
-from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.evidence import Evidence
-from crypto.identity import Identity
 
 
 class AdversarialNetwork:

@@ -1,6 +1,5 @@
 from core.event import Transfer
 from core.frontier_attestation import (
-    FrontierAttestation,
     create_attestation,
 )
 

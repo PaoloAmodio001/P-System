@@ -576,15 +576,6 @@ def test_executor_classify_relation_conflict():
 def test_execution_decision_blocks_only_conflicting_events():
     from core.distributed_executor import DistributedExecutor
 
-    initial = State(
-        balances={
-            "alice": 10,
-            "bob": 0,
-            "carol": 5,
-            "dave": 0,
-        }
-    )
-
     first = Transfer(
         "alice",
         "bob",

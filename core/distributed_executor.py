@@ -196,11 +196,6 @@ class DistributedExecutor:
             blocked_ids
         )
 
-        event_map = {
-            event.event_id(): event
-            for event in events
-        }
-
         executable_events = [
             event
             for event in events

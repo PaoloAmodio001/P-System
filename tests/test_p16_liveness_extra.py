@@ -1,6 +1,5 @@
 from core.state import State
 from network.node import Node
-from network.peer import Peer
 
 
 def test_p16_reconnect_success_resets_retry_state():

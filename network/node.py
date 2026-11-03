@@ -1,9 +1,7 @@
-import socket
 import threading
 import time
 
 from core.event import Transfer, deduplicate_events, event_payload
-from core.proof import apply_transfer, verify_transfer
 from core.conflict_state import ConflictState
 from core.resolver import ConflictResolver
 from core.decision_engine import DecisionEngine
@@ -23,7 +21,6 @@ from network.message import (
     encode_signed_transfer,
 )
 from network.identity_message import decode_identity_claim
-from network.sync import encode_events, decode_events
 from network.decision_message import (
     encode_decision_context,
     decode_decision_context,
@@ -40,7 +37,6 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
-from network.secure_transport import SecureTransport
 
 
 class Node:

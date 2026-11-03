@@ -4,7 +4,6 @@ import json
 import socket
 import ssl
 from dataclasses import dataclass
-from typing import Optional
 
 
 MAX_MESSAGE_SIZE = 16 * 1024 * 1024

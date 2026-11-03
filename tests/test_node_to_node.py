@@ -5,9 +5,7 @@ from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
 from core.identity_claim import IdentityClaim
-from network.message import encode_signed_transfer
 from network.node import Node
-from network.transport import TCPTransport
 
 
 def test_node_to_node_signed_transfer():

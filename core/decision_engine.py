@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import FrozenSet, Generic, TypeVar
+from typing import FrozenSet, TypeVar
 
 from core.conflict_state import ConflictState
 from core.decision_invariance import (

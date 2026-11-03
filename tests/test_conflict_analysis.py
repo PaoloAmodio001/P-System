@@ -2,7 +2,6 @@ from core.conflict_analysis import analyze
 from core.conflict_set import ConflictCandidate, ConflictSet
 from core.event import Transfer
 from core.state import State
-from core.state_proof import StateProof
 from core.derive import StateDeriver
 
 

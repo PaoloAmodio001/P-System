@@ -1,4 +1,3 @@
-import time
 
 from core.event import Transfer
 from core.state import State

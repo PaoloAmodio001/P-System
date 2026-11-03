@@ -66,7 +66,7 @@ def main():
         targets.append(args.max_nodes)
 
     print("P-SYSTEM TCP/TLS SCALABILITY LAB")
-    print(f"Topologia: stella su 127.0.0.1")
+    print("Topologia: stella su 127.0.0.1")
     print(f"Massimo nodi: {args.max_nodes}")
     print(f"Tempo massimo: {args.max_seconds:.1f} s")
     print(f"RSS massimo: {args.max_rss_gib:.2f} GiB")

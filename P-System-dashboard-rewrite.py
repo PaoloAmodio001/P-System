@@ -658,7 +658,6 @@ class PSystemDashboard:
     def _draw_math_panel(self) -> None:
         c = self.math_canvas
         c.delete("all")
-        w, h = max(c.winfo_width(), 200), max(c.winfo_height(), 120)
         c.create_text(12, 12, anchor="nw", text="METRICHE / MATEMATICA", fill=ACCENT,
                       font=("TkDefaultFont", 10, "bold"))
         c.create_text(12, 42, anchor="nw",

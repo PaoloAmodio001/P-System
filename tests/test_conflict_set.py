@@ -1,7 +1,6 @@
 from core.conflict_set import ConflictCandidate, ConflictSet
 from core.event import Transfer
 from core.state import State
-from core.state_proof import StateProof
 
 
 def test_conflict_set_contains_multiple_valid_candidates():
