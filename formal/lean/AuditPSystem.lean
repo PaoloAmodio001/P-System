@@ -122,3 +122,27 @@ import PSystem
 
 #print axioms PSystem.retry_hits_stable_availability
 
+-- QuorumSafety.lean
+#print axioms PSystem.Quorum.nodup_length_le_of_subset
+
+#print axioms PSystem.Quorum.length_filter_add_filter_not
+
+#print axioms PSystem.Quorum.quorum_intersection_honest
+
+#print axioms PSystem.Quorum.voteAllowed_spec
+
+#print axioms PSystem.Quorum.voteLock_step
+
+#print axioms PSystem.Quorum.voteLock_foldl
+
+#print axioms PSystem.Quorum.voteLock_runNode
+
+#print axioms PSystem.Quorum.log_foldl
+
+#print axioms PSystem.Quorum.executed_has_cert
+
+#print axioms PSystem.Quorum.common_honest_voter
+
+#print axioms PSystem.Quorum.no_double_spend
+
+#print axioms PSystem.Quorum.same_id_same_event

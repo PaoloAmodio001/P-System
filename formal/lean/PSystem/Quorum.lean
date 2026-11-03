@@ -3,11 +3,12 @@ import PSystem.Derive
 namespace PSystem.Quorum
 
 /-!
-# Byzantine quorum model (obligation O7, definitions only)
+# Byzantine quorum model (obligation O7)
 
 The protocol of an honest node, in the style of FastPay: a validator signs
 at most one event per `(sender, nonce)`, and a node executes an event only
-with a certificate signed by a quorum. This module has no theorems yet.
+with a certificate signed by a quorum. This module has only definitions; the
+results are in `QuorumSafety`.
 
 The adversary is not a part of the model but a quantifier. A run gives each
 node its own arbitrary list of inputs (`Fin n → List Input`), and results

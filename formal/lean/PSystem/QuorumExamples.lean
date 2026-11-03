@@ -4,7 +4,7 @@ import PSystem.Quorum
 /-!
 Executable sanity checks for the quorum model (not theorems, not counted as
 properties). Committee of `n = 4`, `f = 1`, quorum 3. They test that the
-definitions behave as intended; the safety theorems are still open.
+definitions behave as intended.
 -/
 
 namespace PSystem.QuorumExamples
