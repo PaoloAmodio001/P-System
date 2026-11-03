@@ -4,3 +4,8 @@ defaultTargets = ["PSystem"]
 
 [[lean_lib]]
 name = "PSystem"
+
+# Driver for tests/test_lean_differential.py (not part of the proofs).
+[[lean_exe]]
+name = "derive_check"
+root = "DeriveCheck"
