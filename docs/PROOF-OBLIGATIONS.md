@@ -107,43 +107,87 @@ Until the tag `pre-lean-cleanup` the Lean model also contained the
 modules P01–P16, `Refinement.lean` and 13 R17 modules (about 290
 theorems in 37 files). A theorem-by-theorem review on 2026-11-03 gave:
 
-| Group | Theorems | Restatement | Definitional / helper | Conditional | Genuine | Outcome |
-|---|---|---|---|---|---|---|
-| P01–P16 | 51 | 20 | 18 | 5 | 10 (small) | removed; backoff arithmetic of P16 kept in `Backoff` |
-| `Basic.lean` | 39 | 10 | 18 | — | 11 | reduced to the definitions used now |
-| R17 modules | 38 | 5 | 12 | — | 21 | readiness and `ValidSequence` kept in `CausalOrder` |
-| `Refinement.lean` | 68 | 36 | 26 | 2 | 4 | removed |
+| Group | Theorems | Restatement | Definitional / helper | Conditional | Vacuous | Genuine | Outcome |
+|---|---|---|---|---|---|---|---|
+| P01–P16 | 51 | 20 | 18 | 5 | 0 | 10 (small) | removed; backoff arithmetic of P16 kept in `Backoff` |
+| `Basic.lean` | 39 | 10 | 18 | — | 0 | 11 | reduced to the definitions used now |
+| R17 modules | 38 | 5 | 12 | — | 5 | 16 | readiness and `ValidSequence` kept in `CausalOrder` |
+| `Refinement.lean` | 68 | 36 | 26 | 2 | 3 | 1 | removed |
+| *Cause of the vacuous results* | | | | | | | `CausalBefore` is the transitive closure of `DirectParent`, which only checks `parent.id ∈ child.parents`, and it ranges over all events, not only those in the list. Any event with a parent therefore lies on a cycle through an outside event, so `Acyclic`, `CausallyClosedKnowledge`, `CausallyClosedEvents` and `TopologicalOrder` (which implies `Acyclic`) can hold only for lists of events without parents |
 
-Reasons for the removal:
+"Vacuous" means: machine-checked, but a hypothesis can hold only for
+events without parents, so the theorem says nothing about histories with
+dependencies. An earlier version of this table counted these theorems
+as genuine (R17: 21, `Refinement.lean`: 4); that was wrong.
 
-- **Restatements.** Many theorems were proved by `exact h`, a projection,
-  `rfl` or by unfolding a definition (for example P02, P07, P13, P14,
-  P15; `apply_event_deterministic` proved `x = x`).
-- **Assumed the hard part.** P09, P13 and `R1_10_distributed_convergence`
-  assumed that the two executions are permutations of each other; P16
-  assumed that a connection succeeds whenever the peer is available.
-  Superseded by `derive_knowledge_invariant` and `derive_perm_invariant`,
-  which derive the permutation.
-- **Superseded.** `apply_events_permutation_invariant` required that no
-  two events share an account (`PairwiseIndependent`), which excludes
-  every causal chain. Superseded by `executable_runs_same_state`.
-- **Degenerate definitions.** `DirectParent` only compared ids and
-  `CausalBefore` could go through events outside the list, so `Acyclic`
-  and the closure predicates (`CausallyClosedKnowledge`,
-  `CausallyClosedEvents`) held only for events without parents. This was
-  machine-checked against `pre-lean-cleanup` (`acyclic_forces_no_parents`,
-  `parent_closed_forces_no_parents`). The constructive ordering result
-  `r17_constructive_complete_ordering_refines_direct_order` and the
-  R1.4.5/R1.5/R1.6.3 lemmas were therefore vacuous for causal histories.
-  An earlier version of this document labelled some of them FORMAL;
-  that was wrong.
-- **No link to Python.** Despite its name, `Refinement.lean` related two
-  Lean copies of the same definitions (`ImplEvent`, `ImplApplyBalance`, …);
-  no Python file referred to them, and
-  `R1_2b_state_transition_refinement` held without its executability
-  hypothesis.
-- **Old selection rule.** R17 modelled the smallest ready id, i.e. the
+### Defect of `CausalBefore` (shared by Basic, R17 and Refinement)
+
+`DirectParent parent child` only compared ids, and `CausalBefore` could
+go through events outside the list. For a parent id `p` of `e`, the
+outside event `x` with id `p` and parents `[e.id]` gives the cycle
+`e → x → e`; and closure under `DirectParent` would require every event
+with id `p`, infinitely many, to be in a finite list. Machine-checked
+against `pre-lean-cleanup` (`acyclic_forces_no_parents`,
+`parent_closed_forces_no_parents`; `TopologicalOrder` implies `Acyclic`
+by `R1_5_topological_order_implies_acyclicity`). The current model does
+not use these definitions: causality is `R17Ready` on processed ids.
+
+### P01–P16
+
+- Restatements: proofs by `exact h`, a projection, `rfl` or by unfolding
+  a definition, e.g. P02 (`ParentsExecutable` restated), P07
+  (`SignatureValid` is string equality), P14 (abstract `Prop` fields),
+  P15 (`Equivocation` has the same definition as `Conflict`).
+- Conditional: P09 and P13 assumed that the two executions are
+  permutations of each other (superseded by `derive_knowledge_invariant`
+  and `derive_perm_invariant`); P16 assumed that a connection succeeds
+  whenever the peer is available.
+- Genuine but small: P04 and P06; the backoff arithmetic of P16, kept
+  in `Backoff`.
+
+### `Basic.lean`
+
+- Restatements, e.g. `apply_event_deterministic` (`x = x` by `rfl`),
+  `topological_respects_causality` and `acyclic_forbids_self_causality`
+  (`exact` of the hypothesis). The last two also have degenerate
+  hypotheses; they were already counted as restatements.
+- The 11 genuine theorems (commutation of account-disjoint events,
+  permutation invariance and their lemmas) do not use `Acyclic` or the
+  closure predicates. `apply_events_append` is kept; the others were
+  superseded: `apply_events_permutation_invariant`
+  required that no two events share an account (`PairwiseIndependent`),
+  which excludes every causal chain; `executable_runs_same_state` does
+  not.
+
+### R17 modules
+
+- Vacuous (hypothesis `Acyclic`): `r17_exists_causally_minimal`,
+  `r17_exists_ready_event`, `r17_constructive_extend`,
+  `r17_constructive_complete_ordering` and
+  `r17_constructive_complete_ordering_refines_direct_order`.
+- Restatements, e.g. `r17MinimumReadyEvent_unique` (follows from the
+  injectivity of `some`; its `hunique` hypothesis was not needed).
+- Old selection rule: R17 modelled the smallest ready id, i.e. the
   behaviour before commit `538ee51`; `Derive` models the current rule.
+- Genuine and kept: readiness (`R17Ready`, `r17ReadyBool`),
+  `ValidSequence` and the distinct-ids lemma, now in `CausalOrder`.
+
+### `Refinement.lean`
+
+- No link to Python: despite its name, it related two Lean copies of
+  the same definitions (`ImplEvent`, `ImplApplyBalance`, …); no Python
+  file referred to them, and `R1_2b_state_transition_refinement` held
+  without its executability hypothesis.
+- Vacuous (hypothesis `CausallyClosedKnowledge` or
+  `CausallyClosedEvents`): `R1_4_5_causal_ancestor_mem`,
+  `R1_5_derivation_order_is_causal`,
+  `R1_6_3_direct_parent_invariant_implies_topological`. Ten further
+  theorems with degenerate hypotheses (R1.4.5, R1.5, R1.6.2, R1.6.3)
+  were already counted as restatements or helpers.
+- Conditional: `R1_10_distributed_convergence` and
+  `R1_10_convergence_simulation` assumed the permutation.
+- Genuine (small): `R1_6_1_sequence_state_transition_refinement`, an
+  induction between the two Lean copies.
 
 To inspect the removed modules: `git checkout pre-lean-cleanup`.
 
