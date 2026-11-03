@@ -283,7 +283,14 @@ at most `f` are faulty.
 - Two certificates for conflicting events mean that more than `f`
   validators are faulty, outside the assumptions. A node stops and reports
   it; it does not choose.
-- Evidence of uncertified conflicting alternatives is preserved.
+- Evidence of uncertified conflicting alternatives is preserved. It does not
+  make the decision status `CONFLICTED`; only a stop for two conflicting
+  certificates does.
+- The `sender` of an event is the `identity_id` of the key that signs it, so the
+  check on a vote request depends only on the signature and gives the same
+  answer on every node. Aliases do not authorize spending in quorum mode.
+- Only committee members execute events. A node outside the committee (an
+  observer) is not part of quorum mode and no result covers it.
 
 ---
 

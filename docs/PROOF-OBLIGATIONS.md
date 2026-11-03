@@ -72,6 +72,8 @@ Module `QuorumSafety` in `formal/lean/PSystem/` (2026-11-03), on the model in
 | `no_double_spend` | With `n = 3f+1`, at most `f` faulty validators, quorum `2f+1` and unforgeable signatures, two honest nodes, possibly the same, never execute different events with the same `(sender, nonce)` | FORMAL (model) |
 | `same_id_same_event` | Under the same hypotheses, two events executed by honest nodes with the same id are the same event; no collision-resistance hypothesis | FORMAL (model) |
 | `common_honest_voter` | Under the same hypotheses, an honest validator voted for both of two events executed by honest nodes | FORMAL (model) |
+| `delivered_certs_agree` | Under the same hypotheses, two valid certificates delivered to honest nodes, even if not executed, are for one event when they share `(sender, nonce)` or id. This justifies stopping a node that holds two in conflict | FORMAL (model) |
+| `executed_authorized` | Under the same hypotheses, an event executed by an honest node was accepted by the check `auth` of an honest validator. `auth` is abstract: nothing is proved about Ed25519 | FORMAL (model) |
 | `quorum_intersection_honest` | Two sets of at least `q` validators out of `n` share a member outside `F` when `n + \|F\| < 2q` | FORMAL (supporting lemma) |
 | `Unforgeable` | A valid signature of an honest validator in a certificate delivered to an honest node implies that validator voted for that event | ASSUMPTION |
 
@@ -89,6 +91,9 @@ Scope and limits of this result:
   proved only for `n = 4`, `f = 1` (witnesses below). Tightness for other
   values of `f` is not proved.
 - It concerns conflicting events only and does not say that nodes converge.
+- The theorems quantify over `Fin n`, the committee. A node outside the
+  committee that only executes certificates (an observer) is not covered, and
+  the planned implementation does not allow one.
 - Mathematically it is the known quorum argument (FastPay, Lemma A.1). The
   contribution is the machine-checked statement against an arbitrary input
   list per node, not a new idea.
@@ -104,6 +109,7 @@ properties:
 | `fork_with_too_many_faults` | `f+1` faulty validators: the same | FORMAL (witness, `f = 1`) |
 | `fork_with_forged_signature`, `forged_run_not_unforgeable` | A forged signature gives a fork; `no_double_spend` implies that run violates `Unforgeable` | FORMAL (witness, `f = 1`) |
 | `fork_with_faulty_receiver` | With the other hypotheses holding, the conclusion fails for a faulty receiver, so `hu` and `hv` are needed | FORMAL (witness, `f = 1`) |
+| `authorization_needs_unforgeable` | With a forged signature, an honest node executes an event that the check `auth` refuses | FORMAL (witness, `f = 1`) |
 
 ### Link to `derive`
 
@@ -152,8 +158,9 @@ sender can leave its account blocked.
 | `QuorumDerive` | link between the quorum model and `derive` |
 | `QuorumConvergence` | convergence after exchanging logs |
 
-- 15 modules, 98 theorem declarations (10 of them about the witnesses), about
-  2600 lines.
+- 15 modules, 104 theorem declarations (11 of them about the witnesses), about
+  2700 lines. `formal/lean/QuorumCheck.lean` is a test driver, not part of the
+  proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
