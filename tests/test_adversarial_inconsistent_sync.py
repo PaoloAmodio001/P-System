@@ -1,5 +1,4 @@
-import time
-from tests.signed_helpers import authorize, identity_with_claim, signed_transfer
+from tests.signed_helpers import authorize, identity_with_claim, signed_transfer, wait_until
 from core.decision_status import DecisionStatus
 from core.state import State
 from network.node import Node
@@ -16,10 +15,15 @@ def test_adversarial_node_cannot_make_peers_forget_conflicting_events():
         adversary.receive_signed(signed_a,broadcast=False); adversary.receive_signed(signed_b,broadcast=False)
         adversary.signed_events={signed_a.transfer.event_id():signed_a}; adversary.sync_with(honest_b)
         adversary.signed_events={signed_b.transfer.event_id():signed_b}; adversary.sync_with(honest_a)
-        time.sleep(.1)
+        # Wait until the adversary's inconsistent views have actually been
+        # delivered, so the balance checks below run after the injection.
+        assert wait_until(lambda: tx_b in honest_a.events and honest_a.status()==DecisionStatus.CONFLICTED
+                          and tx_a in honest_b.events and honest_b.status()==DecisionStatus.CONFLICTED)
         assert honest_a.state.balance("bob")==8 and honest_a.state.balance("carol")==0
         assert honest_b.state.balance("bob")==0 and honest_b.state.balance("carol")==8
-        honest_a.sync_with(honest_b); honest_b.sync_with(honest_a); time.sleep(.1)
+        honest_a.sync_with(honest_b); honest_b.sync_with(honest_a)
+        assert wait_until(lambda: {tx_a,tx_b}<=set(honest_a.events) and {tx_a,tx_b}<=set(honest_b.events)
+                          and honest_a.status()==DecisionStatus.CONFLICTED and honest_b.status()==DecisionStatus.CONFLICTED)
         assert tx_a in honest_a.events and tx_b in honest_a.events and tx_a in honest_b.events and tx_b in honest_b.events
         assert honest_a.status()==DecisionStatus.CONFLICTED and honest_b.status()==DecisionStatus.CONFLICTED
         assert honest_a.state.balance("bob")==8 and honest_a.state.balance("carol")==0
