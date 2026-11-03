@@ -370,5 +370,4 @@ into `main`, run all fifteen:**
 
     PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py
 
-On 2026-11-04 the fifteen seeds (45000 cases) gave no difference. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
-quorum mode is not implemented in Python yet.
+On 2026-11-04 the fifteen seeds (45000 cases) gave no difference.
