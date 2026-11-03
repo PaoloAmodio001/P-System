@@ -55,29 +55,6 @@ The Lean model and Python implementation are separate artifacts. A successful Le
 
 See `docs/FORMAL-SPECIFICATION.md`, `docs/IMPLEMENTATION-REFINEMENT.md`, `docs/FORMAL-VERIFICATION-ROADMAP.md`, `docs/PROOF-OBLIGATIONS.md`, and `docs/PROOF-SCOPE.md`.
 
-## Potential relevance to space missions
-
-P-System may be worth evaluating as a research approach to distributed event coordination. This is a research hypothesis, not a claim of flight readiness, deployment, or endorsement by a space agency.
-
-### Lunar missions
-
-Canonical event identity, causal ordering, conflict preservation, and deterministic local state projections could be evaluated across landers, rovers, orbiters, relay nodes, and ground systems experiencing intermittent connectivity.
-
-### Mars missions
-
-Long communication delays and blackouts make local operation and later reconciliation important design concerns. P-System could be investigated for reconciling mission event records, science workflows, resource logs, and operational histories after connectivity returns.
-
-### Interoperability and limitations
-
-A research direction is to test whether deterministic event reconciliation could complement delay/disruption-tolerant networking. P-System is not a replacement for DTN, LunaNet, CCSDS standards, or mission-specific flight software.
-
-Operational use would require protocol integration, fault-injection and partition testing, security analysis, resource and timing measurements, hardware-in-the-loop validation, and independent review. The current tests and Lean build do not establish suitability for safety-critical flight control.
-
-Background references:
-- NASA, [Delay/Disruption Tolerant Networking](https://www.nasa.gov/communicating-with-missions/delay-disruption-tolerant-networking/)
-- NASA, [LunaNet](https://www.nasa.gov/communicating-with-missions/lunanet/)
-- NASA, [Mars communications disruption and delay](https://www.nasa.gov/wp-content/uploads/2024/01/mars-communications-disruption-and-delay.pdf)
-
 ## License
 
 Copyright 2026 Paolo Amodio.
