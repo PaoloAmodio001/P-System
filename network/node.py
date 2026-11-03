@@ -557,20 +557,14 @@ class Node:
         )
         thread.start()
 
-        # Serializza il controllo del successo con la callback di
-        # disconnessione, che usa lo stesso lock prima di aggiornare
-        # il backoff. Non dichiarare successo se la connessione è
-        # già stata rimossa o chiusa.
+        # Il successo è già stato registrato alla pubblicazione. Il lock
+        # serializza questo controllo con la callback di disconnessione:
+        # segnala False se la connessione è già stata rimossa o chiusa.
         with self._peer_connections_lock:
-            if (
-                self.peer_connections.get(handshake.node_id) is not connection
-                or not connection.connected
-            ):
-                return False
-
-            self._record_reconnect_success(handshake.node_id)
-
-        return True
+            return (
+                self.peer_connections.get(handshake.node_id) is connection
+                and connection.connected
+            )
 
     def _register_peer_connection(
         self,
@@ -602,10 +596,10 @@ class Node:
                 if existing_preferred or not candidate_preferred:
                     reject_candidate = True
                 else:
-                    self.peer_connections[node_id] = connection
+                    self._publish_peer_connection(node_id, connection)
                     close_existing = existing
             else:
-                self.peer_connections[node_id] = connection
+                self._publish_peer_connection(node_id, connection)
                 close_existing = existing
 
         if reject_candidate:
@@ -616,6 +610,17 @@ class Node:
             close_existing.close()
 
         return True
+
+    def _publish_peer_connection(
+        self,
+        node_id: str,
+        connection: PeerConnection,
+    ) -> None:
+        # Da chiamare con _peer_connections_lock. Prima azzera il backoff,
+        # poi rende visibile la connessione: anche chi legge senza lock
+        # non vede mai una connessione nuova con attempts residui.
+        self._record_reconnect_success(node_id)
+        self.peer_connections[node_id] = connection
 
     def _peer_disconnected(self, connection) -> None:
         with self._peer_connections_lock:

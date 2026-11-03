@@ -1,6 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
+import pytest
+
+import tests.test_p16_liveness as p16
 from core.state import State
 from network.node import Node
 
@@ -186,3 +189,97 @@ def test_immediate_disconnect_during_thread_start_is_not_success(monkeypatch):
         assert state.next_retry > 0
     finally:
         node.stop()
+
+
+class _ObservedConnections(dict):
+    """Record attempts at the instant a connection becomes visible."""
+
+    def __init__(self, node):
+        super().__init__()
+        self._node = node
+        self.attempts_at_publication = []
+
+    def __setitem__(self, peer_id, connection):
+        super().__setitem__(peer_id, connection)
+        self.attempts_at_publication.append(
+            self._node._reconnect_state[peer_id].attempts
+        )
+
+
+def test_outgoing_connection_is_published_with_reset_attempts():
+    from network.peer import Peer
+
+    node = Node("race-A", State({"alice": 10}), port=0)
+    target = Node("race-B", State({"alice": 10}), port=0)
+    node._record_reconnect_failure(target.node_id)
+    observed = _ObservedConnections(node)
+    node.peer_connections = observed
+
+    try:
+        node.start()
+        target.start()
+
+        assert node.open_peer_connection(
+            Peer(target.node_id, target.host, target.port)
+        )
+        assert observed.attempts_at_publication == [0]
+    finally:
+        node.stop()
+        target.stop()
+
+
+def test_incoming_connection_is_published_with_reset_attempts():
+    import time
+
+    from network.peer import Peer
+
+    # race-Z does not prefer outgoing connections to race-A, so nothing
+    # but the incoming registration can reset its state for this peer.
+    node = Node("race-Z", State({"alice": 10}), port=0)
+    initiator = Node("race-A", State({"alice": 10}), port=0)
+    node._record_reconnect_failure(initiator.node_id)
+    observed = _ObservedConnections(node)
+    node.peer_connections = observed
+
+    try:
+        node.start()
+        initiator.start()
+
+        assert initiator.open_peer_connection(
+            Peer(node.node_id, node.host, node.port)
+        )
+
+        deadline = time.monotonic() + 3.0
+        while (
+            not observed.attempts_at_publication
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+
+        assert observed.attempts_at_publication == [0]
+    finally:
+        node.stop()
+        initiator.stop()
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        p16.test_p16_reconnect_eventually_restores_peer_connection,
+        p16.test_p16_reconnect_recovers_across_repeated_peer_restarts,
+    ],
+    ids=lambda scenario: scenario.__name__,
+)
+def test_p16_scenarios_hold_when_success_recording_is_slow(
+    monkeypatch, scenario
+):
+    import time
+
+    original = Node._record_reconnect_success
+
+    def delayed(self, peer_id):
+        time.sleep(0.3)
+        return original(self, peer_id)
+
+    monkeypatch.setattr(Node, "_record_reconnect_success", delayed)
+    scenario()
