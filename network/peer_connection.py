@@ -123,9 +123,19 @@ class PeerConnection:
         while self.connected:
             try:
                 message = self.receive()
-            except (ConnectionError, OSError, TimeoutError):
+            except (
+                ConnectionError,
+                OSError,
+                TimeoutError,
+                ValueError,
+                RecursionError,
+            ):
+                # ValueError and RecursionError: the peer sent a malformed frame.
                 self._close_and_notify()
                 return
+            except Exception:
+                self._close_and_notify()
+                raise
 
             try:
                 handler(message, self)
