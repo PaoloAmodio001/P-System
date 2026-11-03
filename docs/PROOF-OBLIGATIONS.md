@@ -75,9 +75,8 @@ Scope and limits of this result:
 Manual review of the 51 P-theorems (2026-11-03): 20 restate a hypothesis
 or a definition, 18 are definitional or rename a `Basic.lean` lemma,
 5 assume the hard part, 10 are small genuine lemmas.
-The same review of `Basic.lean` (39) and the R17 modules (38) is
-summarised below. The rest of `Refinement.lean` has not yet been
-reviewed with the same criteria.
+The same review of `Basic.lean` (39), the R17 modules (38) and
+`Refinement.lean` (68) is summarised below.
 
 A Lean theorem establishes a property of the formal model only. It does
 not establish that the Python implementation refines that model.
@@ -167,6 +166,40 @@ Gaps found by the review, and their status:
   unconditionally (the earlier behaviour). `Derive` models the current
   behaviour; R17 does not describe the implementation.
 - *Open.* `R17Step` is only used in a restatement.
+
+### `Refinement.lean` (review 2026-11-03)
+
+| Restatement | Definitional / helper | Conditional | Genuine |
+|---|---|---|---|
+| 36 | 26 | 2 (R1_10) | 4 |
+
+Despite its name, `Refinement.lean` does not relate the Python code to
+the model. `ImplEvent`, `ImplApplyBalance`, `ImplApplyNonce` and
+`ImplExecutable` are Lean definitions that copy `Event`, `ApplyEvent`
+and `Executable` field by field; no Python file refers to them. The
+R1.2/R1.6.1/R1.11 "refinement" theorems therefore show that two Lean
+copies of the same definition agree.
+
+- `R1_2b_state_transition_refinement` (and `R1_11_state_refinement`)
+  carry the hypothesis `himpl` (the event is executable), which is not
+  needed: the statement compiles without it. `R1_2b_balance_transition`
+  has an unused hypothesis `_hneq`.
+- R1.3 and R1.4 (identity, parents, knowledge representation, merge)
+  are projections of their definitions; `KnowledgeMerge` is list
+  append. `R1_11_refinement_instance_available` proves `∃ r, r = x`
+  by `rfl`.
+- `R1_6_projection_compatible`, `R1_6_projection_state_representation`,
+  `R1_6_projection_subset_knowledge` restate their hypotheses; the
+  definitions `OrderRepresentation`, `ProjectionStateRepresentation`
+  and `SerializationRepresentation` ignore their implementation argument.
+- Genuine (small): `R1_4_5_causal_ancestor_mem` (closure under parents
+  gives closure under ancestors), `R1_5_derivation_order_is_causal`
+  (direct order gives full causal order), `R1_6_3_direct_parent_invariant_implies_topological`
+  (the same result again) and `R1_6_1_sequence_state_transition_refinement`
+  (induction over a run, between the two Lean copies).
+
+O2 (implementation refinement) is therefore not addressed by
+`Refinement.lean`; see O2 below.
 
 ### Related refinement theorem
 
