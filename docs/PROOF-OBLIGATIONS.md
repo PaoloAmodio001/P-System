@@ -72,8 +72,10 @@ Scope and limits of this result:
 | `Convergence`, `Soundness`, `Completeness`, `Agreement` | the main result above |
 | `DeriveExamples` | executable `#guard` checks (not theorems) |
 | `Backoff` | arithmetic of the retry delay in `network/node.py` |
+| `Quorum` | quorum model for O7: certificates, vote lock, node transitions, `Unforgeable`; definitions only |
+| `QuorumExamples` | executable `#guard` checks of `Quorum` (not theorems) |
 
-- 9 modules, 56 theorem declarations, about 1300 lines.
+- 11 modules, 56 theorem declarations, about 1600 lines.
 - `lake build`: passing. No `sorry`, `admit`, `axiom`, `opaque` or
   `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
@@ -94,9 +96,11 @@ not establish that the Python implementation refines that model.
   Every result about states pairs it with `ExecutableRun`, which makes
   the truncation impossible; `DeriveExamples` shows that without it the
   order matters.
-- Signatures, identity binding and TLS are not modelled.
-- There is no adversary model. No theorem establishes Byzantine fault
-  tolerance.
+- Identity binding and TLS are not modelled. Signatures appear only as
+  abstract parameters of `Quorum`, and no theorem uses them yet.
+- `Quorum` defines the honest protocol and quantifies over arbitrary
+  inputs, but no theorem establishes Byzantine safety yet (O7 is `OPEN`).
+  No theorem establishes Byzantine fault tolerance.
 - There is no liveness theorem.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
@@ -268,4 +272,7 @@ say that honest nodes see the same messages.
 `ASSUMPTION`, stated in the theorems: signatures cannot be forged. Signing
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
-Status: `OPEN`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`.
+Status: `OPEN`. The definitions are in `Quorum` and are exercised by the
+`#guard` checks in `QuorumExamples`, which are not proofs: none of the
+theorems above exists yet. The link to Python will be `EMPIRICAL`, not
+`REFINEMENT`.

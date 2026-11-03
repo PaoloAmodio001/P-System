@@ -7,3 +7,5 @@ import PSystem.Soundness
 import PSystem.Completeness
 import PSystem.Agreement
 import PSystem.Backoff
+import PSystem.Quorum
+import PSystem.QuorumExamples
