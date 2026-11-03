@@ -1,6 +1,6 @@
 # P-System Claim Traceability
 
-Revision inspected: 9e8f205 (labels reviewed 2026-11-03)
+Revision inspected: after tag `pre-lean-cleanup` (labels reviewed 2026-11-03)
 Status: preliminary research inventory, not a release certification.
 
 ## 1. Evidence categories
@@ -25,18 +25,21 @@ automatically prove that the Python implementation satisfies it.
 | Nodes with the same knowledge derive the same state, or both reject | `derive_knowledge_invariant` (`Agreement.lean`), from `executable_runs_same_state`, `derive_sound`, `derive_complete` | `tests/test_lean_differential.py` (Python vs Lean model, 3000 histories) | FORMAL (model); EMPIRICAL (Python) |
 | State derivation is independent of arrival order | `derive_perm_invariant` | `tests/test_transitive_relevance.py`, `tests/test_sync_order_independence.py`, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
 | Derivation rejects exactly the histories with no valid execution | `derive_eq_none_iff` | `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
-| Event application is deterministic | `apply_event_deterministic` (`x = x` by `rfl`) | State transition and execution tests | TRIVIAL; the meaningful statement is the row above on arrival order |
-| Causal ordering is preserved | In every valid execution, and so in the order computed by `derive`, each event runs after its declared parents (`ValidSequence`, `derive_sound`). `R1_5_causal_ancestry_precedes_descendant` and `r17_constructive_complete_ordering_refines_direct_order` are vacuous: their hypotheses (`CausallyClosedEvents`, `Acyclic`) hold only for parentless events. `R1_5_topological_order_refinement` is TRIVIAL | `tests/test_derive.py`, `tests/test_lean_differential.py` | FORMAL via `derive_sound` (model); EMPIRICAL (Python) |
-| Conflicting events are not jointly executable | `P15_conflict_excludes_joint_execution`, `R1_7_conflict_excludes_joint_execution` follow from the definition of `Compatible`. In the derivation model a conflicting pair cannot both run, which is covered by `derive_eq_none_iff` | `tests/test_conflict_closure.py` and resolver tests | TRIVIAL as stated; covered by FORMAL `derive_eq_none_iff` for the derivation |
-| Conflicting alternatives are preserved | `R1_7_conflict_preserves_alternatives` states only `a ≠ b` (projection) | `tests/test_conflict_rebuild_semantics.py` and reconciliation tests | TRIVIAL; preservation is EMPIRICAL only |
-| Duplicate ingress is not fresh execution | `P13_duplicate_ingress_is_not_fresh`, `P11_replay_is_not_fresh_execution` (`P -> not not P`) | `tests/test_sync_idempotence.py`, canonical identity and lifecycle tests | TRIVIAL; EMPIRICAL |
-| Reconciliation preserves event knowledge | `R1_4_6_reconciliation_preserves_representation`, `R1_4_6_reconciliation_preserves_membership`: merge is list append, and `ImplEvent` is a Lean structure, not the Python code | Network reconciliation and canonical-view tests | TRIVIAL; EMPIRICAL |
-| Distributed convergence (R1_10) | `R1_10_distributed_convergence`, `R1_10_convergence_simulation` assume the permutation | Node reconciliation and state convergence tests | CONDITIONAL; superseded by `derive_knowledge_invariant` |
-| Retry eventually reaches stable availability | `P16_conditional_eventual_reconnection` assumes a connection succeeds whenever the peer is available | Reconnect and retry tests | CONDITIONAL; not liveness |
-| Network security and authorization | `P08_signature_without_identity_binding_not_authorized`, `P14_secure_transport_boundary`: no cryptography is modelled | Signature, authorization and TLS tests | TRIVIAL; EMPIRICAL |
-| Deterministic selection of the next event | `selectNext_spec` (current Python rule: smallest ready and executable id). `r17_minimum_selection_exists`, `r17MinimumReadyEvent_is_minimal` model the pre-538ee51 rule | Deterministic ordering tests, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Causal ordering is preserved | Every event runs after its declared parents in every valid execution, and so in the order computed by `derive` (`ValidSequence`, `derive_sound`) | `tests/test_derive.py`, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Conflicting events are not jointly executable | In the derivation model two events of one sender with the same nonce cannot both run; covered by `derive_eq_none_iff` | `tests/test_conflict_closure.py`, `tests/test_lean_differential.py` and resolver tests | FORMAL for the derivation (model); EMPIRICAL (Python) |
+| Deterministic selection of the next event | `selectNext_spec` (smallest ready and executable id, the current Python rule) | Deterministic ordering tests, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Conflicting alternatives are preserved | None | `tests/test_conflict_rebuild_semantics.py` and reconciliation tests | EMPIRICAL |
+| Duplicate ingress is not fresh execution | None (precondition of the derivation theorems: distinct ids) | `tests/test_sync_idempotence.py`, canonical identity and lifecycle tests | EMPIRICAL |
+| Reconciliation preserves event knowledge | None | Network reconciliation and canonical-view tests | EMPIRICAL |
+| Retry delays are bounded, positive and unbounded in time | `backoff_bounded`, `backoff_positive`, `retryTime_ge_index`, `retry_hits_stable_availability` (`Backoff.lean`), properties of the formula | Reconnect and retry tests | FORMAL (formula only); not liveness |
+| Network security and authorization | None; no cryptography is modelled | Signature, authorization and TLS tests | EMPIRICAL |
 | Byzantine fault tolerance | No adversary model | None | OPEN; not claimed |
 | Performance advantage | No theorem establishes a performance advantage | Benchmark execution and comparative baseline required | OPEN |
+
+Theorems cited by earlier versions of this table (P01–P16, `R1_*`,
+`r17_*`, `apply_event_deterministic`) were removed from the Lean model;
+they are kept under the tag `pre-lean-cleanup`. The review that led to
+the removal is summarised in `docs/PROOF-OBLIGATIONS.md`.
 
 The test paths and theorem names above are candidate evidence references
 derived from the current inventory. Verify each exact declaration,

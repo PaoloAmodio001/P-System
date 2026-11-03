@@ -64,178 +64,92 @@ Scope and limits of this result:
 
 ## Current Lean baseline
 
-- 16 modules P01–P16 with 51 theorem declarations (plus 39 in `Basic.lean`).
-- Convergence modules `Derive`, `Convergence`, `Soundness`, `Completeness`,
-  `Agreement`: 44 theorem declarations, written with the criteria above
-  (the main results are listed in the previous section; the others are
-  supporting lemmas).
-- `lake build`: passing.
-- No `sorry`, `admit`, `axiom`, `opaque` or `native_decide`.
+| Module | Content |
+|---|---|
+| `Basic` | `Event`, `State`, `Executable`, `ApplyEvent`, `ApplyEvents` |
+| `CausalOrder` | `R17Ready` (parents already processed), `ValidSequence` |
+| `Derive` | executable model of `StateDeriver`; specification `ValidExecution` |
+| `Convergence`, `Soundness`, `Completeness`, `Agreement` | the main result above |
+| `DeriveExamples` | executable `#guard` checks (not theorems) |
+| `Backoff` | arithmetic of the retry delay in `network/node.py` |
 
-Manual review of the 51 P-theorems (2026-11-03): 20 restate a hypothesis
-or a definition, 18 are definitional or rename a `Basic.lean` lemma,
-5 assume the hard part, 10 are small genuine lemmas.
-The same review of `Basic.lean` (39), the R17 modules (38) and
-`Refinement.lean` (68) is summarised below.
+- 9 modules, 56 theorem declarations, about 1300 lines.
+- `lake build`: passing. No `sorry`, `admit`, `axiom`, `opaque` or
+  `native_decide`.
+- `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
+  use only `propext`, `Quot.sound` and `Classical.choice`.
+
+Apart from the main results, the theorems are supporting lemmas, plus
+the `Backoff` lemmas: delays are positive and at most 60, retries happen
+at strictly increasing and unbounded times, and if the peer is available
+from some time on, some retry falls in that interval. These are
+properties of the formula, not a liveness result.
 
 A Lean theorem establishes a property of the formal model only. It does
 not establish that the Python implementation refines that model.
 
-## Known limitations of the formal model
+## Limitations of the current model
 
-### Degenerate definitions (found 2026-11-03)
-
-`DirectParent parent child` only checks `parent.id ∈ child.parents`, and
-`CausalBefore` may go through events that are not in the list. Hence:
-
-- `Acyclic events` (`Basic.lean`) implies that no event of `events` has a
-  parent: for a parent id `p` of `e`, the event `x` with id `p` and
-  parents `[e.id]` gives the cycle `e → x → e`.
-- `CausallyClosedKnowledge K` (`Refinement.lean`) also implies that no
-  event of `K` has a parent: it would require every event with a given
-  id, infinitely many, to be in the finite list `K`. `CausallyClosedEvents`
-  is stronger and degenerates in the same way.
-
-Both facts were machine-checked against the tag `pre-lean-cleanup`
-(`acyclic_forces_no_parents`, `parent_closed_forces_no_parents`; axioms
-`propext`, `Quot.sound`, `Classical.choice`). Every theorem with one of these
-hypotheses is vacuous for histories with dependencies.
-
-The convergence modules (`Derive` to `Agreement`) use none of these
-definitions; their causal constraint is `R17Ready` on processed ids,
-which is not affected.
-
-### Other limitations
-
-The first two points apply to `Basic.lean`, the P-modules and R17. The
-convergence modules avoid both: they require `ExecutableRun` and use no
-independence hypothesis.
-
-- `ApplyEvent` does not check `Executable`: it uses truncated `Nat`
-  subtraction, while the Python implementation rejects invalid
-  transfers. Results about `ApplyEvents` therefore describe a
-  transition that differs from the implementation.
-- `PairwiseIndependent` requires that no two events share any account.
-  The order-independence theorem (`apply_events_permutation_invariant`)
-  therefore excludes every causal chain (alice -> bob -> carol), which
-  is the case the system must handle.
-- Signatures (P07), identity binding (P08) and TLS (P14) are modelled
-  as abstract equalities or `Prop` fields; no cryptography is modelled.
+- `ApplyEvent` does not check `Executable` (subtraction truncates at zero).
+  Every result about states pairs it with `ExecutableRun`, which makes
+  the truncation impossible; `DeriveExamples` shows that without it the
+  order matters.
+- Signatures, identity binding and TLS are not modelled.
 - There is no adversary model. No theorem establishes Byzantine fault
   tolerance.
-- There is no unconditional liveness theorem.
+- There is no liveness theorem.
+- Relevance, decision invariance and reconciliation are not modelled
+  (obligations O3 and O4 below are `OPEN`).
 
-## Status by module
+## History: review and removal of the earlier model
 
-IDs match the Lean files `formal/lean/PSystem/Pxx.lean`.
+Until the tag `pre-lean-cleanup` the Lean model also contained the
+modules P01–P16, `Refinement.lean` and 13 R17 modules (about 290
+theorems in 37 files). A theorem-by-theorem review on 2026-11-03 gave:
 
-| ID | What the Lean module actually states | Status | Notes |
-|---|---|---|---|
-| P01 | A non-executable event leaves the state unchanged under `Step` | TRIVIAL | `Step` is defined as that `if` |
-| P02 | Causal parents; `CausalBefore` is transitive | TRIVIAL | `exact h` and constructor renames |
-| P03 | Conflicting events are not `Compatible` | TRIVIAL | `Compatible` is defined as "no conflict" |
-| P04 | Account-disjoint events commute and preserve executability | FORMAL | Small genuine lemmas from `Basic.lean` |
-| P05 | Equal relevant projections give equal decisions; open boundary is not closed | TRIVIAL | Congruence and a negated definition |
-| P06 | Adding an irrelevant event preserves the relevant projection and the decision | FORMAL | Small `filter` lemma |
-| P07 | Tampered payload is rejected | TRIVIAL | `SignatureValid` is string equality; no cryptography |
-| P08 | Authorization requires identity binding | TRIVIAL | Projection of a conjunction; unused hypothesis `_h_signature` |
-| P09 | Two nodes converge | CONDITIONAL | Assumes `EventPermutation` and full account disjointness. Superseded by `derive_knowledge_invariant` |
-| P10 | A duplicate is not fresh | TRIVIAL | `P -> not not P`; unused hypothesis `_h_fresh` |
-| P11 | Replaying an executed event leaves the ledger unchanged | TRIVIAL | First branch of the `ApplyOnce` definition |
-| P12 | Unauthorized promotion leaves the state unchanged | TRIVIAL | `if` on an arbitrary `next` state; reconciliation not modelled |
-| P13 | Concurrent ingress linearizes | TRIVIAL / CONDITIONAL | `ValidLinearization` is defined as `EventPermutation`; determinism assumes it. Superseded by `derive_perm_invariant` |
-| P14 | Secure transport satisfies its boundary conditions | TRIVIAL / ASSUMPTION | `exact h` on abstract `Prop` fields |
-| P15 | Equivocation is a conflict; conflicting events are not jointly compatible | TRIVIAL | `Equivocation` has the same definition as `Conflict`; **not** Byzantine safety |
-| P16 | Bounded exponential backoff; reconnection if connection succeeds when the peer is available | CONDITIONAL | Backoff arithmetic is FORMAL (small); eventual reconnection assumes `h_success`. **Not** liveness |
+| Group | Theorems | Restatement | Definitional / helper | Conditional | Genuine | Outcome |
+|---|---|---|---|---|---|---|
+| P01–P16 | 51 | 20 | 18 | 5 | 10 (small) | removed; backoff arithmetic of P16 kept in `Backoff` |
+| `Basic.lean` | 39 | 10 | 18 | — | 11 | reduced to the definitions used now |
+| R17 modules | 38 | 5 | 12 | — | 21 | readiness and `ValidSequence` kept in `CausalOrder` |
+| `Refinement.lean` | 68 | 36 | 26 | 2 | 4 | removed |
 
-The same properties have Python test coverage (`EMPIRICAL`), for
-example `tests/test_sync_order_determinism.py`,
-`tests/test_sync_order_independence.py`, `tests/test_sync_idempotence.py`,
-`tests/test_causal_double_spend.py`, `tests/test_equivocation.py`,
-`tests/test_p14_tls_real.py` and `tests/test_p16_liveness.py`. The
-strength of these tests has not been reviewed one by one.
+Reasons for the removal:
 
-### `Basic.lean` and R17 (review 2026-11-03)
+- **Restatements.** Many theorems were proved by `exact h`, a projection,
+  `rfl` or by unfolding a definition (for example P02, P07, P13, P14,
+  P15; `apply_event_deterministic` proved `x = x`).
+- **Assumed the hard part.** P09, P13 and `R1_10_distributed_convergence`
+  assumed that the two executions are permutations of each other; P16
+  assumed that a connection succeeds whenever the peer is available.
+  Superseded by `derive_knowledge_invariant` and `derive_perm_invariant`,
+  which derive the permutation.
+- **Superseded.** `apply_events_permutation_invariant` required that no
+  two events share an account (`PairwiseIndependent`), which excludes
+  every causal chain. Superseded by `executable_runs_same_state`.
+- **Degenerate definitions.** `DirectParent` only compared ids and
+  `CausalBefore` could go through events outside the list, so `Acyclic`
+  and the closure predicates (`CausallyClosedKnowledge`,
+  `CausallyClosedEvents`) held only for events without parents. This was
+  machine-checked against `pre-lean-cleanup` (`acyclic_forces_no_parents`,
+  `parent_closed_forces_no_parents`). The constructive ordering result
+  `r17_constructive_complete_ordering_refines_direct_order` and the
+  R1.4.5/R1.5/R1.6.3 lemmas were therefore vacuous for causal histories.
+  An earlier version of this document labelled some of them FORMAL;
+  that was wrong.
+- **No link to Python.** Despite its name, `Refinement.lean` related two
+  Lean copies of the same definitions (`ImplEvent`, `ImplApplyBalance`, …);
+  no Python file referred to them, and
+  `R1_2b_state_transition_refinement` held without its executability
+  hypothesis.
+- **Old selection rule.** R17 modelled the smallest ready id, i.e. the
+  behaviour before commit `538ee51`; `Derive` models the current rule.
 
-| Group | Restatement | Definitional / helper | Genuine |
-|---|---|---|---|
-| `Basic.lean` (39) | 10 | 18 | 11 |
-| R17 modules (38) | 5 | 12 | 21 |
+To inspect the removed modules: `git checkout pre-lean-cleanup`.
 
-Helper lemmas are legitimate building blocks; they are not counted as
-properties. Restatements include `apply_event_deterministic`
-(`x = x` by `rfl`) and `r17MinimumReadyEvent_unique`, which follows from
-the injectivity of `some` (its `hunique` hypothesis is not needed).
-
-The two genuine results are:
-
-- `apply_events_permutation_invariant` (`Basic.lean`) — FORMAL, but
-  limited by `PairwiseIndependent` (see the limitations above).
-- `r17_constructive_complete_ordering_refines_direct_order`
-  (`R17OrderBridge.lean`) — **vacuous for causal histories** (correction,
-  2026-11-03). It assumes `Acyclic allEvents`, and `Acyclic` holds only
-  when no event has a parent: see "Degenerate definitions" below. An
-  earlier version of this document labelled it FORMAL; that was wrong.
-
-Gaps found by the review, and their status:
-
-- *Resolved by the convergence modules.* The two results were not
-  connected: no theorem related a valid causal sequence to the state.
-  `Convergence` and `Soundness` now do, for histories with shared accounts.
-- *Resolved.* `r17MinimumReadyEvent` was proved for one step only.
-  `executionOrder` (`Derive`) iterates the choice to the end, with
-  soundness and completeness proved.
-- *Still true for R17.* Since `538ee51` Python selects the smallest ready
-  id **that is currently executable**; R17 models the smallest ready id
-  unconditionally (the earlier behaviour). `Derive` models the current
-  behaviour; R17 does not describe the implementation.
-- *Open.* `R17Step` is only used in a restatement.
-
-### `Refinement.lean` (review 2026-11-03)
-
-| Restatement | Definitional / helper | Conditional | Genuine |
-|---|---|---|---|
-| 36 | 26 | 2 (R1_10) | 4 |
-
-Despite its name, `Refinement.lean` does not relate the Python code to
-the model. `ImplEvent`, `ImplApplyBalance`, `ImplApplyNonce` and
-`ImplExecutable` are Lean definitions that copy `Event`, `ApplyEvent`
-and `Executable` field by field; no Python file refers to them. The
-R1.2/R1.6.1/R1.11 "refinement" theorems therefore show that two Lean
-copies of the same definition agree.
-
-- `R1_2b_state_transition_refinement` (and `R1_11_state_refinement`)
-  carry the hypothesis `himpl` (the event is executable), which is not
-  needed: the statement compiles without it. `R1_2b_balance_transition`
-  has an unused hypothesis `_hneq`.
-- R1.3 and R1.4 (identity, parents, knowledge representation, merge)
-  are projections of their definitions; `KnowledgeMerge` is list
-  append. `R1_11_refinement_instance_available` proves `∃ r, r = x`
-  by `rfl`.
-- `R1_6_projection_compatible`, `R1_6_projection_state_representation`,
-  `R1_6_projection_subset_knowledge` restate their hypotheses; the
-  definitions `OrderRepresentation`, `ProjectionStateRepresentation`
-  and `SerializationRepresentation` ignore their implementation argument.
-- `R1_4_5_causal_ancestor_mem`, `R1_5_derivation_order_is_causal` and
-  `R1_6_3_direct_parent_invariant_implies_topological` assume
-  `CausallyClosedKnowledge` or `CausallyClosedEvents`, which hold only
-  when no event has a parent (see below): **vacuous** for causal
-  histories. An earlier version of this document called them genuine.
-- Genuine (small): `R1_6_1_sequence_state_transition_refinement`
-  (induction over a run, between the two Lean copies).
-
-O2 (implementation refinement) is therefore not addressed by
-`Refinement.lean`; see O2 below.
-
-### Related refinement theorem
-
-`R1_10_distributed_convergence` and `R1_10_convergence_simulation`
-(`Refinement.lean`) are CONDITIONAL: their hypothesis already contains
-`EventPermutation executionA executionB`, and the knowledge-equivalence
-hypothesis is discarded (`_hknowledge`). They do not connect what nodes
-know to what they execute. The two definitions are identical.
-Superseded by `derive_knowledge_invariant`, which derives the
-permutation from the knowledge equivalence.
+The Python proof ledger (`proof/specification.py`) still uses the
+property IDs P01–P16. They name Python properties and their tests (for
+example `tests/test_p15_byzantine_safety.py`), not Lean modules.
 
 ## Cross-cutting obligations
 
@@ -260,6 +174,8 @@ Prove:
 
 or explicitly restrict the theorem to the modeled relevance domain.
 
+Status: `OPEN`; relevance is not modelled in Lean.
+
 ### O4 — Global decision invariance
 
 Prove:
@@ -269,11 +185,18 @@ Prove:
 
 under the stated relevance-completeness assumptions.
 
+Status: `OPEN`; decisions are not modelled in Lean.
+
 ### O5 — Liveness assumptions
 
 Every liveness theorem must state its environmental assumptions.
+
+Status: no liveness theorem exists. `Backoff` only states properties of
+the retry formula.
 
 ### O6 — Machine-checking
 
 Core safety theorems should be translated into a proof assistant
 and checked by its trusted kernel.
+
+Status: done for the state derivation (main result above).

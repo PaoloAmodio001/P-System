@@ -69,3 +69,17 @@ then:
 cannot be established.
 
 Therefore P16 must never be presented as an unconditional theorem.
+
+## 6. Status in Lean
+
+The Lean model contains no liveness theorem. `formal/lean/PSystem/Backoff.lean`
+states only properties of the retry formula used by `network/node.py`
+(base 2, maximum 60): every delay is positive and at most 60, retries
+happen at strictly increasing and unbounded times, and if the peer is
+available from some time on, some retry falls in that interval. Whether
+the connection then succeeds is not modelled.
+
+The earlier Lean module P16 also contained
+`P16_conditional_eventual_reconnection`, which assumed that a connection
+succeeds whenever the peer is available at a retry. It was removed as
+CONDITIONAL; it is kept under the tag `pre-lean-cleanup`.

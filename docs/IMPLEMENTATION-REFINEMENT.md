@@ -129,29 +129,35 @@ A formal theorem alone is not a refinement proof.
 
 ## Current refinement status
 
-The Lean formal model contains 16 modules and 89 theorem declarations and
-builds without `sorry`, `admit`, `axiom`, or `opaque`.
+The Lean formal model has 9 modules and 56 theorem declarations and
+builds without `sorry`, `admit`, `axiom`, `opaque` or `native_decide`
+(see `docs/PROOF-OBLIGATIONS.md`). Its main result is the convergence of
+the state derivation (`derive_knowledge_invariant`). The earlier modules
+P01–P16 and `Refinement.lean` were removed after review; they are kept
+under the tag `pre-lean-cleanup`. `Refinement.lean` did not relate Python
+to the model: it compared two Lean copies of the same definitions.
 
-The principal remaining refinement obligations are:
+Correspondence between Python and the model:
 
-- concrete Python state ↔ formal `State`;
-- concrete event ↔ formal `Event`;
-- concrete state transitions ↔ `ApplyEvent`;
-- concrete knowledge ↔ formal `Knowledge`;
-- concrete decision logic ↔ formal `Decision`;
-- Python concurrency/locking ↔ P13 linearization;
-- concrete equivocation/conflict handling ↔ P15;
-- Python reconnect scheduling ↔ P16 retry schedule;
-- TLS implementation ↔ P14 transport assumptions;
-- global relevance completeness ↔ decision-invariance claims.
+- `core/derive.py::StateDeriver` ↔ `derive` (`Derive.lean`):
+  EMPIRICAL, differential test `tests/test_lean_differential.py`
+  (3000 random histories, same balances and nonces or both reject).
+- `network/node.py` reconnect delay ↔ `reconnectDelay` (`Backoff.lean`):
+  same formula (base 2, maximum 60), checked by reading the code.
 
-Therefore the current status is:
+Not modelled, so no correspondence can be claimed:
 
-`machine-checked formal model: COMPLETE BASELINE`
+- knowledge, relevance and decision logic;
+- concurrency and locking;
+- equivocation and conflict handling outside the derivation;
+- TLS and signatures;
+- networking and synchronisation.
 
-but:
+Status:
 
-`Python implementation refinement: OPEN`
+`machine-checked formal model: state derivation only`
+
+`Python implementation refinement: OPEN (empirical evidence for StateDeriver)`
 
 ## R1.7 — Causal ordering refinement
 
@@ -171,12 +177,18 @@ Required concrete properties:
 Current evidence:
 - Python regression tests exercise parent ordering, transitive ordering,
   missing-parent rejection, conflict rejection, and duplicate-ID behavior.
-- Lean proves that a direct-parent ordering invariant implies a complete
-  topological order under causal closure.
+- Lean proves that every valid execution, and so the order computed by
+  `derive`, runs each event after its declared parents (`derive_sound`),
+  and that `derive` finds an order whenever a valid execution exists
+  (`derive_complete`).
+- An earlier statement here cited a Lean result about topological order
+  under causal closure. It was vacuous: the closure hypothesis held only
+  for events without parents (see `docs/PROOF-OBLIGATIONS.md`).
 
 Open obligation:
-- Prove that the concrete Python algorithm establishes the formal
-  direct-parent ordering invariant for all inputs admitted by the contract.
+- Prove that the concrete Python algorithm computes the same result as
+  `derive` for all inputs admitted by the contract (today: differential
+  testing only).
 - Establish the event-ID and parent representation relation, including
   the represented-domain injectivity assumption.
 - Tests and Lean compilation alone do not discharge this refinement proof.
