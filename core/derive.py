@@ -54,6 +54,121 @@ class StateDeriver:
         return result
 
     @staticmethod
+    def _execution_failure(state: State, event: Transfer) -> str | None:
+        """Return why `event` cannot execute on `state`, or None."""
+        expected_nonce = state.nonce(event.sender)
+
+        if event.nonce != expected_nonce:
+            return (
+                f"INVALID NONCE: expected "
+                f"{expected_nonce}, "
+                f"got {event.nonce}"
+            )
+
+        if state.balance(event.sender) < event.amount:
+            return (
+                f"INSUFFICIENT BALANCE: "
+                f"{event.sender}"
+            )
+
+        return None
+
+    @staticmethod
+    def _execution_order(
+        initial: State,
+        events: list[Transfer],
+    ) -> list[Transfer]:
+        """
+        Deterministic execution order for a compatible event set.
+
+        Declared parents are hard constraints. Among the causally
+        ready events, the one with the smallest event id that is
+        currently executable runs next.
+
+        Earlier versions ran the smallest ready id unconditionally.
+        That made the outcome depend on hash values whenever a
+        dependency was implicit (consecutive nonces of one sender,
+        or spending funds just received), so valid histories were
+        rejected depending on their event ids.
+
+        The result depends only on the set of events, never on the
+        order in which they were supplied. The greedy choice is
+        complete: executing an event of sender X only lowers X's
+        balance and advances X's nonce, so it never disables a ready
+        event of another sender, and X's own events are totally
+        ordered by nonce. If any valid order exists, this finds one.
+        """
+        ordered = StateDeriver._topological_order(events)
+
+        for event in ordered:
+            if event.amount <= 0:
+                raise ValueError("INVALID AMOUNT")
+
+            if event.sender == event.receiver:
+                raise ValueError("INVALID TRANSFER")
+
+        by_id = {event.event_id(): event for event in ordered}
+        pending_parents = {
+            event_id: set(event.parents)
+            for event_id, event in by_id.items()
+        }
+        children = {event_id: [] for event_id in by_id}
+        for event_id, parents in pending_parents.items():
+            for parent_id in parents:
+                children[parent_id].append(event_id)
+
+        ready = sorted(
+            event_id
+            for event_id, parents in pending_parents.items()
+            if not parents
+        )
+
+        state = initial.copy()
+        result = []
+
+        while ready:
+            chosen = None
+            for event_id in ready:
+                if StateDeriver._execution_failure(
+                    state, by_id[event_id]
+                ) is None:
+                    chosen = event_id
+                    break
+
+            if chosen is None:
+                raise ValueError(
+                    StateDeriver._execution_failure(
+                        state, by_id[ready[0]]
+                    )
+                )
+
+            ready.remove(chosen)
+            event = by_id[chosen]
+            StateDeriver._apply_one(state, event)
+            result.append(event)
+
+            for child_id in children[chosen]:
+                pending_parents[child_id].discard(chosen)
+                if not pending_parents[child_id]:
+                    ready.append(child_id)
+            ready.sort()
+
+        return result
+
+    @staticmethod
+    def _apply_one(state: State, event: Transfer) -> None:
+        state.balances[event.sender] -= event.amount
+
+        state.balances[event.receiver] = (
+            state.balances.get(event.receiver, 0)
+            + event.amount
+        )
+
+        state.nonces[event.sender] = (
+            state.nonce(event.sender) + 1
+        )
+
+    @staticmethod
     def apply_events(
         initial: State,
         events: list[Transfer],
@@ -64,39 +179,7 @@ class StateDeriver:
 
         state = initial.copy()
 
-        ordered = StateDeriver._topological_order(events)
-
-        for event in ordered:
-            if event.amount <= 0:
-                raise ValueError("INVALID AMOUNT")
-
-            if event.sender == event.receiver:
-                raise ValueError("INVALID TRANSFER")
-
-            expected_nonce = state.nonce(event.sender)
-
-            if event.nonce != expected_nonce:
-                raise ValueError(
-                    f"INVALID NONCE: expected "
-                    f"{expected_nonce}, "
-                    f"got {event.nonce}"
-                )
-
-            if state.balance(event.sender) < event.amount:
-                raise ValueError(
-                    f"INSUFFICIENT BALANCE: "
-                    f"{event.sender}"
-                )
-
-            state.balances[event.sender] -= event.amount
-
-            state.balances[event.receiver] = (
-                state.balances.get(event.receiver, 0)
-                + event.amount
-            )
-
-            state.nonces[event.sender] = (
-                expected_nonce + 1
-            )
+        for event in StateDeriver._execution_order(initial, events):
+            StateDeriver._apply_one(state, event)
 
         return state
