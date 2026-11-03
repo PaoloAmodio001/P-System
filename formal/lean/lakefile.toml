@@ -2,6 +2,9 @@ name = "PSystem"
 version = "0.1.0"
 defaultTargets = ["PSystem"]
 
+[leanOptions]
+autoImplicit = false
+
 [[lean_lib]]
 name = "PSystem"
 
