@@ -83,6 +83,30 @@ not establish that the Python implementation refines that model.
 
 ## Known limitations of the formal model
 
+### Degenerate definitions (found 2026-11-03)
+
+`DirectParent parent child` only checks `parent.id ∈ child.parents`, and
+`CausalBefore` may go through events that are not in the list. Hence:
+
+- `Acyclic events` (`Basic.lean`) implies that no event of `events` has a
+  parent: for a parent id `p` of `e`, the event `x` with id `p` and
+  parents `[e.id]` gives the cycle `e → x → e`.
+- `CausallyClosedKnowledge K` (`Refinement.lean`) also implies that no
+  event of `K` has a parent: it would require every event with a given
+  id, infinitely many, to be in the finite list `K`. `CausallyClosedEvents`
+  is stronger and degenerates in the same way.
+
+Both facts were machine-checked against the tag `pre-lean-cleanup`
+(`acyclic_forces_no_parents`, `parent_closed_forces_no_parents`; axioms
+`propext`, `Quot.sound`, `Classical.choice`). Every theorem with one of these
+hypotheses is vacuous for histories with dependencies.
+
+The convergence modules (`Derive` to `Agreement`) use none of these
+definitions; their causal constraint is `R17Ready` on processed ids,
+which is not affected.
+
+### Other limitations
+
 The first two points apply to `Basic.lean`, the P-modules and R17. The
 convergence modules avoid both: they require `ExecutableRun` and use no
 independence hypothesis.
@@ -148,10 +172,10 @@ The two genuine results are:
 - `apply_events_permutation_invariant` (`Basic.lean`) — FORMAL, but
   limited by `PairwiseIndependent` (see the limitations above).
 - `r17_constructive_complete_ordering_refines_direct_order`
-  (`R17OrderBridge.lean`) — FORMAL: every finite, acyclic event set with
-  unique ids and represented parents has a complete sequence in which
-  every direct parent precedes its child. Supported by
-  `parent_precedes_in_valid_sequence` and `r17_constructive_extend`.
+  (`R17OrderBridge.lean`) — **vacuous for causal histories** (correction,
+  2026-11-03). It assumes `Acyclic allEvents`, and `Acyclic` holds only
+  when no event has a parent: see "Degenerate definitions" below. An
+  earlier version of this document labelled it FORMAL; that was wrong.
 
 Gaps found by the review, and their status:
 
@@ -192,10 +216,12 @@ copies of the same definition agree.
   `R1_6_projection_subset_knowledge` restate their hypotheses; the
   definitions `OrderRepresentation`, `ProjectionStateRepresentation`
   and `SerializationRepresentation` ignore their implementation argument.
-- Genuine (small): `R1_4_5_causal_ancestor_mem` (closure under parents
-  gives closure under ancestors), `R1_5_derivation_order_is_causal`
-  (direct order gives full causal order), `R1_6_3_direct_parent_invariant_implies_topological`
-  (the same result again) and `R1_6_1_sequence_state_transition_refinement`
+- `R1_4_5_causal_ancestor_mem`, `R1_5_derivation_order_is_causal` and
+  `R1_6_3_direct_parent_invariant_implies_topological` assume
+  `CausallyClosedKnowledge` or `CausallyClosedEvents`, which hold only
+  when no event has a parent (see below): **vacuous** for causal
+  histories. An earlier version of this document called them genuine.
+- Genuine (small): `R1_6_1_sequence_state_transition_refinement`
   (induction over a run, between the two Lean copies).
 
 O2 (implementation refinement) is therefore not addressed by
