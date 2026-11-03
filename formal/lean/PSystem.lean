@@ -28,3 +28,4 @@ import PSystem.R17MinimumSelectionBridge
 import PSystem.R17MinimumSelectionUnique
 import PSystem.Derive
 import PSystem.DeriveExamples
+import PSystem.Convergence

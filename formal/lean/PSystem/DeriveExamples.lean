@@ -56,4 +56,15 @@ def funding := ev 2 "alice" "bob" 4 0
 -- Empty history.
 #guard (derive initial []).map accounts == some [10, 0, 0, 0]
 
+-- Why `Convergence.lean` needs `ExecutableRun`: without it `ApplyEvent`
+-- truncates at zero and the order matters (overdraft, then refund).
+def poor : State :=
+  { balance := fun id => if id = "bob" then 5 else 0
+    nonce := fun _ => 0 }
+def overdraft := ev 1 "alice" "carol" 3 0
+def refund := ev 2 "bob" "alice" 3 0
+
+#guard accounts (ApplyEvents poor [overdraft, refund]) == [3, 2, 3, 0]
+#guard accounts (ApplyEvents poor [refund, overdraft]) == [0, 2, 3, 0]
+
 end PSystem.DeriveExamples
