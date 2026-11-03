@@ -399,6 +399,7 @@ def test_crash_before_commit_loses_only_an_unsigned_vote(path):
 def test_kill_at_random_moments_never_loses_an_acknowledged_vote(path):
     rng = random.Random(20261103)
     acknowledged: set[int] = set()
+    before: set[int] = set()
     next_nonce = 0
 
     for _ in range(8):
@@ -426,11 +427,13 @@ def test_kill_at_random_moments_never_loses_an_acknowledged_vote(path):
         store = reopen(path)
         nonces = {event.nonce for event in store.votes()}
         assert acknowledged <= nonces
-        # At most the one vote in flight when the process died is extra.
-        assert len(nonces - acknowledged) <= 1
+        # At most the one vote in flight when this process died is extra. Earlier
+        # processes may each have left theirs, committed but not acknowledged.
+        assert len(nonces - acknowledged - before) <= 1
         for nonce in sorted(acknowledged):
             assert not store.record_vote(worker.event("carol", nonce))
         next_nonce = max(nonces) + 1
+        before = nonces
         store.close()
 
 
