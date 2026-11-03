@@ -8,10 +8,14 @@ empirical, not a refinement proof.
 import json
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from core.attestation import Committee, QuorumCertificate, Vote
+from core.derive import StateDeriver
 from core.event import Transfer
+from core.state import State
+from crypto.identity import Identity
 
 
 class VoteStoreError(Exception):
@@ -90,6 +94,8 @@ class SqliteVoteStore:
         if committee.index_of(validator) is None:
             raise VoteStoreError("VALIDATOR IS NOT A COMMITTEE MEMBER")
 
+        self.committee = committee
+        self.validator = validator
         self._lock = threading.RLock()
         self._closed = False
         mode = "rwc" if create else "rw"
@@ -307,3 +313,107 @@ class SqliteVoteStore:
         with self._lock:
             self._closed = True
             self._connection.close()
+
+
+class QuorumReplica:
+    """
+    The protocol of an honest node: `step` in formal/lean/PSystem/Quorum.lean.
+
+    `handle_vote_request` is the `voteRequest` branch and `handle_certificate` the
+    `certificate` branch. An input that is refused changes nothing, so delivering
+    it again is the same as trying again, and the model needs no buffer.
+
+    The signing key stays here, and the only path to a signature goes through the
+    vote lock. That, together with Ed25519, is what the hypothesis `Unforgeable`
+    means for this code.
+
+    Not thread-safe: the caller serializes the calls.
+    """
+
+    def __init__(
+        self,
+        identity: Identity,
+        initial_state: State,
+        store: SqliteVoteStore,
+        auth: Callable[[Transfer], bool],
+    ) -> None:
+        self.committee = store.committee
+
+        if identity.public_key != store.validator:
+            raise ValueError("VOTE STORE BELONGS TO ANOTHER VALIDATOR")
+
+        if initial_state.root() != self.committee.genesis_root:
+            raise ValueError("INITIAL STATE IS NOT THE GENESIS OF THE COMMITTEE")
+
+        self._identity = identity
+        self._store = store
+        self._auth = auth
+        self.state = initial_state.copy()
+        self.log: list[QuorumCertificate] = []
+        self._executed_ids: set[str] = set()
+
+        for certificate in store.certificates():
+            if not self._can_execute(certificate):
+                raise VoteStoreError("LOG OF CERTIFICATES DOES NOT REPLAY")
+            self._execute(certificate)
+
+    @property
+    def executed(self) -> list[Transfer]:
+        return [certificate.event for certificate in self.log]
+
+    def votes(self) -> list[Transfer]:
+        """Read from the store: what counts is what would survive a restart."""
+        return self._store.votes()
+
+    def handle_vote_request(self, event: Transfer) -> Vote | None:
+        """
+        Return a vote, or None if the event is refused. The signature comes after
+        the vote is durably recorded. If that fails the error propagates, and no
+        signature exists.
+        """
+        if not self._auth(event):
+            return None
+
+        if not self._store.record_vote(event):
+            return None
+
+        return Vote.create(self.committee, self._identity, event)
+
+    def handle_certificate(self, certificate: QuorumCertificate) -> bool:
+        """Execute the certificate if it can run now. True if it was executed."""
+        if not self._can_execute(certificate):
+            return False
+
+        # On disk first: if this fails, the state has not changed.
+        self._store.append_certificate(certificate)
+        self._execute(certificate)
+        return True
+
+    def _can_execute(self, certificate: QuorumCertificate) -> bool:
+        # Signatures last: they are the only expensive check, and the result does
+        # not depend on the order because the checks have no side effects.
+        event = certificate.event
+        return (
+            self._is_fresh(event)
+            and self._is_ready(event)
+            and self._is_executable(event)
+            and certificate.verify(self.committee)
+        )
+
+    def _is_fresh(self, event: Transfer) -> bool:
+        return event.event_id() not in self._executed_ids
+
+    def _is_ready(self, event: Transfer) -> bool:
+        return set(event.parents) <= self._executed_ids
+
+    def _is_executable(self, event: Transfer) -> bool:
+        return (
+            event.amount > 0
+            and event.sender != event.receiver
+            and StateDeriver._execution_failure(self.state, event) is None
+        )
+
+    def _execute(self, certificate: QuorumCertificate) -> None:
+        StateDeriver._apply_one(self.state, certificate.event)
+        self.log.append(certificate)
+        self._executed_ids.add(certificate.event.event_id())
