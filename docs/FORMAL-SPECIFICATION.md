@@ -297,6 +297,11 @@ at most `f` are faulty.
   its natural numbers have no upper bound. So Python refuses more than the model
   does, never less. A zero amount or a transfer to self is well formed, and is
   refused at execution, as in the model.
+- Messages are `VOTE_REQUEST`, `VOTE`, `CERTIFICATE` and `CERTIFICATE_SYNC`
+  (`network/message.py`). A decoder refuses unknown or missing fields and any
+  value not in its one accepted form, such as uppercase hex. It sorts parents, as
+  the canonical form does. It does not judge meaning: a certificate of the right
+  form with too few or wrong signatures decodes, and `verify` refuses it.
 
 ---
 
