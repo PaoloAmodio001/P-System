@@ -2,7 +2,7 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**In corso: sottofase 5.5, punti 1, 2 e 3 fatti. Prossimo passo: il punto 4, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**In corso: sottofase 5.5, punti 1, 2, 3 e 4 fatti. Prossimo passo: il punto 5, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
 
 ### Regole di lavoro in vigore
 
@@ -15,7 +15,7 @@
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 3 della 5.5 e questa nota | Tutte le fasi fatte |
+| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 4 della 5.5 e questa nota | Tutte le fasi fatte |
 | `origin/main` | `18bc871` | Fasi 0-4, pushate su richiesta. Nessun commit della fase 5 |
 | `main` locale | `1139303` | Fermo, 11 commit dietro `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -36,12 +36,12 @@
 | 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059` |
-| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver` | `0acac14`, `31ce78c`, `1202eac` |
+| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node` | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
-**Ultima verifica:** `pytest -q` 1355 passati, `lake build` passa. Differenziale con `PSYSTEM_DIFF_SEEDS=15` su `e9981e2`, cioè dopo il punto 2 e prima del punto 3: 15 seed passati, 45000 casi, nessuna differenza. Il punto 3 aggiunge il driver e non cambia ciò che la replica decide, ma va ripetuto prima del merge. `Node` non usa ancora né il driver né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
+**Ultima verifica:** `pytest -q` 1473 passati, `lake build` passa. Differenziale con `PSYSTEM_DIFF_SEEDS=15` su `d7292db`, cioè con il punto 3 e prima del punto 4: 15 seed passati, 45000 casi, nessuna differenza. Il punto 4 non cambia ciò che la replica decide, ma va ripetuto prima del merge. Con `quorum=None` il nodo si comporta come prima e ammette ancora il fork; con `quorum=` il fork è escluso nei test, che però non passano ancora da TLS reale e non sono confrontati con Lean.
 
 ### Cosa resta da fare
 
@@ -69,7 +69,7 @@
 1. Lock di invio in `PeerConnection.send`. Fatto.
 2. Prova di arresto durevole in `SqliteVoteStore`, schema v2: salva i due certificati in conflitto e li riverifica all'apertura. Fatto. Il controllo sui due certificati sta in `_is_halt_proof`, che il punto 3 può riusare.
 3. `QuorumDriver` in `network/quorum.py`, senza rete né `Node`: riceve input e restituisce i messaggi da inviare. Un certificato invalido non ferma mai il nodo. Il buffer dei certificati non ha limite, perché un limite farebbe dipendere il risultato dall'ordine di arrivo. Fatto. La replica del nodo riceve `auth` da chi la crea, ma è il driver a controllare firma e `sender`: il punto 4 deve deciderne il collegamento.
-4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma.
+4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma. Fatto. In `node.py` l'unica riga cambiata del percorso storico è `known`, che con `quorum=None` aggiunge una lista vuota. Il resto sono aggiunte, e nessun test esistente è stato modificato.
 5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica.
 6. Test di comportamento: P15 in modalità quorum, voti divisi, permutazioni, riavvio dopo l'arresto, un test breve su TLS reale.
 7. Aggiornamento di questo file. Le etichette restano alla 5.7.
@@ -116,6 +116,14 @@ Scelte tecniche da conservare:
   - le mutazioni girano su un solo seed;
   - il driver Lean è controllato solo da vettori a mano.
 - **Mutazioni di 5.1, 5.2 e 5.4:** rilevate 25, 23 e 45: **non riproducibili, script perso il 2026-11-04**. Stavano in `/tmp`, svuotato dal riavvio: vedi l'incidente qui sotto. Vanno ricreate dentro `pytest` nella 5.7.
+- **`Node` in modalità quorum:**
+  - nessun test è ancora passato da TLS reale: i 4 nodi dei test si scambiano messaggi codificati senza socket. Il test breve su TLS è nel punto 6, lo scenario a 4 nodi nella 5.6;
+  - il punto aperto 2 pesa di più qui, perché questa modalità genera traffico in entrambe le direzioni sulla stessa connessione;
+  - i broadcast partono uno dopo l'altro: un peer che non legge trattiene quelli dopo di lui, e un certificato può non arrivare. Riguarda la liveness, che non è dichiarata;
+  - `CERTIFICATE_SYNC` non è ancora collegato: un nodo rimasto indietro non recupera finché non arriva la 5.6;
+  - le prove in `signed_events` ed `equivocations` sono in memoria e si perdono al riavvio. Voti, log e arresto restano su disco;
+  - un nodo fermato con `stop` non riparte: per ripartire si crea un nuovo `Node`, che ricostruisce dal log;
+  - `flock` non è affidabile su NFS.
 - **Arresto:**
   - non è nel modello: `runNode` non si ferma, quindi niente di questo è FORMAL;
   - per ripartire serve un intervento manuale, non previsto dal codice;
