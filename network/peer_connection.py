@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import threading
 
 from network.handshake import Handshake
 from network.peer import Peer
@@ -22,6 +23,7 @@ class PeerConnection:
         self.tls_config = None
         self.on_disconnect = None
         self.initiated_locally = True
+        self._send_lock = threading.Lock()
 
     @property
     def connected(self) -> bool:
@@ -100,13 +102,19 @@ class PeerConnection:
         return peer_connection
 
     def send(self, message: dict) -> None:
-        if not self.connected:
-            raise ConnectionError("PEER NOT CONNECTED")
+        # One frame at a time: threads writing together on a TLS socket mix their
+        # frames and can crash the process. close does not take this lock, because
+        # closing is what frees a send blocked on a peer that does not read.
+        with self._send_lock:
+            connection = self.connection
 
-        SecureTransport.send(
-            self.connection,
-            message,
-        )
+            if connection is None:
+                raise ConnectionError("PEER NOT CONNECTED")
+
+            SecureTransport.send(
+                connection,
+                message,
+            )
 
     def receive(self) -> dict:
         if not self.connected:
