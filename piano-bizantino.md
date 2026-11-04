@@ -6,7 +6,7 @@
 
 ### Regole di lavoro in vigore
 
-- Lavorare su `byzantine-quorum`. **Non pushare su `main` finché la fase 5 non è completa e verificata.**
+- Lavorare su `byzantine-quorum`. **Non pushare su `main` finché la fase 5 non è completa e verificata.** Unica eccezione, decisa da Paolo il 2026-11-04: solo correzioni di rete, senza codice della modalità quorum. Vale per quelle già portate, elencate qui sotto, e ogni altra va chiesta.
 - Alla fine di ogni punto: push di `byzantine-quorum` su GitHub, riepilogo, e aspettare il via.
 - Se un differenziale trova una divergenza tra Python e `runNode`, **non correggerla**: fermarsi e mostrare il caso minimo e la diagnosi. L'errore può stare nel Python, nel driver, nel modello o nel generatore.
 - **Prima di unire `byzantine-quorum` a `main`:** `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py`.
@@ -16,8 +16,8 @@
 | Riferimento | Commit | Contenuto |
 |---|---|---|
 | `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 5 della 5.5 e questa nota | Tutte le fasi fatte |
-| `origin/main` | `18bc871` | Fasi 0-4, pushate su richiesta. Nessun commit della fase 5 |
-| `main` locale | `1139303` | Fermo, 11 commit dietro `origin/main`. È normale: nessuno lo ha aggiornato |
+| `origin/main` | `9a0aed3` | Fasi 0-4 più le correzioni di rete. Nessun codice della modalità quorum |
+| `main` locale | `1139303` | Fermo e indietro rispetto a `origin/main`. È normale: nessuno lo ha aggiornato |
 
 ### Stato delle fasi
 
@@ -145,11 +145,22 @@ Scelte tecniche da conservare:
 - **Connessioni mute:** il timeout di 5 secondi sull'intero handshake e il limite di 64 handshake simultanei riducono il problema ma non lo eliminano. Chi tiene occupati tutti i posti, riaprendo le connessioni quando scadono, non ha bisogno di un certificato e continua a tenere fuori i peer onesti. Un test lo dichiara.
 - **Costo:** un `fsync` per voto, circa 350-400 voti al secondo su ext4.
 
-### Correzioni di rete da portare su `main`
+### Correzioni di rete portate su `main`
 
-Non ancora portate. La regola qui sopra vieta di pushare su `main` prima della fine della fase 5, quindi serve un'eccezione di Paolo.
+Portate il 2026-11-04 con l'eccezione qui sopra, in fast-forward da `18bc871` a `9a0aed3`. Su `main`: 483 test passati e `lake build` passa. Nessun file della modalità quorum: `network/quorum.py` e i test quorum sono assenti, e `core/attestation.py` è la versione che `main` aveva già, invariata.
 
-**Cherry-pick, in quest'ordine:** `cd77718 7f29574 9551c5f 5322059 0acac14 fd98fb0`. Provati in un clone su `origin/main` (`18bc871`) e su `main` locale (`1139303`): nessun conflitto, nessun codice di quorum, 483 test passati su entrambe le basi. La base giusta è `origin/main`, perché `main` locale è 11 commit indietro.
+**Il branch contiene questi commit con il merge di `origin/main`,** scelto invece del rebase: il branch è già su GitHub, e il rebase avrebbe richiesto un push forzato e invalidato gli hash citati qui. Il merge lascia l'albero identico, e il merge finale su `main` sarà un fast-forward.
+
+Corrispondenza tra i commit, stesso codice e hash diversi:
+
+| Branch | `main` |
+|---|---|
+| `cd77718` | `ec58b61` |
+| `7f29574` | `74d17aa` |
+| `9551c5f` | `5a0d001` |
+| `5322059` | `01053f6` |
+| `0acac14` | `4516490`, con il messaggio che descrive il limite su `recv` e `send`, perché il piano su `main` non c'è |
+| `fd98fb0` | `9a0aed3` |
 
 | Commit | Bug su `main` | Chi può farlo |
 |---|---|---|
@@ -162,7 +173,7 @@ Non ancora portate. La regola qui sopra vieta di pushare su `main` prima della f
 
 **Perché `9551c5f` ha spostato `self._server_controller.stop()`.** Il vecchio `Node.stop` chiudeva le connessioni trovate e solo dopo fermava il server: un handshake in corso poteva pubblicare una connessione che nessuno avrebbe più chiuso. Ora il server si ferma prima, dopo il thread di riconnessione e non all'inizio assoluto di `stop`. Misurato su `origin/main`: dopo `stop` la connessione è ancora registrata, e un evento firmato inviato su di essa porta `bob` da 0 a 8. Sul branch no. Lo spostamento era arrivato senza un test proprio, e il suo messaggio di commit parlava di handshake: lo copre `fd98fb0`.
 
-**Con `quorum=None` il branch non è identico a `origin/main`.** Queste correzioni cambiano il percorso storico, per scelta:
+**Queste correzioni cambiano il percorso con `quorum=None` rispetto al `main` di prima, per scelta.** Ora sono anche su `origin/main`:
 
 - `network/peer_connection.py`: chiusura su frame malformato in `receive_loop`, lock su `send`;
 - `network/node_server.py`: un thread e una scadenza per ogni handshake, limite di 64 simultanei, `stop` che termina quelli in corso;
