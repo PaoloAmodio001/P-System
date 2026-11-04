@@ -7,7 +7,7 @@
 ### Regole di lavoro in vigore
 
 - Lavorare su `byzantine-quorum`. **Non pushare su `main` finché la fase 5 non è completa e verificata.**
-- Fermarsi alla fine di ogni sottofase con un riepilogo e aspettare il via.
+- Alla fine di ogni punto: push di `byzantine-quorum` su GitHub, riepilogo, e aspettare il via.
 - Se un differenziale trova una divergenza tra Python e `runNode`, **non correggerla**: fermarsi e mostrare il caso minimo e la diagnosi. L'errore può stare nel Python, nel driver, nel modello o nel generatore.
 - **Prima di unire `byzantine-quorum` a `main`:** `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py`.
 
@@ -15,8 +15,7 @@
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum` | `ef9b3dd` | Fino alle correzioni di rete |
-| `byzantine-quorum` locale | `ef9b3dd` più il punto 1 della 5.5 e questa nota, non pushati | Tutte le fasi fatte |
+| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 1 della 5.5 e questa nota | Tutte le fasi fatte |
 | `origin/main` | `18bc871` | Fasi 0-4, pushate su richiesta. Nessun commit della fase 5 |
 | `main` locale | `1139303` | Fermo, 11 commit dietro `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -133,7 +132,7 @@ Scelte tecniche da conservare:
 
 ### Incidente del 2026-11-04: arresto della macchina
 
-**Cosa è successo.** La macchina si è fermata verso le 17:39, subito dopo il push di `ef9b3dd`, ed è ripartita alle 17:40. La causa non è accertata. Nove oggetti git scritti in quel momento sono rimasti vuoti, HEAD compreso (`bad object HEAD`), e tre reflog e il transcript della sessione avevano una coda di byte nulli.
+**Cosa è successo.** La macchina si è fermata verso le 17:39, subito dopo il push di `ef9b3dd`, ed è ripartita alle 17:40. Causa, riferita da Paolo: batteria scarica. Nove oggetti git scritti in quel momento sono rimasti vuoti, HEAD compreso (`bad object HEAD`), e tre reflog e il transcript della sessione avevano una coda di byte nulli.
 
 **Riparazione.**
 
@@ -152,7 +151,9 @@ Scelte tecniche da conservare:
 **Cosa si è perso.**
 
 - Nel repo, nulla di rilevabile. Non si può escludere una modifica fatta nell'ultimo istante e mai arrivata su disco: non lascia tracce.
-- In `backups/`, per un errore di Claude durante la ricostruzione delle cache: la cancellazione dei `__pycache__` ha percorso anche `backups/final-audit-artifacts-20261004-162853` e `backups/signed-transfer`. Quest'ultima conteneva solo quello ed è rimasta vuota. Erano bytecode non tracciati, senza copia: i file sorgente e i log accanto non sono stati toccati, ma l'elenco di ciò che è stato cancellato non è recuperabile.
+- In `backups/`, per un errore di Claude durante la ricostruzione delle cache: la cancellazione dei `__pycache__` ha percorso anche `backups/final-audit-artifacts-20261004-162853` e `backups/signed-transfer`. L'elenco dei `.pyc` cancellati non esiste, quindi il controllo "ogni `.pyc` ha il suo `.py`" **non si può fare file per file**, e nessuna copia di quei `.pyc` è stata trovata: né nel cestino né in `dotgit-backup.tar`, che contiene solo `.git`, né in git. La ricostruzione è indiretta:
+  - `final-audit-artifacts`: gli unici due `.py` della cartella ci sono ancora, e accanto ci sono i due `.pyc` copiati fuori da `__pycache__`, non cancellati. Probabilmente non si è perso nulla.
+  - `signed-transfer`: conteneva solo `__pycache__`, quindi i suoi `.pyc` **non avevano il `.py` accanto**. I nomi probabili sono quelli dei due file che git aveva lì, `test_node.py.before-signed-transfer-send-20261004-113812.py` e `test_node_to_node.py.before-signed-transfer-send-20261004-113812.py`, rimossi da `ee8b054`. Non sono su disco, ma si leggono da `c225e94`, anche su GitHub, e compilano. Se erano davvero quelli, si è perso solo bytecode rigenerabile. Non è dimostrato.
 - In `/tmp`, tutto: gli script di mutazione di 5.1, 5.2 e 5.4, `probe_open_points.py` e lo schizzo `QuorumSketch.lean`, ormai superato. Le mutazioni della 5.3 sono al sicuro in `tests/test_quorum_differential_mutations.py`.
 
 **Da ricordare.** Quello che deve durare non va in `/tmp`, compreso lo scratchpad: anche le sonde del punto aperto 2 sono lì.
