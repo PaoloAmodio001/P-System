@@ -2,13 +2,34 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Sottofase 5.5 fatta. Fatte le regole permanenti in `CLAUDE.md` e il passo 1 del programma di Paolo (`ROADMAP.md`). Prossimo: il passo 2, cioè la 5.6, che non è iniziata. Prima servono il via di Paolo sulla divisione della suite e, prima di scrivere codice, il via sul piano della 5.6 (SOSTA 1).** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**Sottofase 5.5 fatta. Fatte le regole permanenti in `CLAUDE.md`, il passo 1 del programma di Paolo (`ROADMAP.md`) e la parte della fase A che non ha soste. Prossimo: la 5.6, che non è iniziata. Prima di scrivere codice serve il via di Paolo sul piano qui sotto (SOSTA 1).** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è.
 
 ### Riepilogo dell'ultimo passo
 
+**Passo del 2026-11-04, richiesta di Paolo di portare il sistema verso l'industrializzazione.** Fatta l'analisi della Fase A di `CLAUDE.md`, con la tabella degli ambiti in `ROADMAP.md`. Il sistema non è pronto per l'industrializzazione, e parte di quello che manca non dipende dal codice: audit, prove lunghe, operatori indipendenti, pilota.
+
+- **Mutazioni di 5.1, 5.2 e 5.4 ricreate in `pytest`:** `tests/test_quorum_certificate_mutations.py` (51), `tests/test_quorum_messages_mutations.py` (30), `tests/test_quorum_vote_store_mutations.py` (39), con `tests/mutation_support.py`. Tutte rilevate. Vale solo il codice d'uscita 1: una mutazione che non compila non conta, e ha già smascherato un errore nell'elenco.
+- **Lacune trovate così:** sei mutazioni sopravvivevano perché mancava il test. Nessun bug nel codice: `members` non tupla, membro di tipo sbagliato con la lunghezza giusta, radice che sembra valida, chiavi di tipi misti, oggetto simile a un evento, campo esadecimale numerico. I test ci sono ora. Inoltre il test sullo store chiuso ora controlla il messaggio. Fuori dall'elenco, con il motivo scritto nei file: `self.f < 0`, che cambia solo il testo dell'errore, e l'ordine di `votes()`, da cui nulla dipende.
+- **Limite:** le mutazioni dello store non raggiungono i test con un processo separato (crash, due processi), che importano il modulo vero.
+- **Integrazione continua:** `.github/workflows/ci.yml`: `lake build`, parole vietate e assiomi nelle prove, suite completa. Fallisce se un test viene saltato, perché senza `lake` i differenziali si saltano da soli.
+- **Documenti corretti, perché dicevano il falso dopo la 5.5:** «not implemented» in `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`, `docs/FORMAL-SPECIFICATION.md`, `docs/CLAIM-TRACEABILITY.md`; `README.md` con i 449 test. La revisione finale delle etichette resta alla 5.7.
+- **Da decidere da Paolo:** `CLAUDE.md` cita `PROOF-SCOPE.md` nella radice, ma il file è `docs/PROOF-SCOPE.md`. `CLAUDE.md` non è stato toccato oltre alle modifiche di Paolo, committate così come erano.
+
 **Regole e passo 1, 2026-11-04.** `CLAUDE.md` ha le regole permanenti e il nuovo obiettivo. `ROADMAP.md` è tutta in Python, con le decisioni di Paolo: obiettivo a proprietario singolo, percorso con consenso come possibile fase dopo la 1.0, tre anticipazioni, D1 con governo a soglia `k` su `m`, D2 con soglie configurabili: standard `3f+1`, `2f+1` senza sblocco, opzionale `5f+1`, `4f+1` con sblocco, che è ancora uno schizzo e non una promessa.
 
-**Divisione della suite.** Marker `slow`, assegnato in `tests/conftest.py`: tutti i `*_mutations.py` e i file con `differential` nel nome. Misure dal report di un giro completo: 1537 test in 593 secondi; mutazioni e differenziali 9 file, 167 test, 518 secondi; il resto 168 file, 1370 test, 74 secondi.
+**Divisione della suite.** Marker `slow`, assegnato in `tests/conftest.py`: tutti i `*_mutations.py` e i file con `differential` nel nome.
+
+### Piano della 5.6, in attesa del via di Paolo (SOSTA 1)
+
+Un commit per punto, e nessun nuovo teorema indispensabile: un certificato ricevuto per sincronizzazione entra nello stesso `_accept` di uno ricevuto da solo, e `no_double_spend` vale già per liste di input arbitrarie. Il modello non cambia. Questo è un argomento, e il differenziale C lo mette alla prova.
+
+1. **Punto aperto 2, `recv` e `send` simultanei su TLS.** Socket non bloccante e un lock per ogni chiamata SSL, con l'attesa di `select` fuori dal lock: mai due chiamate insieme sullo stesso oggetto SSL. Il prototipo ha dato 70 su 70, ma solo come sonda. Prima un test in `pytest` che fallisca sul codice attuale, ricavato da `benchmarks/tls_duplex_probe.py`. Se è intermittente lo si dichiara, con il tasso misurato.
+2. **Invii che non restano bloccati.** Oggi un peer che non legge trattiene i broadcast verso quelli dopo di lui: con un nodo malevolo è il primo attacco da provare. Scadenza su ogni invio, poi chiusura della connessione. Una coda per peer solo se la scadenza non basta.
+3. **`CERTIFICATE_SYNC` a richiesta.** Un messaggio nuovo, `CERTIFICATE_SYNC_REQUEST`, porta per ogni mittente il prossimo nonce atteso: basta, perché `_execution_failure` esegue i nonce di un mittente in sequenza, e la posizione nel log non serve, perché l'ordine cambia da nodo a nodo. La risposta è a lotti, con un limite in byte sotto i 16 MB del trasporto. Parte alla connessione e a intervalli configurabili. Le risposte passano una per una da `_accept`.
+4. **Differenziale C:** 4 nodi su TLS reale con un membro malevolo: equivocazione, firme false, frame malformati, peer che non legge, certificati trattenuti. Controlli su ogni run: `no_double_spend` tra i log, stato uguale a `StateDeriver`, stesso stato dopo la sincronizzazione. Un nodo ucciso con `SIGKILL` che recupera. Etichetta `EMPIRICAL`: non confronta con Lean, e la convergenza vale solo se la rete consegna.
+5. **Mutazioni** su ogni regola nuova, in `pytest`, poi documenti e questo file.
+
+**Cosa resta fuori:** la difesa da chi riempie il buffer con i propri eventi e le quote (fase E), la liveness come teorema (fase B).
 
 ### Regole di lavoro in vigore
 
@@ -36,15 +57,16 @@
 | 3 | Fatta | `state_is_derive` e `autoImplicit = false` | `40732cd`, `7174e43`, `b1c254d` |
 | 4 | Fatta | `convergence_after_exchange` | `e243bb5`, `18bc871` |
 | 5.0 | Fatta | `delivered_certs_agree`, `executed_authorized`, driver `quorum_check` | `d0291bf`, `2d95651`, `7c42121` |
-| 5.1 | Fatta | `Committee`, `Vote`, `QuorumCertificate`. Mutazioni non riproducibili, script perso il 2026-11-04 | `ac553d6` |
-| 5.2 | Fatta | `SqliteVoteStore` e test di crash. Mutazioni non riproducibili, script perso il 2026-11-04 | `cdfd1fb`, correzione del test `25fbf57` |
+| 5.1 | Fatta | `Committee`, `Vote`, `QuorumCertificate`. Mutazioni ricreate in `tests/test_quorum_certificate_mutations.py` | `ac553d6` |
+| 5.2 | Fatta | `SqliteVoteStore` e test di crash. Mutazioni ricreate in `tests/test_quorum_vote_store_mutations.py` | `cdfd1fb`, correzione del test `25fbf57` |
 | 5.3 | Fatta | `QuorumReplica`, differenziale A, 31 mutazioni in `pytest` | `da4b340`, `18d6279`, `828c3c0`, documento `eb5707b` |
-| 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
+| 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni ricreate in `tests/test_quorum_messages_mutations.py` | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. Connessione che sopravvive a `stop`, test in `fd98fb0`. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059`, `fd98fb0` |
 | 5.5 | Fatta | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node`. Punto 5: differenziale B. Punto 6: test di comportamento | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4`, `b166ccb`, `5a7def4`, `520b581` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
-| 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
+| Fase A, parte senza soste | Fatta | Integrazione continua, correzione dei documenti superati | vedi `git log` |
+| 5.7 | In parte | Fatte: mutazioni di 5.1, 5.2 e 5.4 in `pytest`. Da fare: revisione finale di documenti ed etichette | vedi `git log` |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
 **Ultima verifica:** `pytest -q` 1537 passati, `lake build` passa. Dopo quel giro è cambiata una sola mutazione in `tests/test_quorum_byzantine_mutations.py`, e quel file è stato rieseguito da solo: 10 passati. Differenziale A con 15 seed su `d7292db`, prima del punto 4: 45000 casi, nessuna differenza. Differenziale B con 15 seed: 7500 casi, nessuna differenza. Entrambi vanno ripetuti prima del merge. Con `quorum=None` il nodo ammette ancora il fork; con `quorum=` il fork è escluso nei test, che passano senza socket, tranne due scenari su TLS reale senza nodo malevolo.
@@ -84,7 +106,7 @@
 
 **5.6:** `CERTIFICATE_SYNC` a lotti (il transport ha un limite di 16 MB) e `reconciliation_protocol.py`. Differenziale C: 4 nodi su TCP/TLS reale con un nodo malevolo, pochi scenari. `no_double_spend` e `convergence_after_exchange` verificati come proprietà sulle run multi-nodo.
 
-**5.7:** ricreare dentro `pytest` le mutazioni di 5.1, 5.2 e 5.4, come `tests/test_quorum_differential_mutations.py` per la 5.3, così stanno nel repository e si possono rieseguire. I conteggi vecchi non vanno riusati: contano solo quelli nuovi. La §13.1 di `FORMAL-SPECIFICATION.md` e `PROOF-SCOPE.md` dicono "not implemented": finché il nodo non è collegato è vero. Etichette previste: `FORMAL (model)` per i teoremi, `EMPIRICAL (Python)` per il collegamento. La modalità storica va dichiarata senza garanzie bizantine. Dopo la 5.5 sono superate anche la frase di `CLAUDE.md` "L'implementazione Python attuale non lo realizza ancora" e quella di `docs/PROOF-OBLIGATIONS.md` "Quorum mode is not implemented in Python": vanno corrette insieme alle etichette.
+**5.7:** le mutazioni di 5.1, 5.2 e 5.4 sono fatte, e le frasi «not implemented» sono corrette. Resta la revisione finale dopo la 5.6. Etichette previste: `FORMAL (model)` per i teoremi, `EMPIRICAL (Python)` per il collegamento. La modalità storica va dichiarata senza garanzie bizantine.
 
 ### Decisioni prese
 
@@ -121,7 +143,7 @@ Scelte tecniche da conservare:
   - i voti sono confrontati come insieme, quindi la restituzione della firma è coperta altrove;
   - le mutazioni girano su un solo seed;
   - il driver Lean è controllato solo da vettori a mano.
-- **Mutazioni di 5.1, 5.2 e 5.4:** rilevate 25, 23 e 45: **non riproducibili, script perso il 2026-11-04**. Stavano in `/tmp`, svuotato dal riavvio: vedi l'incidente qui sotto. Vanno ricreate dentro `pytest` nella 5.7.
+- **Mutazioni di 5.1, 5.2 e 5.4:** i conteggi storici (25, 23 e 45) non si possono riprodurre, perché lo script stava in `/tmp` ed è andato perso il 2026-11-04. Contano solo quelle ricreate in `pytest`.
 - **Differenziale B:**
   - è `EMPIRICAL`, non un refinement, e confronta un solo nodo per caso;
   - niente socket: i messaggi entrano direttamente in `_handle_peer_message`, dopo un passaggio da JSON;

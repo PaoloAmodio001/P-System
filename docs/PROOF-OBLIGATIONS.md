@@ -84,16 +84,17 @@ Axioms used: `propext`, `Quot.sound`, `Classical.choice` (standard).
 
 Scope and limits of this result:
 
-- It is a property of the model. Quorum mode is not implemented in Python,
-  so it says nothing about the current code, which allows forks between
-  honest nodes.
+- It is a property of the model, and it says nothing by itself about the
+  Python code. Quorum mode is implemented there behind `Node(quorum=...)`, and
+  the link with the model is `EMPIRICAL`: differential and behaviour tests, not
+  a refinement. With `quorum=None` the code allows forks between honest nodes.
 - That the hypotheses can be satisfied, and that they cannot be dropped, is
   proved only for `n = 4`, `f = 1` (witnesses below). Tightness for other
   values of `f` is not proved.
 - It concerns conflicting events only and does not say that nodes converge.
 - The theorems quantify over `Fin n`, the committee. A node outside the
   committee that only executes certificates (an observer) is not covered, and
-  the planned implementation does not allow one.
+  the implementation does not allow one.
 - Mathematically it is the known quorum argument (FastPay, Lemma A.1). The
   contribution is the machine-checked statement against an arbitrary input
   list per node, not a new idea.

@@ -20,8 +20,12 @@ Passing tests, benchmarks, or simulations do not automatically produce a formal 
 
 The system must not claim Byzantine fault tolerance, transport confidentiality, complete network liveness, or global consensus unless a matching model, assumptions, and proof are present.
 
-The current implementation does not prevent forks between honest nodes: two nodes that first receive different conflicting alternatives detect the conflict but keep different states (`tests/test_p15_byzantine_safety.py` asserts this).
+Without a committee (`quorum=None`, the historical mode) the implementation does not prevent forks between honest nodes, and that mode has no Byzantine guarantee: two nodes that first receive different conflicting alternatives detect the conflict but keep different states (`tests/test_p15_byzantine_safety.py` asserts this).
 
-## Quorum mode (planned)
+## Quorum mode
 
-Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is not implemented. Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`, which is done for the Lean model and `OPEN` for Python. O7 covers safety only, for a fixed committee of `n = 3f+1` validators, in the Lean model. It does not establish liveness, totality, committee reconfiguration, recovery from lost votes, or the security of Ed25519 and SHA-256, and it does not cover observers: nodes outside the committee that only execute certificates.
+Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is implemented in Python behind `Node(quorum=QuorumConfig(...))`, in `network/quorum.py`. Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`: `FORMAL (model)` for the Lean model, `EMPIRICAL` for the link with Python. That link is made of the differential tests and of the behaviour tests in `tests/test_quorum_byzantine.py`, and it is not a refinement proof. So Byzantine safety is not established for the running code.
+
+O7 covers safety only, for a fixed committee of `n = 3f+1` validators, in the Lean model. It does not establish liveness, totality, committee reconfiguration, recovery from lost votes, or the security of Ed25519 and SHA-256, and it does not cover observers: nodes outside the committee that only execute certificates.
+
+Not done yet in quorum mode: synchronization of certificates, so a node left behind does not catch up by itself, and a test on a real network with a faulty member (phase 5.6 in `piano-bizantino.md`).

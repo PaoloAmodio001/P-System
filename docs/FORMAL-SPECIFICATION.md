@@ -264,8 +264,10 @@ validator observed first.
 
 ### 13.1 Quorum mode
 
-Status: specified, not implemented in Python. Proof status: obligation
-O7 in `docs/PROOF-OBLIGATIONS.md`.
+Status: implemented in Python behind `Node(quorum=...)`, except for the
+synchronization of certificates (`CERTIFICATE_SYNC` is defined as a message but
+no node sends it yet). Proof status: obligation O7 in
+`docs/PROOF-OBLIGATIONS.md`, with an empirical link to the code, not a refinement.
 
 A fixed committee of `n = 3f+1` validators, known to all nodes, of which
 at most `f` are faulty.
