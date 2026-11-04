@@ -32,7 +32,19 @@ class VoteStoreError(Exception):
     """
 
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
+_PREVIOUS_SCHEMA_VERSION = "1"
+
+# One row at most: the first proof stays, and any other says the same thing.
+_HALT_TABLE = """
+    CREATE TABLE halt (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        first_canonical TEXT NOT NULL,
+        first_signatures TEXT NOT NULL,
+        second_canonical TEXT NOT NULL,
+        second_signatures TEXT NOT NULL
+    )
+"""
 
 _SCHEMA = (
     """
@@ -60,6 +72,7 @@ _SCHEMA = (
         signatures TEXT NOT NULL
     )
     """,
+    _HALT_TABLE,
 )
 
 
@@ -74,6 +87,43 @@ def _event_from_canonical(canonical: str) -> Transfer:
     )
 
 
+def _encode_signatures(certificate: QuorumCertificate) -> str:
+    return json.dumps(
+        [[vote.validator, vote.signature.hex()] for vote in certificate.votes],
+        separators=(",", ":"),
+    )
+
+
+def _certificate_from_row(canonical: str, signatures: str) -> QuorumCertificate:
+    return QuorumCertificate(
+        _event_from_canonical(canonical),
+        tuple(
+            Vote(validator, bytes.fromhex(signature))
+            for validator, signature in json.loads(signatures)
+        ),
+    )
+
+
+def _is_halt_proof(
+    committee: Committee,
+    first: QuorumCertificate,
+    second: QuorumCertificate,
+) -> bool:
+    """
+    Two valid certificates for different alternatives of one `(sender, nonce)`.
+    With at most `f` faulty validators this cannot exist: it is what
+    `no_double_spend` excludes. `verify` comes first because it never raises, and
+    the other checks assume well-formed events.
+    """
+    return (
+        first.verify(committee)
+        and second.verify(committee)
+        and first.event.sender == second.event.sender
+        and first.event.nonce == second.event.nonce
+        and first.event.canonical() != second.event.canonical()
+    )
+
+
 class SqliteVoteStore:
     """
     The durable part of a validator: its votes and its log of certificates.
@@ -84,9 +134,17 @@ class SqliteVoteStore:
     counted among the faulty ones. Losing the log does not, because in the model
     votes and log are independent.
 
+    The store also holds the proof of a halt. Once it is recorded, `record_vote`
+    refuses and `append_certificate` raises, so a restart cannot forget the halt
+    and a process cannot get past it. The state of the halt is read inside the
+    transaction of each write, never kept in memory. There is no way out of a halt
+    here: that takes a manual intervention. The model has no halt, since `runNode`
+    does not stop.
+
     A missing file is an error unless `create` is true, so that a deleted file
     does not silently become a validator with no votes. This cannot detect an old
-    backup put back in place, which is the same loss.
+    backup put back in place, which is the same loss, nor a proof of a halt deleted
+    by hand.
     """
 
     def __init__(
@@ -178,11 +236,58 @@ class SqliteVoteStore:
             found = dict(
                 self._connection.execute("SELECT key, value FROM meta").fetchall()
             )
+            version = found.pop("schema_version", None)
+            del expected["schema_version"]
 
             if found != expected:
                 raise VoteStoreError("VOTE STORE BELONGS TO ANOTHER VALIDATOR")
+
+            if version == _PREVIOUS_SCHEMA_VERSION:
+                self._connection.execute(_HALT_TABLE)
+                self._connection.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                    (_SCHEMA_VERSION,),
+                )
+                self._commit()
+            elif version != _SCHEMA_VERSION:
+                raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
+
+            self._check_halt_proof()
         finally:
             self._rollback_if_open()
+
+    def _read_halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
+        row = self._connection.execute(
+            """
+            SELECT first_canonical, first_signatures,
+                   second_canonical, second_signatures
+            FROM halt
+            """
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        return (
+            _certificate_from_row(row[0], row[1]),
+            _certificate_from_row(row[2], row[3]),
+        )
+
+    def _check_halt_proof(self) -> None:
+        # A proof that does not verify means the file was altered. Neither ignoring
+        # it nor believing it is safe, so the store does not open.
+        try:
+            proof = self._read_halt_proof()
+        except (ValueError, KeyError, TypeError, RecursionError) as error:
+            raise VoteStoreError("HALT PROOF IS UNREADABLE") from error
+
+        if proof is not None and not _is_halt_proof(self.committee, *proof):
+            raise VoteStoreError("HALT PROOF DOES NOT VERIFY")
+
+    def _is_halted(self) -> bool:
+        return (
+            self._connection.execute("SELECT 1 FROM halt").fetchone() is not None
+        )
 
     def _begin(self) -> None:
         # IMMEDIATE takes the write lock now, so the check and the write of a
@@ -203,8 +308,9 @@ class SqliteVoteStore:
     def record_vote(self, event: Transfer) -> bool:
         """
         Apply the vote lock. False means that a different event holds the
-        `(sender, nonce)` or the id. True means that this event is durably
-        recorded, possibly by an earlier call.
+        `(sender, nonce)` or the id, or that the node has halted, even for an event
+        it already voted for. True means that this event is durably recorded,
+        possibly by an earlier call.
 
         Raises instead of returning when nothing can be said about the write;
         no signature may follow an exception.
@@ -217,6 +323,9 @@ class SqliteVoteStore:
 
             try:
                 self._begin()
+
+                if self._is_halted():
+                    return False
 
                 existing = {
                     row[0]
@@ -268,16 +377,17 @@ class SqliteVoteStore:
         it. The same id twice is an error, because a node never executes it twice.
         """
         event = certificate.event
-        signatures = json.dumps(
-            [[vote.validator, vote.signature.hex()] for vote in certificate.votes],
-            separators=(",", ":"),
-        )
+        signatures = _encode_signatures(certificate)
 
         with self._lock:
             self._require_open()
 
             try:
                 self._begin()
+
+                if self._is_halted():
+                    raise VoteStoreError("NODE HAS HALTED")
+
                 self._connection.execute(
                     """
                     INSERT INTO certificates (event_id, canonical, signatures)
@@ -304,15 +414,77 @@ class SqliteVoteStore:
                 raise VoteStoreError(f"CANNOT READ CERTIFICATES: {error}") from error
 
         return [
-            QuorumCertificate(
-                _event_from_canonical(canonical),
-                tuple(
-                    Vote(validator, bytes.fromhex(signature))
-                    for validator, signature in json.loads(signatures)
-                ),
-            )
+            _certificate_from_row(canonical, signatures)
             for canonical, signatures in rows
         ]
+
+    def record_halt(
+        self,
+        first: QuorumCertificate,
+        second: QuorumCertificate,
+    ) -> None:
+        """
+        Halt the node, durably. Raises ValueError unless the two certificates are
+        a proof, so that a forged certificate cannot halt a node: without this one
+        message would be enough. Raises VoteStoreError if the write fails, and then
+        the node has not halted.
+
+        The two are stored in a fixed order, so the proof does not depend on which
+        arrived first. If a proof is already there it stays.
+        """
+        if not _is_halt_proof(self.committee, first, second):
+            raise ValueError("NOT A PROOF OF A HALT")
+
+        low, high = sorted(
+            (first, second),
+            key=lambda certificate: certificate.event.canonical(),
+        )
+
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.execute(
+                    """
+                    INSERT OR IGNORE INTO halt (
+                        id,
+                        first_canonical, first_signatures,
+                        second_canonical, second_signatures
+                    )
+                    VALUES (1, ?, ?, ?, ?)
+                    """,
+                    (
+                        low.event.canonical().decode(),
+                        _encode_signatures(low),
+                        high.event.canonical().decode(),
+                        _encode_signatures(high),
+                    ),
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"HALT NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def halted(self) -> bool:
+        with self._lock:
+            self._require_open()
+
+            try:
+                return self._is_halted()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ HALT: {error}") from error
+
+    def halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
+        """The proof, or None. It was verified when written and when opened."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                return self._read_halt_proof()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ HALT: {error}") from error
 
     def close(self) -> None:
         with self._lock:
@@ -388,8 +560,12 @@ class QuorumReplica:
         return Vote.create(self.committee, self._identity, event)
 
     def handle_certificate(self, certificate: QuorumCertificate) -> bool:
-        """Execute the certificate if it can run now. True if it was executed."""
-        if not self._can_execute(certificate):
+        """
+        Execute the certificate if it can run now. True if it was executed. A
+        halted node executes nothing. That check is here and not in `_can_execute`,
+        because the log replayed at a restart holds what ran before the halt.
+        """
+        if self._store.halted() or not self._can_execute(certificate):
             return False
 
         # On disk first: if this fails, the state has not changed.

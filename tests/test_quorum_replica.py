@@ -322,3 +322,50 @@ def test_certificate_with_a_bool_amount_and_real_signatures_is_not_executed(
     assert replica.handle_certificate(forged) is False
     assert replica.log == []
     assert replica.state.nonce("alice") == 0
+
+
+# --- A halted node --------------------------------------------------------
+
+
+def _halt_replica(replica, committee, members):
+    replica._store.record_halt(
+        certificate(committee, members, A, 0, 1, 2),
+        certificate(committee, members, B, 1, 2, 3),
+    )
+
+
+def test_halted_replica_gives_no_signature(path, members, committee):
+    replica = open_replica(path, members, committee)
+    assert replica.handle_vote_request(A) is not None
+
+    _halt_replica(replica, committee, members)
+
+    assert replica.handle_vote_request(A) is None
+    assert replica.handle_vote_request(Transfer("alice", "bob", 1, 5)) is None
+
+
+def test_halted_replica_executes_nothing_and_keeps_its_state(path, members, committee):
+    replica = open_replica(path, members, committee)
+    before = replica.state.root()
+    _halt_replica(replica, committee, members)
+
+    assert not replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
+
+    assert replica.state.root() == before
+    assert replica.log == []
+
+
+def test_halt_survives_a_restart_with_the_log_replayed(path, members, committee):
+    replica = open_replica(path, members, committee)
+    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
+    root = replica.state.root()
+    _halt_replica(replica, committee, members)
+    replica._store.close()
+
+    again = open_replica(path, members, committee, create=False)
+
+    assert again.state.root() == root
+    assert [event.canonical() for event in again.executed] == [A.canonical()]
+    assert again.handle_vote_request(NEXT) is None
+    assert not again.handle_certificate(certificate(committee, members, NEXT, 0, 1, 2))
+    assert again.state.root() == root

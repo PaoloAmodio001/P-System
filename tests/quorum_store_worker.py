@@ -10,16 +10,47 @@ import signal
 import sys
 from pathlib import Path
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.attestation import Committee  # noqa: E402
+from core.attestation import Committee, QuorumCertificate, Vote  # noqa: E402
 from core.event import Transfer  # noqa: E402
 from core.state import State  # noqa: E402
+from crypto.identity import Identity  # noqa: E402
 from network.quorum import SqliteVoteStore  # noqa: E402
 
 MEMBERS = tuple(bytes([value]) * 32 for value in (1, 2, 3, 4))
 COMMITTEE = Committee(MEMBERS, 1, State({"alice": 1000}).root())
 VALIDATOR = MEMBERS[0]
+
+# Real keys, fixed so that this process and the test build the same certificates.
+HALT_IDENTITIES = sorted(
+    (
+        Identity(Ed25519PrivateKey.from_private_bytes(bytes([value]) * 32))
+        for value in (11, 12, 13, 14)
+    ),
+    key=lambda identity: identity.public_key,
+)
+HALT_MEMBERS = tuple(identity.public_key for identity in HALT_IDENTITIES)
+HALT_GENESIS = {"alice": 1000}
+HALT_COMMITTEE = Committee.create(HALT_MEMBERS, 1, State(HALT_GENESIS))
+HALT_VALIDATOR = HALT_MEMBERS[0]
+HALT_EVENTS = (
+    Transfer("alice", "bob", 8, 0),
+    Transfer("alice", "carol", 8, 0),
+)
+
+
+def halt_committee_with_genesis(balances: dict) -> Committee:
+    return Committee.create(HALT_MEMBERS, 1, State(balances))
+
+
+def signed_certificate(event, indexes, committee=HALT_COMMITTEE) -> QuorumCertificate:
+    return QuorumCertificate(
+        event,
+        tuple(Vote.create(committee, HALT_IDENTITIES[i], event) for i in indexes),
+    )
 
 
 def event(label: str, nonce: int) -> Transfer:
@@ -47,8 +78,37 @@ class CrashAfterCommit(SqliteVoteStore):
         kill_self()
 
 
+def run_halt_mode(mode: str, path: Path) -> None:
+    store_types = {
+        "before-commit": CrashBeforeCommit,
+        "after-commit": CrashAfterCommit,
+    }
+
+    if mode.startswith("halt-open-crash-"):
+        # The file is a store of schema 1: opening it migrates, with a commit.
+        store_types[mode.removeprefix("halt-open-crash-")](
+            path, HALT_COMMITTEE, HALT_VALIDATOR
+        )
+    else:
+        # Creating the file does not go through _commit, recording the halt does.
+        store = store_types[mode.removeprefix("halt-crash-")](
+            path, HALT_COMMITTEE, HALT_VALIDATOR, create=True
+        )
+        store.record_halt(
+            signed_certificate(HALT_EVENTS[0], (0, 1, 2)),
+            signed_certificate(HALT_EVENTS[1], (1, 2, 3)),
+        )
+
+    report("NOT_REACHED")
+
+
 def main() -> None:
     mode, path, *rest = sys.argv[1:]
+
+    if mode.startswith("halt-"):
+        run_halt_mode(mode, Path(path))
+        return
+
     store_type = {
         "crash-before-commit": CrashBeforeCommit,
         "crash-after-commit": CrashAfterCommit,

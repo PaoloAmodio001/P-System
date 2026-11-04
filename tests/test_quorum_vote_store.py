@@ -478,3 +478,371 @@ def test_votes_and_certificates_are_independent(store):
     store.append_certificate(_certificate(A, 0, 1, 2))
     assert store.votes() == []
     assert store.record_vote(B)
+
+
+# --- The durable proof of a halt -----------------------------------------
+
+HALT_COMMITTEE = worker.HALT_COMMITTEE
+HALT_VALIDATOR = worker.HALT_VALIDATOR
+
+
+def _signed(event: Transfer, *indexes: int, committee=HALT_COMMITTEE):
+    return worker.signed_certificate(event, indexes, committee)
+
+
+@pytest.fixture
+def halt_store(path):
+    opened = SqliteVoteStore(path, HALT_COMMITTEE, HALT_VALIDATOR, create=True)
+    yield opened
+    opened.close()
+
+
+def reopen_halt(path: Path) -> SqliteVoteStore:
+    return SqliteVoteStore(path, HALT_COMMITTEE, HALT_VALIDATOR)
+
+
+def _halt(store) -> None:
+    store.record_halt(_signed(A, 0, 1, 2), _signed(B, 1, 2, 3))
+
+
+def _proof_events(store) -> list[bytes]:
+    first, second = store.halt_proof()
+    return [first.event.canonical(), second.event.canonical()]
+
+
+def test_new_store_is_not_halted(halt_store):
+    assert not halt_store.halted()
+    assert halt_store.halt_proof() is None
+
+
+def test_halt_is_recorded_and_read_back(halt_store):
+    first, second = _signed(A, 0, 1, 2), _signed(B, 1, 2, 3)
+    halt_store.record_halt(first, second)
+
+    assert halt_store.halted()
+    assert {c.event.canonical() for c in halt_store.halt_proof()} == {
+        A.canonical(),
+        B.canonical(),
+    }
+    assert {c.votes for c in halt_store.halt_proof()} == {first.votes, second.votes}
+
+
+def test_halt_proof_does_not_depend_on_the_order_of_arrival(path, tmp_path):
+    other = tmp_path / "other.sqlite"
+    first = SqliteVoteStore(path, HALT_COMMITTEE, HALT_VALIDATOR, create=True)
+    second = SqliteVoteStore(other, HALT_COMMITTEE, HALT_VALIDATOR, create=True)
+
+    first.record_halt(_signed(A, 0, 1, 2), _signed(B, 1, 2, 3))
+    second.record_halt(_signed(B, 1, 2, 3), _signed(A, 0, 1, 2))
+
+    assert _proof_events(first) == _proof_events(second)
+    first.close()
+    second.close()
+
+
+def test_halt_survives_reopening(path, halt_store):
+    _halt(halt_store)
+    expected = _proof_events(halt_store)
+    halt_store.close()
+
+    again = reopen_halt(path)
+    assert again.halted()
+    assert _proof_events(again) == expected
+    again.close()
+
+
+def test_first_halt_proof_is_kept(halt_store):
+    # Any valid proof says the same thing, and rewriting one could lose it.
+    _halt(halt_store)
+    expected = _proof_events(halt_store)
+    third = Transfer("alice", "dave", 8, 0)
+
+    halt_store.record_halt(_signed(A, 0, 1, 2), _signed(third, 0, 1, 3))
+
+    assert _proof_events(halt_store) == expected
+
+
+# A forged certificate must never halt a node: one message would be enough.
+def _bad_signature():
+    good = _signed(B, 1, 2, 3)
+    return QuorumCertificate(
+        good.event,
+        (Vote(good.votes[0].validator, bytes(64)),) + good.votes[1:],
+    )
+
+
+@pytest.mark.parametrize(
+    "make_second",
+    [
+        pytest.param(_bad_signature, id="bad signature"),
+        pytest.param(lambda: _signed(B, 1, 2), id="below quorum"),
+        pytest.param(
+            lambda: QuorumCertificate(B, _signed(B, 1, 2, 3).votes[:2] * 2),
+            id="repeated signers",
+        ),
+        pytest.param(
+            lambda: QuorumCertificate(B, _signed(A, 1, 2, 3).votes),
+            id="signatures of the other event",
+        ),
+        pytest.param(lambda: _signed(A, 1, 2, 3), id="same event, other signers"),
+        pytest.param(
+            lambda: _signed(Transfer("alice", "carol", 8, 1), 1, 2, 3),
+            id="other nonce",
+        ),
+        pytest.param(
+            lambda: _signed(Transfer("zed", "carol", 8, 0), 1, 2, 3),
+            id="other sender",
+        ),
+    ],
+)
+@pytest.mark.parametrize("flip", [False, True], ids=["second", "first"])
+def test_invalid_halt_proof_is_refused_and_does_not_halt(halt_store, make_second, flip):
+    pair = (_signed(A, 0, 1, 2), make_second())
+
+    with pytest.raises(ValueError):
+        halt_store.record_halt(*(reversed(pair) if flip else pair))
+
+    assert not halt_store.halted()
+    assert halt_store.record_vote(A)
+
+
+def test_certificates_of_another_committee_do_not_halt(halt_store):
+    other = worker.halt_committee_with_genesis({"alice": 999})
+
+    with pytest.raises(ValueError):
+        halt_store.record_halt(
+            _signed(A, 0, 1, 2, committee=other),
+            _signed(B, 1, 2, 3, committee=other),
+        )
+
+    assert not halt_store.halted()
+
+
+def test_halt_blocks_every_vote_even_one_already_given(halt_store):
+    assert halt_store.record_vote(A)
+    _halt(halt_store)
+
+    assert not halt_store.record_vote(A)
+    assert not halt_store.record_vote(Transfer("zed", "bob", 1, 0))
+    assert canonical_set(halt_store.votes()) == {A.canonical()}
+
+
+def test_halt_blocks_new_certificates_and_keeps_the_log(halt_store):
+    halt_store.append_certificate(_signed(A, 0, 1, 2))
+    _halt(halt_store)
+
+    with pytest.raises(VoteStoreError):
+        halt_store.append_certificate(_signed(Transfer("zed", "bob", 1, 0), 0, 1, 2))
+
+    assert [c.event.canonical() for c in halt_store.certificates()] == [A.canonical()]
+
+
+def test_halt_is_seen_through_another_open_store_on_the_same_file(path, halt_store):
+    # Nothing about the halt may be cached in memory.
+    other = reopen_halt(path)
+    assert not other.halted()
+
+    _halt(halt_store)
+
+    assert other.halted()
+    assert not other.record_vote(A)
+    with pytest.raises(VoteStoreError):
+        other.append_certificate(_signed(A, 0, 1, 2))
+    other.close()
+
+
+def test_failed_halt_write_is_an_error_and_records_nothing(halt_store):
+    # Not a value of False: the caller must not believe the node has halted.
+    halt_store._connection.execute("PRAGMA query_only = ON")
+
+    with pytest.raises(VoteStoreError):
+        _halt(halt_store)
+
+    assert not halt_store.halted()
+
+
+def test_closed_store_refuses_halt_calls(path, halt_store):
+    halt_store.close()
+
+    for call in (
+        lambda: _halt(halt_store),
+        halt_store.halted,
+        halt_store.halt_proof,
+    ):
+        with pytest.raises(VoteStoreError):
+            call()
+
+
+def _tamper_halt(path: Path, statement: str, *values) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute(statement, values)
+    connection.commit()
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    "statement,values",
+    [
+        pytest.param(
+            "UPDATE halt SET first_signatures = ?", ("not json",), id="invalid json"
+        ),
+        pytest.param(
+            "UPDATE halt SET first_signatures = ?", ("[]",), id="no signatures"
+        ),
+        pytest.param(
+            "UPDATE halt SET first_signatures = ?", ('[[0,"zz"]]',), id="invalid hex"
+        ),
+        pytest.param(
+            "UPDATE halt SET first_signatures = ?", ('{"a":1}',), id="not a list"
+        ),
+        pytest.param(
+            "UPDATE halt SET first_canonical = ?", ("{}",), id="event without fields"
+        ),
+        pytest.param(
+            "UPDATE halt SET first_canonical = ?", ("[" * 100000,), id="deep nesting"
+        ),
+        pytest.param(
+            "UPDATE halt SET second_canonical = ?",
+            ('{"sender":"alice"}',),
+            id="event with one field",
+        ),
+        pytest.param(
+            "UPDATE halt SET second_canonical = first_canonical,"
+            " second_signatures = first_signatures",
+            (),
+            id="same certificate twice",
+        ),
+    ],
+)
+def test_store_with_an_altered_halt_proof_refuses_to_open(
+    path, halt_store, statement, values
+):
+    _halt(halt_store)
+    halt_store.close()
+
+    _tamper_halt(path, statement, *values)
+
+    with pytest.raises(VoteStoreError):
+        reopen_halt(path)
+
+
+def test_halt_row_removed_by_hand_is_not_detected(path, halt_store):
+    # A known limit, the same as an old backup put back in place: a proof that is
+    # gone leaves nothing to check. It is written here so that it stays visible.
+    _halt(halt_store)
+    halt_store.close()
+    _tamper_halt(path, "DELETE FROM halt")
+
+    again = reopen_halt(path)
+    assert not again.halted()
+    again.close()
+
+
+def _downgrade_to_v1(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute("DROP TABLE halt")
+    connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    connection.commit()
+    connection.close()
+
+
+def _schema_version(path: Path) -> str:
+    connection = sqlite3.connect(path)
+    version = connection.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()[0]
+    connection.close()
+    return version
+
+
+@pytest.fixture
+def v1_path(path, halt_store):
+    assert halt_store.record_vote(A)
+    halt_store.append_certificate(_signed(A, 0, 1, 2))
+    halt_store.close()
+    _downgrade_to_v1(path)
+    return path
+
+
+def test_schema_v1_store_migrates_and_keeps_votes_and_log(v1_path):
+    store = reopen_halt(v1_path)
+
+    assert _schema_version(v1_path) == "2"
+    assert not store.halted()
+    assert canonical_set(store.votes()) == {A.canonical()}
+    assert not store.record_vote(B)
+    assert [c.event.canonical() for c in store.certificates()] == [A.canonical()]
+
+    _halt(store)
+    store.close()
+
+    again = reopen_halt(v1_path)
+    assert again.halted()
+    again.close()
+
+
+def test_schema_v1_of_another_validator_is_refused_and_left_as_it_is(v1_path):
+    with pytest.raises(VoteStoreError):
+        SqliteVoteStore(v1_path, HALT_COMMITTEE, worker.HALT_MEMBERS[1])
+
+    assert _schema_version(v1_path) == "1"
+
+
+@pytest.mark.parametrize(
+    "mode,version,marker",
+    [
+        ("crash-before-commit", "1", "BEFORE_COMMIT"),
+        ("crash-after-commit", "2", "AFTER_COMMIT"),
+    ],
+)
+def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
+    v1_path, mode, version, marker
+):
+    process = _spawn(f"halt-open-{mode}", v1_path)
+    assert _finish(process)[-1] == marker
+    assert _schema_version(v1_path) == version
+
+    store = reopen_halt(v1_path)
+    assert _schema_version(v1_path) == "2"
+    assert canonical_set(store.votes()) == {A.canonical()}
+    store.close()
+
+
+@pytest.mark.parametrize("version", ["0", "3", "two"])
+def test_schema_of_an_unknown_version_is_refused(path, halt_store, version):
+    halt_store.close()
+    _tamper_halt(
+        path, "UPDATE meta SET value = ? WHERE key = 'schema_version'", version
+    )
+
+    with pytest.raises(VoteStoreError):
+        reopen_halt(path)
+
+
+def test_schema_v2_without_the_halt_table_is_refused(path, halt_store):
+    # Otherwise the check on the proof would be skipped.
+    halt_store.close()
+    _tamper_halt(path, "DROP TABLE halt")
+
+    with pytest.raises(VoteStoreError):
+        reopen_halt(path)
+
+
+def test_crash_after_commit_keeps_the_halt(path):
+    process = _spawn("halt-crash-after-commit", path)
+    assert _finish(process)[-1] == "AFTER_COMMIT"
+
+    store = reopen_halt(path)
+    assert store.halted()
+    assert not store.record_vote(worker.HALT_EVENTS[0])
+    store.close()
+
+
+def test_crash_before_commit_leaves_no_halt(path):
+    process = _spawn("halt-crash-before-commit", path)
+    assert _finish(process)[-1] == "BEFORE_COMMIT"
+
+    store = reopen_halt(path)
+    assert not store.halted()
+    assert store.record_vote(worker.HALT_EVENTS[0])
+    store.close()
