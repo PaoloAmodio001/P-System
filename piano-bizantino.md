@@ -2,7 +2,7 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Prossimo passo: la sottofase 5.5, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**In corso: sottofase 5.5, punto 1 fatto. Prossimo passo: il punto 2, solo dopo il via di Paolo e la decisione sul punto aperto 2.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
 
 ### Regole di lavoro in vigore
 
@@ -15,7 +15,8 @@
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum`, `byzantine-quorum` locale | `cd77718` più il commit di questa nota | Tutte le fasi fatte |
+| `origin/byzantine-quorum` | `ef9b3dd` | Fino alle correzioni di rete |
+| `byzantine-quorum` locale | `ef9b3dd` più il punto 1 della 5.5 e questa nota, non pushati | Tutte le fasi fatte |
 | `origin/main` | `18bc871` | Fasi 0-4, pushate su richiesta. Nessun commit della fase 5 |
 | `main` locale | `1139303` | Fermo, 11 commit dietro `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -36,14 +37,12 @@
 | 5.4 | Fatta | Validazione degli eventi e messaggi | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059` |
-| **5.5** | **Da fare, la prossima** | Integrazione in `Node`, differenziale B | |
+| **5.5** | **In corso** | Punto 1 fatto: un frame alla volta in `PeerConnection.send`. Il bug è anche su `main` | `0acac14` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
-Nessuna sottofase è in corso: il lavoro è fermo a un confine pulito.
-
-**Ultima verifica:** `pytest -q` 1155 passati, `lake build` passa. I 15 seed sono passati con la validazione attiva (45000 casi, nessuna differenza), prima dei messaggi e di `cd77718`, che non toccano il differenziale. `Node` non usa ancora né la replica né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
+**Ultima verifica:** `pytest -q` 1169 passati, `lake build` passa. I 15 seed sono passati con la validazione attiva (45000 casi, nessuna differenza), prima dei messaggi e delle correzioni di rete, che non toccano il differenziale. `Node` non usa ancora né la replica né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
 
 ### Cosa resta da fare
 
@@ -65,6 +64,18 @@ Nessuna sottofase è in corso: il lavoro è fermo a un confine pulito.
 - `QuorumReplica` non è thread-safe: `Node` deve serializzare le chiamate.
 - Va definito il comportamento se due processi aprono lo stesso file di voti.
 - **Test:** differenziale B con circa 500 casi attraverso `_handle_peer_message` con messaggi codificati, confrontando con Lean lo stato *pubblico* del nodo e i voti letti dal disco. Il nodo registra la traccia degli input passati alla replica, tentativi compresi. Ogni firma in uscita deve corrispondere a un voto registrato. Almeno una mutazione fuori dalla replica. Un test P15 in modalità quorum che verifica l'assenza del fork, lasciando invariato `tests/test_p15_byzantine_safety.py`. Permutazioni degli stessi certificati danno lo stesso stato.
+
+**Punti della 5.5, un commit per punto, approvati da Paolo il 2026-11-04:**
+
+1. Lock di invio in `PeerConnection.send`. Fatto.
+2. Prova di arresto durevole in `SqliteVoteStore`, schema v2: salva i due certificati in conflitto e li riverifica all'apertura.
+3. `QuorumDriver` in `network/quorum.py`, senza rete né `Node`: riceve input e restituisce i messaggi da inviare. Un certificato invalido non ferma mai il nodo. Il buffer dei certificati non ha limite, perché un limite farebbe dipendere il risultato dall'ordine di arrivo.
+4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma.
+5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica.
+6. Test di comportamento: P15 in modalità quorum, voti divisi, permutazioni, riavvio dopo l'arresto, un test breve su TLS reale.
+7. Aggiornamento di questo file. Le etichette restano alla 5.7.
+
+**Decisioni approvate per la 5.5:** il nodo aggrega solo gli eventi inviati da lui. L'arresto blocca anche i voti e sopravvive al riavvio. Se due processi aprono lo stesso file di voti, `Node` rifiuta di partire, con un `flock` su `<file>.lock` (non affidabile su NFS).
 
 **5.6:** `CERTIFICATE_SYNC` a lotti (il transport ha un limite di 16 MB) e `reconciliation_protocol.py`. Differenziale C: 4 nodi su TCP/TLS reale con un nodo malevolo, pochi scenari. `no_double_spend` e `convergence_after_exchange` verificati come proprietà sulle run multi-nodo.
 
@@ -113,6 +124,12 @@ Scelte tecniche da conservare:
 ### Punti aperti
 
 1. **Questo file** va tolto o spostato in `docs/` prima del merge su `main`.
+2. **`recv` e `send` simultanei sullo stesso `SSLSocket`: non corretto, da decidere.** Il lock di `0acac14` copre solo gli invii tra loro. Misure su TLS reale, con il lock attivo:
+   - se i due lati trasmettono subito dopo l'handshake TLS: su 60 esecuzioni, 12 danno `BAD_RECORD_MAC` o `RECORD_LAYER_FAILURE` e 5 si bloccano;
+   - dopo un primo scambio di messaggi: 68 su 68 pulite;
+   - attraverso `Node`, che fa l'handshake applicativo prima di avviare la lettura: 40 su 40 pulite, 20 sul branch e 20 su `origin/main`, con messaggi piccoli.
+
+   Non è una garanzia: la causa della finestra iniziale non è stata accertata (ipotesi: i ticket di TLS 1.3). Un prototipo con socket non bloccante e un lock su ogni chiamata SSL ha dato 70 su 70, ma solo come sonda, fuori dal repo.
 
 ---
 
