@@ -2,7 +2,7 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**In corso: sottofase 5.5, punti 1 e 2 fatti. Prossimo passo: il punto 3, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**In corso: sottofase 5.5, punti 1, 2 e 3 fatti. Prossimo passo: il punto 4, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
 
 ### Regole di lavoro in vigore
 
@@ -15,7 +15,7 @@
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 2 della 5.5 e questa nota | Tutte le fasi fatte |
+| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 3 della 5.5 e questa nota | Tutte le fasi fatte |
 | `origin/main` | `18bc871` | Fasi 0-4, pushate su richiesta. Nessun commit della fase 5 |
 | `main` locale | `1139303` | Fermo, 11 commit dietro `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -36,12 +36,12 @@
 | 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059` |
-| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2 | `0acac14`, `31ce78c` |
+| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver` | `0acac14`, `31ce78c`, `1202eac` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
-**Ultima verifica:** `pytest -q` 1239 passati, `lake build` passa. I 15 seed sono passati con la validazione attiva (45000 casi, nessuna differenza), prima dei messaggi e delle correzioni di rete, che non toccano il differenziale, e prima del punto 2 della 5.5, che tocca `QuorumReplica`: su questo codice sono passati solo i 3 seed di default. `Node` non usa ancora né la replica né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
+**Ultima verifica:** `pytest -q` 1355 passati, `lake build` passa. Differenziale con `PSYSTEM_DIFF_SEEDS=15` su `e9981e2`, cioè dopo il punto 2 e prima del punto 3: 15 seed passati, 45000 casi, nessuna differenza. Il punto 3 aggiunge il driver e non cambia ciò che la replica decide, ma va ripetuto prima del merge. `Node` non usa ancora né il driver né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
 
 ### Cosa resta da fare
 
@@ -68,7 +68,7 @@
 
 1. Lock di invio in `PeerConnection.send`. Fatto.
 2. Prova di arresto durevole in `SqliteVoteStore`, schema v2: salva i due certificati in conflitto e li riverifica all'apertura. Fatto. Il controllo sui due certificati sta in `_is_halt_proof`, che il punto 3 può riusare.
-3. `QuorumDriver` in `network/quorum.py`, senza rete né `Node`: riceve input e restituisce i messaggi da inviare. Un certificato invalido non ferma mai il nodo. Il buffer dei certificati non ha limite, perché un limite farebbe dipendere il risultato dall'ordine di arrivo.
+3. `QuorumDriver` in `network/quorum.py`, senza rete né `Node`: riceve input e restituisce i messaggi da inviare. Un certificato invalido non ferma mai il nodo. Il buffer dei certificati non ha limite, perché un limite farebbe dipendere il risultato dall'ordine di arrivo. Fatto. La replica del nodo riceve `auth` da chi la crea, ma è il driver a controllare firma e `sender`: il punto 4 deve deciderne il collegamento.
 4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma.
 5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica.
 6. Test di comportamento: P15 in modalità quorum, voti divisi, permutazioni, riavvio dopo l'arresto, un test breve su TLS reale.
@@ -121,6 +121,11 @@ Scelte tecniche da conservare:
   - per ripartire serve un intervento manuale, non previsto dal codice;
   - una prova cancellata a mano dal file non è rilevabile, come un backup vecchio, e un test lo dichiara;
   - le 22 mutazioni in `tests/test_quorum_halt_mutations.py` non raggiungono i processi dei test di crash, che importano il modulo vero.
+- **Driver:**
+  - l'indipendenza dall'ordine di arrivo è una proprietà testata (`EMPIRICAL`) su permutazioni casuali, non un teorema su `QuorumDriver`, e vale per insiemi senza conflitti;
+  - il buffer e il registro degli eventi firmati non hanno limite: un mittente può farli crescere con i propri eventi;
+  - buffer e aggregazione sono in memoria: dopo un riavvio i certificati in attesa vanno riconsegnati, e l'evento va inviato di nuovo per completare il certificato;
+  - se il nodo che aggrega cade, nessun altro completa il certificato finché qualcuno non invia di nuovo l'evento.
 - **DoS:** nessuna difesa da nonce arbitrariamente alti o da flussi di firme da verificare.
 - **Connessioni mute:** il timeout di 5 secondi sull'intero handshake e il limite di 64 handshake simultanei riducono il problema ma non lo eliminano. Chi tiene occupati tutti i posti, riaprendo le connessioni quando scadono, non ha bisogno di un certificato e continua a tenere fuori i peer onesti. Un test lo dichiara.
 - **Costo:** un `fsync` per voto, circa 350-400 voti al secondo su ext4.
