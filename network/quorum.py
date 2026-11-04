@@ -564,6 +564,9 @@ class QuorumReplica:
     ) -> None:
         self._store.record_halt(first, second)
 
+    def halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
+        return self._store.halt_proof()
+
     def handle_vote_request(self, event: Transfer) -> Vote | None:
         """
         Return a vote, or None if the event is refused. The signature comes after

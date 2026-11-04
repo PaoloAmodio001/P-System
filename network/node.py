@@ -116,6 +116,7 @@ class Node:
         # below this point changes what the node does. The rules are in
         # network/quorum.py, and here is only how they meet the network.
         self._quorum = None
+        self._quorum_halt_events = []
 
         if quorum is not None:
             self._quorum = QuorumRuntime(quorum, self._initial_state)
@@ -141,6 +142,13 @@ class Node:
         self.local_events = list(executed)
         self.signed_events = dict(driver.signed_events)
         self.equivocations = equivocations
+
+        if not self._quorum.closed:
+            proof = replica.halt_proof()
+            self._quorum_halt_events = (
+                [certificate.event for certificate in proof] if proof else []
+            )
+
         # A copy, so that a reader without the lock never sees a state in the middle
         # of an execution, and cannot change the one the replica works on.
         self.state = replica.state.copy()
@@ -973,7 +981,9 @@ class Node:
     def _knowledge_conflict_state(self) -> ConflictState:
         conflict = ConflictState(tuple())
 
-        known = list(self.events)
+        # In quorum mode the log never holds a conflict: the two certificates of a
+        # halt are the only way to CONFLICTED, and a simple equivocation is not one.
+        known = list(self.events) + self._quorum_halt_events
 
         for index, first in enumerate(known):
             for second in known[index + 1:]:

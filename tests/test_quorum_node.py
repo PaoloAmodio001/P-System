@@ -758,3 +758,285 @@ def test_state_is_published_even_when_a_later_write_fails(four, monkeypatch):
 
     assert node.local_events == [A]
     assert node.state.balance("bob") == 8
+
+
+def test_driver_runs_with_the_state_lock_held(four, monkeypatch):
+    # The test above depends on timing. This one does not.
+    node = four.node()
+    seen = []
+    real_handle = node._quorum.driver.handle_message
+    real_submit = node._quorum.driver.submit
+
+    def handle(message):
+        seen.append(_lock_is_free(node))
+        return real_handle(message)
+
+    def submit(event):
+        seen.append(_lock_is_free(node))
+        return real_submit(event)
+
+    monkeypatch.setattr(node._quorum.driver, "handle_message", handle)
+    monkeypatch.setattr(node._quorum.driver, "submit", submit)
+
+    node._handle_peer_message(encode_vote_request(signed(A)), FakeConnection())
+    node.submit(signed(A))
+
+    assert seen == [False, False]
+
+
+# --- Halting and errors of the disk ---------------------------------------
+
+
+def _halt(node: Node, four: Committee4) -> None:
+    for event in (A, B):
+        node._handle_peer_message(encode_certificate(four.certificate(event)))
+
+
+def test_status_is_not_conflicted_for_a_node_that_runs(four):
+    node = four.node()
+    node._handle_peer_message(encode_certificate(four.certificate(A)))
+
+    assert node.status() != DecisionStatus.CONFLICTED
+
+
+def test_status_is_not_conflicted_for_a_simple_equivocation(four):
+    node = four.node()
+
+    for event in (A, B):
+        node._handle_peer_message(encode_vote_request(signed(event)), FakeConnection())
+
+    assert len(node.equivocations.proofs) == 1
+    assert node.status() != DecisionStatus.CONFLICTED
+
+
+def test_two_valid_certificates_in_conflict_stop_the_node(four):
+    node = four.node()
+    node._handle_peer_message(encode_certificate(four.certificate(A)))
+    root = node.state.root()
+
+    node._handle_peer_message(encode_certificate(four.certificate(B)))
+
+    assert node.status() == DecisionStatus.CONFLICTED
+    assert node.decision_context().status == DecisionStatus.CONFLICTED
+    assert node.state.root() == root
+    assert node.local_events == [A]
+    # No winner: the alternative is proof, and it did not enter the log.
+    assert B not in node.events
+
+
+def test_forged_certificate_in_conflict_does_not_stop_the_node(four):
+    node = four.node()
+    node._handle_peer_message(encode_certificate(four.certificate(A)))
+    good = four.certificate(B)
+    forged = QuorumCertificate(B, (Vote(1, bytes(64)),) + good.votes[1:])
+
+    node._handle_peer_message(encode_certificate(forged))
+
+    assert node.status() != DecisionStatus.CONFLICTED
+    assert node._handle_peer_message(encode_vote_request(signed(NEXT))) is None
+    assert node._quorum.replica.votes() == [NEXT]
+
+
+def test_halted_node_signs_nothing_and_executes_nothing(four):
+    node = four.node()
+    _halt(node, four)
+    asker = FakeConnection()
+
+    node._handle_peer_message(encode_vote_request(signed(NEXT)), asker)
+    node._handle_peer_message(encode_certificate(four.certificate(NEXT)))
+
+    assert asker.sent == []
+    assert not node.submit(signed(NEXT))
+    assert node.local_events == [A]
+
+
+def test_halt_survives_a_restart_of_the_node(four):
+    node = four.node()
+    _halt(node, four)
+    node.stop()
+
+    again = four.node()
+
+    assert again.status() == DecisionStatus.CONFLICTED
+    assert again.local_events == [A]
+    asker = FakeConnection()
+    again._handle_peer_message(encode_vote_request(signed(NEXT)), asker)
+    assert asker.sent == []
+
+
+def test_status_still_answers_after_stop(four):
+    node = four.node()
+    _halt(node, four)
+    node.stop()
+
+    assert node.status() == DecisionStatus.CONFLICTED
+
+
+def test_evidence_after_stop_does_not_touch_the_closed_store(four):
+    # A message of the old kind can still be in flight when the node stops.
+    node = four.node()
+    node.stop()
+
+    assert node.receive_signed(signed(A)) is False
+
+    assert set(node.signed_events) == {A.event_id()}
+
+
+def test_failed_write_closes_the_connection_and_signs_nothing(four):
+    node = four.node()
+    store = node._quorum.replica._store
+    store._connection.execute("PRAGMA query_only = ON")
+    sock = FakeSocket()
+    sent = []
+    sock.sendall = sent.append
+    peer = PeerConnection("q-0", "127.0.0.1", 1)
+    peer.connection = sock
+    messages = [encode_vote_request(signed(A))]
+    peer.receive = lambda: messages.pop()
+    gone = []
+    peer.on_disconnect = gone.append
+
+    # receive_loop closes the connection and raises it again: a disk that fails
+    # must be seen, and must not look like a malformed message.
+    with pytest.raises(VoteStoreError):
+        peer.receive_loop(node._handle_peer_message)
+
+    assert peer.connection is None
+    assert gone == [peer]
+    assert sent == []
+
+
+def test_failed_submit_raises_and_asks_nobody(four):
+    node = four.node()
+    peer = _attach(node, "peer-1")
+    node._quorum.replica._store._connection.execute("PRAGMA query_only = ON")
+
+    with pytest.raises(VoteStoreError):
+        node.submit(signed(A))
+
+    assert peer.sent == []
+
+
+# --- Four nodes through encoded messages ----------------------------------
+
+
+class Network:
+    """Delivers encoded messages between real Nodes, one at a time, with no sockets."""
+
+    def __init__(self, nodes: list[Node]):
+        self.nodes = nodes
+        self.queue: list[tuple[Node, dict, "Link"]] = []
+        for node in nodes:
+            for other in nodes:
+                if other is not node:
+                    node.peer_connections[other.node_id] = Link(self, other, node)
+
+    def run(self, deliver=lambda destination, message: True) -> None:
+        while self.queue:
+            destination, message, reply = self.queue.pop(0)
+            if deliver(destination, message):
+                destination._handle_peer_message(json.loads(message), reply)
+
+
+class Link:
+    initiated_locally = True
+    connected = True
+
+    def __init__(self, network: Network, destination: Node, source: Node):
+        self.network = network
+        self.destination = destination
+        self.source = source
+
+    def send(self, message: dict) -> None:
+        reply = self.destination.peer_connections[self.source.node_id]
+        self.network.queue.append((self.destination, json.dumps(message), reply))
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def network(four):
+    return Network([four.node(index) for index in range(4)])
+
+
+def test_event_submitted_to_one_node_runs_on_all_four(network):
+    network.nodes[0].submit(signed(A))
+    network.run()
+
+    for node in network.nodes:
+        assert node.local_events == [A]
+        assert node.state.balance("bob") == 8
+        assert node.status() != DecisionStatus.CONFLICTED
+
+
+def test_node_that_voted_the_alternative_follows_the_certificate(network):
+    # No fork: a sender signs two versions, one node votes the other one first.
+    voted_b = network.nodes[3]
+    assert voted_b._handle_peer_message(encode_vote_request(signed(B)), FakeConnection()) is None
+    assert voted_b._quorum.replica.votes() == [B]
+
+    network.nodes[0].submit(signed(A))
+    network.run()
+
+    for node in network.nodes:
+        assert node.local_events == [A]
+        assert node.state.balance("carol") == 0
+    assert voted_b._quorum.replica.votes() == [B]
+    assert voted_b.equivocations.proofs[0].verify()
+
+
+def test_votes_split_between_alternatives_give_no_certificate(network):
+    # Two votes each, and the quorum is three. A real outcome and not a failure:
+    # nothing runs, and the sender is stuck. No node chose, and liveness is not
+    # claimed.
+    alternatives = {0: A, 1: B, 2: A, 3: B}
+    for index, event in alternatives.items():
+        network.nodes[index]._handle_peer_message(
+            encode_vote_request(signed(event)), FakeConnection()
+        )
+
+    network.nodes[0].submit(signed(A))
+    network.nodes[1].submit(signed(B))
+    network.run()
+
+    for index, node in enumerate(network.nodes):
+        assert node.local_events == []
+        assert node.state.root() == GENESIS.root()
+        assert node._quorum.replica.votes() == [alternatives[index]]
+        assert node.status() != DecisionStatus.CONFLICTED
+
+
+def test_one_vote_each_with_two_free_nodes_can_still_certify(network):
+    # Which alternative passes depends on the network: here the order of delivery.
+    network.nodes[0]._handle_peer_message(
+        encode_vote_request(signed(A)), FakeConnection()
+    )
+    network.nodes[1]._handle_peer_message(
+        encode_vote_request(signed(B)), FakeConnection()
+    )
+
+    network.nodes[0].submit(signed(A))
+    network.nodes[1].submit(signed(B))
+    network.run()
+
+    executed = {tuple(node.local_events) for node in network.nodes}
+    assert executed == {(A,)}
+    for node in network.nodes:
+        assert node.status() != DecisionStatus.CONFLICTED
+
+
+def test_lost_certificate_leaves_that_node_behind_without_a_fork(network):
+    # Totality is not claimed: the certificate reached only some nodes.
+    behind = network.nodes[3]
+
+    def deliver(destination, message):
+        return not (destination is behind and '"CERTIFICATE"' in message)
+
+    network.nodes[0].submit(signed(A))
+    network.run(deliver)
+
+    assert behind.local_events == []
+    for node in network.nodes[:3]:
+        assert node.local_events == [A]
+
