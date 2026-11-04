@@ -178,9 +178,9 @@ IN_NODE = {
         "                    )\n",
     ),
     "state not restored at a restart": (
-        "            self._quorum = QuorumRuntime(quorum, self._initial_state)\n"
+        "            self._sync_interval = quorum.sync_interval\n"
         "            self._publish_quorum_state()\n",
-        "            self._quorum = QuorumRuntime(quorum, self._initial_state)\n",
+        "            self._sync_interval = quorum.sync_interval\n",
     ),
     "public state not published after a message": (
         "            finally:\n"

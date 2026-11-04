@@ -40,9 +40,9 @@ TESTS = [
 
 MUTATIONS = {
     "state not restored at a restart": (
-        "            self._quorum = QuorumRuntime(quorum, self._initial_state)\n"
+        "            self._sync_interval = quorum.sync_interval\n"
         "            self._publish_quorum_state()\n",
-        "            self._quorum = QuorumRuntime(quorum, self._initial_state)\n",
+        "            self._sync_interval = quorum.sync_interval\n",
     ),
     "public state not a copy": (
         "        self.state = replica.state.copy()\n",
@@ -113,9 +113,15 @@ MUTATIONS = {
     ),
     "message without the lock": (
         "        with self._state_lock:\n"
-        "            if self._quorum.closed:\n",
+        "            if self._quorum.closed:\n"
+        "                return\n"
+        "\n"
+        "            # In finally:",
         "        if True:\n"
-        "            if self._quorum.closed:\n",
+        "            if self._quorum.closed:\n"
+        "                return\n"
+        "\n"
+        "            # In finally:",
     ),
     "quorum messages not dispatched": (
         "        if self._quorum is not None and message_type in QUORUM_MESSAGE_TYPES:\n",
@@ -123,8 +129,10 @@ MUTATIONS = {
     ),
     "message handled after stop": (
         "            if self._quorum.closed:\n"
-        "                return\n",
-        "",
+        "                return\n"
+        "\n"
+        "            # In finally:",
+        "            # In finally:",
     ),
     "state not published when a write fails": (
         "            try:\n"
