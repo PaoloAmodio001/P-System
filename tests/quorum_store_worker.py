@@ -16,8 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.attestation import Committee, QuorumCertificate, Vote  # noqa: E402
 from core.event import Transfer  # noqa: E402
+from core.signed_event import SignedTransfer  # noqa: E402
 from core.state import State  # noqa: E402
 from crypto.identity import Identity  # noqa: E402
+from network.message import encode_certificate, encode_vote_request  # noqa: E402
+from network.node import Node  # noqa: E402
 from network.quorum import (  # noqa: E402
     QuorumConfig,
     QuorumRuntime,
@@ -44,6 +47,9 @@ HALT_EVENTS = (
     Transfer("alice", "bob", 8, 0),
     Transfer("alice", "carol", 8, 0),
 )
+VOTE_SENDER = Identity(Ed25519PrivateKey.from_private_bytes(bytes([21]) * 32))
+VOTED_EVENT = Transfer(VOTE_SENDER.identity_id, "bob", 1, 0)
+ALTERNATIVE_EVENT = Transfer(VOTE_SENDER.identity_id, "carol", 1, 0)
 
 
 def halt_committee_with_genesis(balances: dict) -> Committee:
@@ -82,6 +88,44 @@ class CrashAfterCommit(SqliteVoteStore):
         kill_self()
 
 
+def run_node_mode(mode: str, path: Path) -> None:
+    """A real Node, left running until the test kills this process."""
+    node = Node(
+        "worker-node",
+        State(HALT_GENESIS),
+        quorum=QuorumConfig(
+            HALT_COMMITTEE,
+            HALT_IDENTITIES[0],
+            path,
+            create=True,
+        ),
+    )
+
+    if mode == "hold-node-halted":
+        for event in HALT_EVENTS:
+            node._handle_peer_message(
+                encode_certificate(signed_certificate(event, (1, 2, 3)))
+            )
+        report("HALTED", node.status().value)
+    else:
+        connection = _ReplyHolder()
+        node._handle_peer_message(
+            encode_vote_request(SignedTransfer.create(VOTE_SENDER, VOTED_EVENT)),
+            connection,
+        )
+        report("VOTED", connection.sent[0]["signature"])
+
+    signal.pause()
+
+
+class _ReplyHolder:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+
 def run_halt_mode(mode: str, path: Path) -> None:
     store_types = {
         "before-commit": CrashBeforeCommit,
@@ -108,6 +152,10 @@ def run_halt_mode(mode: str, path: Path) -> None:
 
 def main() -> None:
     mode, path, *rest = sys.argv[1:]
+
+    if mode in ("hold-node-halted", "hold-node-voted"):
+        run_node_mode(mode, Path(path))
+        return
 
     if mode == "hold-runtime":
         QuorumRuntime(
