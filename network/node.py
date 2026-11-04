@@ -371,6 +371,8 @@ class Node:
         preserved in knowledge and conflict state, but it is NOT applied
         to the local projection. No winner is selected.
         """
+        self._refuse_in_quorum_mode()
+
         for existing in self.events:
             if existing.event_id() != event.event_id():
                 continue
@@ -429,6 +431,12 @@ class Node:
 
         return True
 
+    def _refuse_in_quorum_mode(self) -> None:
+        # An error and not a no-op: a caller that believes it executed an event,
+        # or reconcile() passing in silence, would hide a fork.
+        if self._quorum is not None:
+            raise RuntimeError("NOT AVAILABLE IN QUORUM MODE")
+
     def receive(self, event, broadcast: bool = True):
         """Thread-safe trusted/local event ingress."""
         with self._state_lock:
@@ -442,6 +450,14 @@ class Node:
     ) -> bool:
         """Authenticate, authorize and only then execute a signed event."""
         with self._state_lock:
+            if self._quorum is not None:
+                # Evidence only: in quorum mode only a certificate executes. So
+                # pending_signed_events stays empty, and an identity claim has
+                # nothing to promote. False because nothing was executed.
+                self._quorum.driver.record_evidence(event)
+                self._publish_quorum_state()
+                return False
+
             if not event.verify():
                 return False
 
@@ -829,6 +845,8 @@ class Node:
         event: SignedTransfer,
     ) -> EventLifecycle:
         """Return the explicit authorization/execution lifecycle state."""
+        self._refuse_in_quorum_mode()
+
         if not event.verify():
             return EventLifecycle.REJECTED
         claim = self.identities.get(event.identity_id)
@@ -1083,6 +1101,10 @@ class Node:
             self._disconnect_peer_connection(peer.node_id, connection)
 
     def merge_events(self, events, broadcast: bool = True):
+        # Here too, and not only in receive: with no events, reconcile() would pass
+        # in silence on a node where it can never work.
+        self._refuse_in_quorum_mode()
+
         changed = False
 
         for event in events:

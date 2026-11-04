@@ -11,14 +11,23 @@ from pathlib import Path
 import pytest
 
 from core.attestation import Committee, QuorumCertificate, Vote
+from core.decision_status import DecisionStatus
 from core.derive import StateDeriver
 from core.event import Transfer
+from core.identity_claim import IdentityClaim
 from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
-from network.message import encode_certificate, encode_vote_request
+from network.decision_message import encode_decision_context
+from network.message import (
+    encode_certificate,
+    encode_signed_transfer,
+    encode_vote_request,
+)
 from network.node import Node
 from network.quorum import QuorumConfig, VoteStoreError
+from network.reconciliation import reconcile
+from network.reconciliation_protocol import KnowledgeResponse
 
 SENDER = Identity.create()
 PAYER = SENDER.identity_id
@@ -263,3 +272,164 @@ def test_stop_waits_for_a_message_being_handled(four):
     thread.join(timeout=5)
     assert not stopper.is_alive()
     assert node._quorum.closed
+
+
+# --- Entries that used to execute -----------------------------------------
+
+
+def _assert_nothing_executed(node) -> None:
+    assert node.state.root() == GENESIS.root()
+    assert node.events == []
+    assert node.local_events == []
+    assert node._quorum.replica.executed == []
+    assert node._quorum.replica.votes() == []
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda node: node.receive(A), id="receive"),
+        pytest.param(lambda node: node._receive_unlocked(A), id="receive unlocked"),
+        pytest.param(lambda node: node.merge_events([A]), id="merge_events"),
+        pytest.param(lambda node: node.merge_events([]), id="merge_events, empty"),
+        pytest.param(
+            lambda node: node.signed_event_lifecycle(signed(A)),
+            id="signed_event_lifecycle",
+        ),
+    ],
+)
+def test_closed_entry_raises_and_executes_nothing(four, call):
+    node = four.node()
+
+    with pytest.raises(RuntimeError):
+        call(node)
+
+    _assert_nothing_executed(node)
+
+
+def test_reconcile_raises_on_a_quorum_node(four):
+    first = four.node(0)
+    other = Node("plain-peer", GENESIS)
+
+    with pytest.raises(RuntimeError):
+        reconcile(first, other)
+
+    _assert_nothing_executed(first)
+    other.stop()
+
+
+def test_reconcile_raises_even_with_nothing_to_merge(four):
+    with pytest.raises(RuntimeError):
+        reconcile(four.node(0), four.node(1))
+
+
+def test_receive_signed_keeps_evidence_and_executes_nothing(four):
+    node = four.node()
+
+    assert node.receive_signed(signed(A)) is False
+
+    assert set(node.signed_events) == {A.event_id()}
+    assert node.received == []
+    _assert_nothing_executed(node)
+
+
+def test_receive_signed_of_an_invalid_event_keeps_nothing(four):
+    node = four.node()
+
+    assert node.receive_signed(SignedTransfer(A, SENDER.public_key, bytes(64))) is False
+
+    assert node.signed_events == {}
+    _assert_nothing_executed(node)
+
+
+def test_signed_transfer_message_keeps_evidence_and_executes_nothing(four):
+    node = four.node()
+
+    node._handle_peer_message(encode_signed_transfer(signed(A)))
+
+    assert set(node.signed_events) == {A.event_id()}
+    _assert_nothing_executed(node)
+
+
+def _signed_wire(event: SignedTransfer) -> dict:
+    data = encode_signed_transfer(event)
+    return {
+        "transfer": data["transfer"],
+        "public_key": data["public_key"],
+        "signature": data["signature"],
+    }
+
+
+def test_signed_event_sync_keeps_evidence_and_executes_nothing(four):
+    node = four.node()
+
+    node._handle_peer_message(
+        {"type": "SIGNED_EVENT_SYNC", "events": [_signed_wire(signed(A))]}
+    )
+
+    assert set(node.signed_events) == {A.event_id()}
+    _assert_nothing_executed(node)
+
+
+def test_knowledge_response_keeps_evidence_and_executes_nothing(four):
+    node = four.node()
+    response = KnowledgeResponse(identities=(), events=(signed(A),))
+
+    node._handle_peer_message(response.encode())
+
+    assert set(node.signed_events) == {A.event_id()}
+    _assert_nothing_executed(node)
+
+
+def test_two_versions_by_the_old_paths_make_a_proof_and_no_fork(four):
+    node = four.node()
+
+    node.receive_signed(signed(A))
+    node._handle_peer_message(encode_signed_transfer(signed(B)))
+
+    assert len(node.equivocations.proofs) == 1
+    _assert_nothing_executed(node)
+    assert node.status() != DecisionStatus.CONFLICTED
+
+
+def test_identity_claim_promotes_nothing(four):
+    # In the old mode a claim promotes what waited for it, through receive().
+    node = four.node()
+    node.receive_signed(signed(A))
+    claim = IdentityClaim.create(SENDER, "alice")
+
+    assert node.pending_signed_events == {}
+    node._handle_peer_message(
+        {
+            "type": "IDENTITY_CLAIM",
+            "identity_id": claim.identity_id,
+            "alias": claim.alias,
+            "public_key": claim.public_key.hex(),
+            "signature": claim.signature.hex(),
+        }
+    )
+
+    assert claim.identity_id in node.identities
+    _assert_nothing_executed(node)
+
+
+def test_legacy_event_sync_and_decision_context_execute_nothing(four):
+    node = four.node()
+    plain = Node("plain-source", GENESIS)
+
+    node._handle_peer_message({"type": "EVENT_SYNC", "events": []})
+    node._handle_peer_message(encode_decision_context(plain.decision_context()))
+
+    _assert_nothing_executed(node)
+    plain.stop()
+
+
+def test_old_mode_is_still_open_next_to_a_quorum_node(four):
+    # The switch is per node, not a global.
+    four.node()
+    plain = Node("plain-beside", GENESIS)
+
+    assert plain.receive(A)
+    assert plain.local_events == [A]
+    plain.stop()
+
