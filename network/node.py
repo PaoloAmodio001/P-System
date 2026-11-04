@@ -505,7 +505,10 @@ class Node:
             OSError,
             TimeoutError,
             ValueError,
+            RecursionError,
         ):
+            # ValueError and RecursionError: the peer sent a malformed reply.
+            # Nothing it sends may end the thread that reconnects.
             connection.close()
 
             # Un tentativo concorrente fallito non deve segnare come

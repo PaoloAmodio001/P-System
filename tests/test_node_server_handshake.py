@@ -1,5 +1,6 @@
 import socket
 import ssl
+import threading
 import time
 
 import pytest
@@ -181,3 +182,73 @@ def test_stop_ends_a_handshake_in_progress():
         assert _server_closed_within(silent, 5.0)
     finally:
         silent.close()
+
+
+class _PeerWithNestedReply:
+    """A malicious peer on the other side of a connection the node opens."""
+
+    def __init__(self, node_id: str):
+        self.context = SecureTransport.create_server_context(
+            get_node_tls_config(node_id)
+        )
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.listener.settimeout(0.05)
+        self.peer = Peer(node_id, "127.0.0.1", self.listener.getsockname()[1])
+        self.replies = 0
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stopped.set()
+        self.thread.join(timeout=5.0)
+        self.listener.close()
+
+    def _serve(self):
+        while not self.stopped.is_set():
+            try:
+                raw, _ = self.listener.accept()
+            except TimeoutError:
+                continue
+
+            try:
+                with self.context.wrap_socket(raw, server_side=True) as connection:
+                    SecureTransport.receive(connection)
+                    payload = b"[" * 200000
+                    connection.sendall(len(payload).to_bytes(4, "big") + payload)
+                    self.replies += 1
+                    # Open until the client closes: the frame is the only cause.
+                    connection.settimeout(5.0)
+                    connection.recv(1)
+            except OSError:
+                pass
+
+
+def test_deeply_nested_handshake_reply_fails_the_connection_attempt():
+    client = Node("reply-client-direct")
+
+    with _PeerWithNestedReply("reply-evil-direct") as evil:
+        assert client.connect_peer(evil.peer) is False
+        assert evil.replies == 1
+        assert client.peer_connections.get(evil.peer.node_id) is None
+        assert client._reconnect_state[evil.peer.node_id].attempts == 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_deeply_nested_handshake_reply_does_not_stop_reconnecting():
+    client = Node("reply-client-loop")
+    client.RECONNECT_BASE_DELAY = 0.01
+
+    with _PeerWithNestedReply("reply-evil-loop") as evil:
+        client.add_peer(evil.peer)
+        client.start()
+
+        try:
+            # A second reply proves that the thread survived the first.
+            assert _wait_until(lambda: evil.replies >= 2)
+            assert client._reconnect_thread.is_alive()
+        finally:
+            client.stop()
