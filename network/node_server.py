@@ -8,7 +8,18 @@ from network.secure_transport import SecureTransport, TLSConfig
 
 
 class NodeServer:
-    """Gestisce esclusivamente il lifecycle TCP di un Node."""
+    """
+    Gestisce esclusivamente il lifecycle TCP di un Node.
+
+    Each handshake has its own thread, a deadline and a place among a limited
+    number, so a connection that stays silent does not stop the others. This
+    reduces the problem and does not remove it: whoever keeps all the places taken,
+    reopening connections as they expire, needs no certificate and still keeps
+    honest peers out.
+    """
+
+    HANDSHAKE_TIMEOUT = 5.0
+    MAX_PENDING_HANDSHAKES = 64
 
     def __init__(self, node, tls_config: TLSConfig | None = None):
         self.node = node
@@ -16,6 +27,8 @@ class NodeServer:
         self.server = None
         self.thread = None
         self.running = False
+        self._pending = {}
+        self._pending_lock = threading.Lock()
 
     def start(self):
         if self.running:
@@ -48,6 +61,13 @@ class NodeServer:
         if self.thread is not None:
             self.thread.join(timeout=1.0)
 
+        with self._pending_lock:
+            pending = dict(self._pending)
+
+        for guard, thread in pending.items():
+            self._shut_down(guard)
+            thread.join(timeout=1.0)
+
         self.server = None
         self.thread = None
 
@@ -60,81 +80,145 @@ class NodeServer:
             except OSError:
                 break
 
+            if self.tls_config is None:
+                raise RuntimeError(
+                    "P14 TLS CONFIGURATION REQUIRED"
+                )
+
+            self._start_handshake(connection)
+
+    def _start_handshake(self, connection) -> None:
+        with self._pending_lock:
+            if len(self._pending) >= self.MAX_PENDING_HANDSHAKES:
+                connection.close()
+                return
+
             try:
-                if self.tls_config is None:
-                    raise RuntimeError(
-                        "P14 TLS CONFIGURATION REQUIRED"
-                    )
+                guard = connection.dup()
+            except OSError:
+                connection.close()
+                return
 
-                context = SecureTransport.create_server_context(
-                    self.tls_config
-                )
+            thread = threading.Thread(
+                target=self._handshake,
+                args=(connection, guard),
+                daemon=True,
+            )
+            self._pending[guard] = thread
 
-                connection = SecureTransport.wrap_server(
-                    connection,
-                    context,
-                )
+            # Under the lock, so that stop never finds a thread not yet started.
+            thread.start()
 
-                message = SecureTransport.receive(
-                    connection
-                )
+    def _handshake(self, connection, guard) -> None:
+        # The guard shares the connection with the TLS socket and outlives the
+        # wrapping. Shutting it down wakes a read at any point of the handshake,
+        # so the deadline holds for the whole handshake and not for each read.
+        deadline = threading.Timer(
+            self.HANDSHAKE_TIMEOUT,
+            self._shut_down,
+            args=(guard,),
+        )
+        deadline.daemon = True
+        deadline.start()
 
-                handshake = Handshake.decode(message)
+        try:
+            context = SecureTransport.create_server_context(
+                self.tls_config
+            )
 
-                if handshake.node_id == self.node.node_id:
-                    connection.close()
-                    continue
+            connection = SecureTransport.wrap_server(
+                connection,
+                context,
+            )
 
-                self.node.peers.setdefault(
-                    handshake.node_id,
-                    Peer(
-                        node_id=handshake.node_id,
-                        host=handshake.host,
-                        port=handshake.port,
-                    ),
-                )
+            message = SecureTransport.receive(
+                connection
+            )
 
-                SecureTransport.send(
-                    connection,
-                    Handshake(
-                        node_id=self.node.node_id,
-                        host=self.node.host,
-                        port=self.node.port,
-                    ).encode(),
-                )
+            handshake = Handshake.decode(message)
 
-                peer_connection = PeerConnection.adopt(
-                    self.node.node_id,
-                    connection,
-                    handshake,
-                )
+            if handshake.node_id == self.node.node_id:
+                connection.close()
+                return
 
-                peer_connection.on_disconnect = (
-                    self.node._peer_disconnected
-                )
+            self.node.peers.setdefault(
+                handshake.node_id,
+                Peer(
+                    node_id=handshake.node_id,
+                    host=handshake.host,
+                    port=handshake.port,
+                ),
+            )
 
-                if not self.node._register_peer_connection(
-                    handshake.node_id,
-                    peer_connection,
-                ):
-                    peer_connection.close()
-                    continue
+            SecureTransport.send(
+                connection,
+                Handshake(
+                    node_id=self.node.node_id,
+                    host=self.node.host,
+                    port=self.node.port,
+                ).encode(),
+            )
 
-                threading.Thread(
-                    target=peer_connection.receive_loop,
-                    args=(self.node._handle_peer_message,),
-                    daemon=True,
-                ).start()
+            # From here the connection may stay idle for as long as it wants.
+            deadline.cancel()
 
-            except (
-                ValueError,
-                ConnectionError,
-                OSError,
-                RecursionError,
+            if not self.running:
+                connection.close()
+                return
+
+            peer_connection = PeerConnection.adopt(
+                self.node.node_id,
+                connection,
+                handshake,
+            )
+
+            peer_connection.on_disconnect = (
+                self.node._peer_disconnected
+            )
+
+            if not self.node._register_peer_connection(
+                handshake.node_id,
+                peer_connection,
             ):
-                # RecursionError: a frame with JSON nested too deeply, which is
-                # not a ValueError. Nothing a peer sends may end this loop.
-                try:
-                    connection.close()
-                except OSError:
-                    pass
+                peer_connection.close()
+                return
+
+            threading.Thread(
+                target=peer_connection.receive_loop,
+                args=(self.node._handle_peer_message,),
+                daemon=True,
+            ).start()
+
+        except (
+            ValueError,
+            ConnectionError,
+            OSError,
+            RecursionError,
+        ):
+            # RecursionError: a frame with JSON nested too deeply, which is
+            # not a ValueError. Nothing a peer sends may end this loop.
+            self._close_quietly(connection)
+        except Exception:
+            self._close_quietly(connection)
+            raise
+        finally:
+            deadline.cancel()
+
+            with self._pending_lock:
+                self._pending.pop(guard, None)
+
+            guard.close()
+
+    @staticmethod
+    def _shut_down(connection) -> None:
+        try:
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _close_quietly(connection) -> None:
+        try:
+            connection.close()
+        except OSError:
+            pass
