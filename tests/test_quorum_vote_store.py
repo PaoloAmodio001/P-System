@@ -738,7 +738,37 @@ def test_halt_row_removed_by_hand_is_not_detected(path, halt_store):
     again.close()
 
 
+def _downgrade_to_v2(path: Path) -> None:
+    """The tables as they were, literally: a migration must work on what really existed."""
+    connection = sqlite3.connect(path)
+    for table in ("vote_evidence", "closed_epochs", "closure_votes", "closures", "locks"):
+        connection.execute(f"DROP TABLE {table}")
+    connection.execute("ALTER TABLE votes RENAME TO votes_v3")
+    connection.execute(
+        """
+        CREATE TABLE votes (
+            sender TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            event_id TEXT NOT NULL UNIQUE,
+            canonical TEXT NOT NULL,
+            PRIMARY KEY (sender, nonce)
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO votes SELECT sender, nonce, event_id, canonical FROM votes_v3"
+    )
+    connection.execute("DROP TABLE votes_v3")
+    connection.execute("ALTER TABLE certificates DROP COLUMN epoch")
+    connection.execute("ALTER TABLE halt DROP COLUMN first_epoch")
+    connection.execute("ALTER TABLE halt DROP COLUMN second_epoch")
+    connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+    connection.commit()
+    connection.close()
+
+
 def _downgrade_to_v1(path: Path) -> None:
+    _downgrade_to_v2(path)
     connection = sqlite3.connect(path)
     connection.execute("DROP TABLE halt")
     connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
@@ -767,7 +797,7 @@ def v1_path(path, halt_store):
 def test_schema_v1_store_migrates_and_keeps_votes_and_log(v1_path):
     store = reopen_halt(v1_path)
 
-    assert _schema_version(v1_path) == "2"
+    assert _schema_version(v1_path) == "3"
     assert not store.halted()
     assert canonical_set(store.votes()) == {A.canonical()}
     assert not store.record_vote(B)
@@ -792,7 +822,7 @@ def test_schema_v1_of_another_validator_is_refused_and_left_as_it_is(v1_path):
     "mode,version,marker",
     [
         ("crash-before-commit", "1", "BEFORE_COMMIT"),
-        ("crash-after-commit", "2", "AFTER_COMMIT"),
+        ("crash-after-commit", "3", "AFTER_COMMIT"),
     ],
 )
 def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
@@ -803,12 +833,45 @@ def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
     assert _schema_version(v1_path) == version
 
     store = reopen_halt(v1_path)
-    assert _schema_version(v1_path) == "2"
+    assert _schema_version(v1_path) == "3"
     assert canonical_set(store.votes()) == {A.canonical()}
     store.close()
 
 
-@pytest.mark.parametrize("version", ["0", "3", "two"])
+@pytest.fixture
+def v2_path(path, halt_store):
+    assert halt_store.record_vote(A)
+    halt_store.append_certificate(_signed(A, 0, 1, 2))
+    _halt_row_free = halt_store.halted()
+    assert not _halt_row_free
+    halt_store.close()
+    _downgrade_to_v2(path)
+    return path
+
+
+def test_schema_v2_store_migrates_and_keeps_votes_and_log(v2_path):
+    assert _schema_version(v2_path) == "2"
+    store = reopen_halt(v2_path)
+
+    assert _schema_version(v2_path) == "3"
+    assert canonical_set(store.votes()) == {A.canonical()}
+    assert not store.record_vote(B)
+    assert [c.event.canonical() for c in store.certificates()] == [A.canonical()]
+    store.close()
+
+
+def test_a_vote_without_proof_of_its_sender_cannot_be_reported(v2_path):
+    # Reporting without it could lose a certified event, so the epoch does not close.
+    store = reopen_halt(v2_path)
+
+    with pytest.raises(VoteStoreError):
+        store.close_epoch()
+
+    assert not store.epoch_is_closed()
+    store.close()
+
+
+@pytest.mark.parametrize("version", ["0", "4", "two"])
 def test_schema_of_an_unknown_version_is_refused(path, halt_store, version):
     halt_store.close()
     _tamper_halt(
@@ -819,7 +882,7 @@ def test_schema_of_an_unknown_version_is_refused(path, halt_store, version):
         reopen_halt(path)
 
 
-def test_schema_v2_without_the_halt_table_is_refused(path, halt_store):
+def test_schema_v3_without_the_halt_table_is_refused(path, halt_store):
     # Otherwise the check on the proof would be skipped.
     halt_store.close()
     _tamper_halt(path, "DROP TABLE halt")

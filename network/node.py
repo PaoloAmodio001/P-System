@@ -37,6 +37,7 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
+from core.attestation import guilty_members
 from network.quorum import QUORUM_MESSAGE_TYPES, QuorumConfig, QuorumRuntime
 
 
@@ -1227,6 +1228,51 @@ class Node:
 
         self._send_quorum_output(output, None)
         return bool(output.replies or output.broadcasts)
+
+    def propose_epoch_change(self, change) -> bool:
+        """
+        Quorum mode: order the end of this epoch, from this node, which then collects the
+        reports and the votes on the closure. True if there was something to send. It says
+        nothing about the closure, which may never come: read `self.committee_epoch`.
+        """
+        if self._quorum is None:
+            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+
+        with self._state_lock:
+            try:
+                output = self._quorum.driver.propose_epoch_change(change)
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, None)
+        return bool(output.broadcasts)
+
+    def guilty_members(self) -> tuple[bytes, ...]:
+        """
+        After a halt, the keys that signed both certificates. Empty with no halt, or when
+        the two certificates come from different committees: a member can honestly sign
+        in two epochs, and the theorem is about one committee.
+        """
+        if self._quorum is None:
+            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+
+        with self._state_lock:
+            replica = self._quorum.replica
+            proof = replica.halt_proof()
+
+            if proof is None or proof[0].epoch != proof[1].epoch:
+                return ()
+
+            return guilty_members(replica.committee_of(proof[0]), *proof)
+
+    @property
+    def committee_epoch(self) -> int:
+        """The epoch in force, in quorum mode."""
+        if self._quorum is None:
+            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+
+        with self._state_lock:
+            return self._quorum.replica.committee.epoch
 
     def _sync_loop(self) -> None:
         while not self._sync_stop_event.wait(self._sync_interval):

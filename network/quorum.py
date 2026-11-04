@@ -15,6 +15,10 @@ from pathlib import Path
 
 from core.attestation import (
     Committee,
+    EpochChange,
+    EpochClosure,
+    EpochReport,
+    Governance,
     QuorumCertificate,
     Vote,
     is_well_formed_event,
@@ -26,14 +30,25 @@ from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
 from network.message import (
+    certificate_sync_request_epoch,
     decode_certificate,
     decode_certificate_sync,
     decode_certificate_sync_request,
+    decode_closure_vote,
+    decode_closure_vote_request,
+    decode_epoch_change,
+    decode_epoch_closure,
+    decode_epoch_report,
     decode_vote,
     decode_vote_request,
     encode_certificate,
     encode_certificate_sync,
     encode_certificate_sync_request,
+    encode_closure_vote,
+    encode_closure_vote_request,
+    encode_epoch_change,
+    encode_epoch_closure,
+    encode_epoch_report,
     encode_vote,
     encode_vote_request,
 )
@@ -48,7 +63,8 @@ class VoteStoreError(Exception):
     """
 
 
-_SCHEMA_VERSION = "2"
+_SCHEMA_VERSION = "3"
+_SCHEMA_VERSION_2 = "2"
 _PREVIOUS_SCHEMA_VERSION = "1"
 
 # One row at most: the first proof stays, and any other says the same thing.
@@ -62,6 +78,55 @@ _HALT_TABLE = """
     )
 """
 
+_VOTES_TABLE = """
+    CREATE TABLE votes (
+        epoch INTEGER NOT NULL,
+        sender TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        canonical TEXT NOT NULL,
+        PRIMARY KEY (epoch, sender, nonce),
+        UNIQUE (epoch, event_id)
+    )
+"""
+
+# What schema 3 adds. A vote and the proof that its sender signed it are written together.
+_EPOCH_TABLES = (
+    """
+    CREATE TABLE vote_evidence (
+        epoch INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        PRIMARY KEY (epoch, event_id)
+    )
+    """,
+    # An epoch with a row here votes for nothing more.
+    "CREATE TABLE closed_epochs (epoch INTEGER PRIMARY KEY)",
+    # The closure this validator voted for in an epoch: one, for good.
+    """
+    CREATE TABLE closure_votes (
+        epoch INTEGER PRIMARY KEY,
+        digest TEXT NOT NULL
+    )
+    """,
+    # The closure of `epoch`, which started `epoch + 1`.
+    """
+    CREATE TABLE closures (
+        epoch INTEGER PRIMARY KEY,
+        closure TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE locks (
+        sender TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        canonical TEXT NOT NULL,
+        PRIMARY KEY (sender, nonce, canonical)
+    )
+    """,
+)
+
 _SCHEMA = (
     """
     CREATE TABLE meta (
@@ -71,24 +136,28 @@ _SCHEMA = (
     """,
     # The nonce is text because Lean nonces are unbounded and an SQLite integer
     # has 64 bits. It is only compared for equality.
-    """
-    CREATE TABLE votes (
-        sender TEXT NOT NULL,
-        nonce TEXT NOT NULL,
-        event_id TEXT NOT NULL UNIQUE,
-        canonical TEXT NOT NULL,
-        PRIMARY KEY (sender, nonce)
-    )
-    """,
+    _VOTES_TABLE,
     """
     CREATE TABLE certificates (
         position INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL UNIQUE,
         canonical TEXT NOT NULL,
-        signatures TEXT NOT NULL
+        signatures TEXT NOT NULL,
+        epoch INTEGER NOT NULL DEFAULT 0
     )
     """,
-    _HALT_TABLE,
+    """
+    CREATE TABLE halt (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        first_canonical TEXT NOT NULL,
+        first_signatures TEXT NOT NULL,
+        second_canonical TEXT NOT NULL,
+        second_signatures TEXT NOT NULL,
+        first_epoch INTEGER NOT NULL DEFAULT 0,
+        second_epoch INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    *_EPOCH_TABLES,
 )
 
 
@@ -110,18 +179,23 @@ def _encode_signatures(certificate: QuorumCertificate) -> str:
     )
 
 
-def _certificate_from_row(canonical: str, signatures: str) -> QuorumCertificate:
+def _certificate_from_row(
+    canonical: str,
+    signatures: str,
+    epoch: int = 0,
+) -> QuorumCertificate:
     return QuorumCertificate(
         _event_from_canonical(canonical),
         tuple(
             Vote(validator, bytes.fromhex(signature))
             for validator, signature in json.loads(signatures)
         ),
+        epoch,
     )
 
 
 def _is_halt_proof(
-    committee: Committee,
+    committee_of: Callable[[QuorumCertificate], Committee],
     first: QuorumCertificate,
     second: QuorumCertificate,
 ) -> bool:
@@ -132,8 +206,8 @@ def _is_halt_proof(
     the other checks assume well-formed events.
     """
     return (
-        first.verify(committee)
-        and second.verify(committee)
+        first.verify(committee_of(first))
+        and second.verify(committee_of(second))
         and first.event.sender == second.event.sender
         and first.event.nonce == second.event.nonce
         and first.event.canonical() != second.event.canonical()
@@ -169,11 +243,18 @@ class SqliteVoteStore:
         committee: Committee,
         validator: bytes,
         create: bool = False,
+        governance: Governance | None = None,
+        joining: bool = False,
     ) -> None:
-        if committee.index_of(validator) is None:
+        # `joining`: a node that enters in a later epoch, and votes only from then on.
+        if committee.index_of(validator) is None and not joining:
             raise VoteStoreError("VALIDATOR IS NOT A COMMITTEE MEMBER")
 
+        # The genesis of the chain, which the file belongs to, and the one in force.
+        self.genesis_committee = committee
         self.committee = committee
+        self.governance = governance
+        self._chain: dict[int, Committee] = {committee.epoch: committee}
         self.validator = validator
         self._lock = threading.RLock()
         self._closed = False
@@ -260,6 +341,10 @@ class SqliteVoteStore:
 
             if version == _PREVIOUS_SCHEMA_VERSION:
                 self._connection.execute(_HALT_TABLE)
+                version = _SCHEMA_VERSION_2
+
+            if version == _SCHEMA_VERSION_2:
+                self._migrate_to_epochs()
                 self._connection.execute(
                     "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                     (_SCHEMA_VERSION,),
@@ -268,15 +353,72 @@ class SqliteVoteStore:
             elif version != _SCHEMA_VERSION:
                 raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
 
+            self._load_chain()
             self._check_halt_proof()
         finally:
             self._rollback_if_open()
 
+    def _migrate_to_epochs(self) -> None:
+        """
+        To schema 3. The votes of schema 2 are the votes of epoch 0. They have no proof that
+        the sender signed them, so such a validator cannot report: `close_epoch` refuses.
+        """
+        self._connection.execute("ALTER TABLE votes RENAME TO votes_v2")
+        self._connection.execute(_VOTES_TABLE)
+        self._connection.execute(
+            """
+            INSERT INTO votes (epoch, sender, nonce, event_id, canonical)
+            SELECT 0, sender, nonce, event_id, canonical FROM votes_v2
+            """
+        )
+        self._connection.execute("DROP TABLE votes_v2")
+        self._connection.execute(
+            "ALTER TABLE certificates ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0"
+        )
+        self._connection.execute(
+            "ALTER TABLE halt ADD COLUMN first_epoch INTEGER NOT NULL DEFAULT 0"
+        )
+        self._connection.execute(
+            "ALTER TABLE halt ADD COLUMN second_epoch INTEGER NOT NULL DEFAULT 0"
+        )
+
+        for statement in _EPOCH_TABLES:
+            self._connection.execute(statement)
+
+    def _load_chain(self) -> None:
+        # Each closure is checked again, from the committee before it. Whatever in the file
+        # does not verify is an altered file, and the store does not open.
+        for (closure_text,) in self._connection.execute(
+            "SELECT closure FROM closures ORDER BY epoch"
+        ).fetchall():
+            if self.governance is None:
+                raise VoteStoreError("THIS STORE HAS EPOCHS: GOVERNANCE IS REQUIRED")
+
+            try:
+                closure = decode_epoch_closure(
+                    {"type": "EPOCH_CLOSURE", "closure": json.loads(closure_text)}
+                )
+            except (ValueError, TypeError, RecursionError) as error:
+                raise VoteStoreError("CLOSURE IS UNREADABLE") from error
+
+            if not closure.verify(self.governance, self.committee):
+                raise VoteStoreError("CLOSURE DOES NOT VERIFY")
+
+            self.committee = closure.change.next_committee(self.committee)
+            self._chain[self.committee.epoch] = self.committee
+
+    def committee_of(self, certificate: QuorumCertificate) -> Committee:
+        """
+        The committee that a certificate says it comes from. For an epoch this node does
+        not know, the one in force: `verify` compares the epochs and answers False.
+        """
+        return self._chain.get(certificate.epoch, self.committee)
+
     def _read_halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
         row = self._connection.execute(
             """
-            SELECT first_canonical, first_signatures,
-                   second_canonical, second_signatures
+            SELECT first_canonical, first_signatures, first_epoch,
+                   second_canonical, second_signatures, second_epoch
             FROM halt
             """
         ).fetchone()
@@ -285,8 +427,8 @@ class SqliteVoteStore:
             return None
 
         return (
-            _certificate_from_row(row[0], row[1]),
-            _certificate_from_row(row[2], row[3]),
+            _certificate_from_row(row[0], row[1], row[2]),
+            _certificate_from_row(row[3], row[4], row[5]),
         )
 
     def _check_halt_proof(self) -> None:
@@ -297,7 +439,7 @@ class SqliteVoteStore:
         except (ValueError, KeyError, TypeError, RecursionError) as error:
             raise VoteStoreError("HALT PROOF IS UNREADABLE") from error
 
-        if proof is not None and not _is_halt_proof(self.committee, *proof):
+        if proof is not None and not _is_halt_proof(self.committee_of, *proof):
             raise VoteStoreError("HALT PROOF DOES NOT VERIFY")
 
     def _is_halted(self) -> bool:
@@ -321,12 +463,15 @@ class SqliteVoteStore:
         if self._closed:
             raise VoteStoreError("VOTE STORE IS CLOSED")
 
-    def record_vote(self, event: Transfer) -> bool:
+    def record_vote(self, event: Transfer, signed: SignedTransfer | None = None) -> bool:
         """
-        Apply the vote lock. False means that a different event holds the
-        `(sender, nonce)` or the id, or that the node has halted, even for an event
-        it already voted for. True means that this event is durably recorded,
+        Apply the vote lock, `voteAllowed` and `lockAllows` in the model. False means that a
+        different event holds the `(sender, nonce)` or the id in this epoch, or a lock from
+        an earlier epoch, or that this epoch is closed, or that the node has halted, even
+        for an event it already voted for. True means that this event is durably recorded,
         possibly by an earlier call.
+
+        `signed` is the proof to report at the end of the epoch.
 
         Raises instead of returning when nothing can be said about the write;
         no signature may follow an exception.
@@ -343,14 +488,22 @@ class SqliteVoteStore:
                 if self._is_halted():
                     return False
 
+                epoch = self.committee.epoch
+
+                if self._is_closed(epoch):
+                    return False
+
+                if self._is_locked_against(event, canonical):
+                    return False
+
                 existing = {
                     row[0]
                     for row in self._connection.execute(
                         """
                         SELECT canonical FROM votes
-                        WHERE (sender = ? AND nonce = ?) OR event_id = ?
+                        WHERE epoch = ? AND ((sender = ? AND nonce = ?) OR event_id = ?)
                         """,
-                        (event.sender, str(event.nonce), event_id),
+                        (epoch, event.sender, str(event.nonce), event_id),
                     )
                 }
 
@@ -362,11 +515,21 @@ class SqliteVoteStore:
 
                 self._connection.execute(
                     """
-                    INSERT INTO votes (sender, nonce, event_id, canonical)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO votes (epoch, sender, nonce, event_id, canonical)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (event.sender, str(event.nonce), event_id, canonical),
+                    (epoch, event.sender, str(event.nonce), event_id, canonical),
                 )
+
+                if signed is not None:
+                    self._connection.execute(
+                        """
+                        INSERT INTO vote_evidence (epoch, event_id, public_key, signature)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (epoch, event_id, signed.public_key.hex(), signed.signature.hex()),
+                    )
+
                 self._commit()
                 return True
             except sqlite3.Error as error:
@@ -380,7 +543,8 @@ class SqliteVoteStore:
 
             try:
                 rows = self._connection.execute(
-                    "SELECT canonical FROM votes ORDER BY rowid"
+                    "SELECT canonical FROM votes WHERE epoch = ? ORDER BY rowid",
+                    (self.committee.epoch,),
                 ).fetchall()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ VOTES: {error}") from error
@@ -406,10 +570,15 @@ class SqliteVoteStore:
 
                 self._connection.execute(
                     """
-                    INSERT INTO certificates (event_id, canonical, signatures)
-                    VALUES (?, ?, ?)
+                    INSERT INTO certificates (event_id, canonical, signatures, epoch)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (event.event_id(), event.canonical().decode(), signatures),
+                    (
+                        event.event_id(),
+                        event.canonical().decode(),
+                        signatures,
+                        certificate.epoch,
+                    ),
                 )
                 self._commit()
             except sqlite3.Error as error:
@@ -424,14 +593,14 @@ class SqliteVoteStore:
 
             try:
                 rows = self._connection.execute(
-                    "SELECT canonical, signatures FROM certificates ORDER BY position"
+                    "SELECT canonical, signatures, epoch FROM certificates ORDER BY position"
                 ).fetchall()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ CERTIFICATES: {error}") from error
 
         return [
-            _certificate_from_row(canonical, signatures)
-            for canonical, signatures in rows
+            _certificate_from_row(canonical, signatures, epoch)
+            for canonical, signatures, epoch in rows
         ]
 
     def record_halt(
@@ -448,7 +617,7 @@ class SqliteVoteStore:
         The two are stored in a fixed order, so the proof does not depend on which
         arrived first. If a proof is already there it stays.
         """
-        if not _is_halt_proof(self.committee, first, second):
+        if not _is_halt_proof(self.committee_of, first, second):
             raise ValueError("NOT A PROOF OF A HALT")
 
         low, high = sorted(
@@ -465,16 +634,18 @@ class SqliteVoteStore:
                     """
                     INSERT OR IGNORE INTO halt (
                         id,
-                        first_canonical, first_signatures,
-                        second_canonical, second_signatures
+                        first_canonical, first_signatures, first_epoch,
+                        second_canonical, second_signatures, second_epoch
                     )
-                    VALUES (1, ?, ?, ?, ?)
+                    VALUES (1, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         low.event.canonical().decode(),
                         _encode_signatures(low),
+                        low.epoch,
                         high.event.canonical().decode(),
                         _encode_signatures(high),
+                        high.epoch,
                     ),
                 )
                 self._commit()
@@ -501,6 +672,176 @@ class SqliteVoteStore:
                 return self._read_halt_proof()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ HALT: {error}") from error
+
+    # Epochs: formal/lean/PSystem/QuorumEpochs.lean.
+
+    def _is_closed(self, epoch: int) -> bool:
+        return (
+            self._connection.execute(
+                "SELECT 1 FROM closed_epochs WHERE epoch = ?",
+                (epoch,),
+            ).fetchone()
+            is not None
+        )
+
+    def _is_locked_against(self, event: Transfer, canonical: str) -> bool:
+        return any(
+            row[0] != canonical
+            for row in self._connection.execute(
+                "SELECT canonical FROM locks WHERE sender = ? AND nonce = ?",
+                (event.sender, str(event.nonce)),
+            )
+        )
+
+    def close_epoch(self) -> list[SignedTransfer]:
+        """
+        Stop voting in this epoch, durably, and return all its votes. The two are one
+        transaction, and after it no vote can be added: this is `report_holds_every_vote`.
+        Calling it again returns the same votes, so a report can be sent again.
+        """
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                epoch = self.committee.epoch
+                rows = self._connection.execute(
+                    """
+                    SELECT votes.canonical, vote_evidence.public_key, vote_evidence.signature
+                    FROM votes LEFT JOIN vote_evidence
+                    ON votes.epoch = vote_evidence.epoch
+                    AND votes.event_id = vote_evidence.event_id
+                    WHERE votes.epoch = ?
+                    """,
+                    (epoch,),
+                ).fetchall()
+
+                # A report without one of its votes could lose a certified event.
+                if any(row[1] is None for row in rows):
+                    raise VoteStoreError("A VOTE HAS NO PROOF OF ITS SENDER: CANNOT REPORT")
+
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)",
+                    (epoch,),
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"EPOCH NOT CLOSED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+        return [
+            SignedTransfer(
+                _event_from_canonical(canonical),
+                bytes.fromhex(public_key),
+                bytes.fromhex(signature),
+            )
+            for canonical, public_key, signature in rows
+        ]
+
+    def epoch_is_closed(self) -> bool:
+        with self._lock:
+            self._require_open()
+
+            try:
+                return self._is_closed(self.committee.epoch)
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ EPOCH: {error}") from error
+
+    def record_closure_vote(self, digest: str) -> bool:
+        """
+        The vote lock of the closure: one closure for each epoch, for good, or two nodes
+        could hold different locks. True when this closure is durably the one, so a
+        signature may follow. A closure that is refused here is not retried in this epoch.
+        """
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+
+                if self._is_halted():
+                    return False
+
+                epoch = self.committee.epoch
+                row = self._connection.execute(
+                    "SELECT digest FROM closure_votes WHERE epoch = ?",
+                    (epoch,),
+                ).fetchone()
+
+                if row is not None:
+                    return row[0] == digest
+
+                self._connection.execute(
+                    "INSERT INTO closure_votes (epoch, digest) VALUES (?, ?)",
+                    (epoch, digest),
+                )
+                self._commit()
+                return True
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CLOSURE VOTE NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def install_closure(self, closure: EpochClosure) -> None:
+        """
+        Enter the next epoch, with the locks of this closure added to the earlier ones. The
+        caller has verified it. On disk first, and in one transaction.
+        """
+        current = self.committee
+        following = closure.change.next_committee(current)
+        locks = closure.locks()
+        text = json.dumps(encode_epoch_closure(closure)["closure"], separators=(",", ":"))
+
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+
+                if self._is_halted():
+                    raise VoteStoreError("NODE HAS HALTED")
+
+                self._connection.execute(
+                    "INSERT INTO closures (epoch, closure) VALUES (?, ?)",
+                    (current.epoch, text),
+                )
+                self._connection.executemany(
+                    """
+                    INSERT OR IGNORE INTO locks (sender, nonce, canonical)
+                    VALUES (?, ?, ?)
+                    """,
+                    [
+                        (event.sender, str(event.nonce), event.canonical().decode())
+                        for event in locks
+                    ],
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CLOSURE NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+            self.committee = following
+            self._chain[following.epoch] = following
+
+    def closures(self, after_epoch: int = 0) -> list[EpochClosure]:
+        """The closures from `after_epoch` on, in order."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                rows = self._connection.execute(
+                    "SELECT closure FROM closures WHERE epoch >= ? ORDER BY epoch",
+                    (after_epoch,),
+                ).fetchall()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ CLOSURES: {error}") from error
+
+        return [
+            decode_epoch_closure({"type": "EPOCH_CLOSURE", "closure": json.loads(row[0])})
+            for row in rows
+        ]
 
     def close(self) -> None:
         with self._lock:
@@ -530,12 +871,10 @@ class QuorumReplica:
         store: SqliteVoteStore,
         auth: Callable[[Transfer], bool],
     ) -> None:
-        self.committee = store.committee
-
         if identity.public_key != store.validator:
             raise ValueError("VOTE STORE BELONGS TO ANOTHER VALIDATOR")
 
-        if initial_state.root() != self.committee.genesis_root:
+        if initial_state.root() != store.committee.genesis_root:
             raise ValueError("INITIAL STATE IS NOT THE GENESIS OF THE COMMITTEE")
 
         self._identity = identity
@@ -549,6 +888,18 @@ class QuorumReplica:
             if not self._can_execute(certificate):
                 raise VoteStoreError("LOG OF CERTIFICATES DOES NOT REPLAY")
             self._execute(certificate)
+
+    @property
+    def committee(self) -> Committee:
+        """The committee in force, which changes when a closure is installed."""
+        return self._store.committee
+
+    @property
+    def is_member(self) -> bool:
+        return self.committee.index_of(self._identity.public_key) is not None
+
+    def certificate_is_valid(self, certificate: QuorumCertificate) -> bool:
+        return certificate.verify(self._store.committee_of(certificate))
 
     @property
     def executed(self) -> list[Transfer]:
@@ -571,7 +922,11 @@ class QuorumReplica:
     def halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
         return self._store.halt_proof()
 
-    def handle_vote_request(self, event: Transfer) -> Vote | None:
+    def handle_vote_request(
+        self,
+        event: Transfer,
+        signed: SignedTransfer | None = None,
+    ) -> Vote | None:
         """
         Return a vote, or None if the event is refused. The signature comes after
         the vote is durably recorded. If that fails the error propagates, and no
@@ -583,10 +938,52 @@ class QuorumReplica:
         if not self._auth(event):
             return None
 
-        if not self._store.record_vote(event):
+        if not self.is_member:
+            return None
+
+        if not self._store.record_vote(event, signed):
             return None
 
         return Vote.create(self.committee, self._identity, event)
+
+    def report_epoch(self, change_id: str) -> EpochReport | None:
+        """
+        Stop voting and report, durably in that order. None if this node has no vote in
+        this epoch, because it is not a member of the committee.
+        """
+        if not self.is_member or self._store.halted():
+            return None
+
+        return EpochReport.create(
+            self.committee,
+            self._identity,
+            change_id,
+            self._store.close_epoch(),
+        )
+
+    def vote_for_closure(
+        self,
+        closure: EpochClosure,
+        governance: Governance,
+    ) -> Vote | None:
+        """Sign one closure for this epoch, after the lock is on disk."""
+        if not self.is_member or not self._store.record_closure_vote(closure.digest):
+            return None
+
+        return Vote.create(
+            self.committee,
+            self._identity,
+            closure.event(governance, self.committee),
+        )
+
+    def install_closure(self, closure: EpochClosure) -> None:
+        self._store.install_closure(closure)
+
+    def committee_of(self, certificate: QuorumCertificate) -> Committee:
+        return self._store.committee_of(certificate)
+
+    def closures(self, after_epoch: int = 0) -> list[EpochClosure]:
+        return self._store.closures(after_epoch)
 
     def handle_certificate(self, certificate: QuorumCertificate) -> bool:
         """
@@ -612,7 +1009,7 @@ class QuorumReplica:
             and self._is_fresh(event)
             and self._is_ready(event)
             and self._is_executable(event)
-            and certificate.verify(self.committee)
+            and self.certificate_is_valid(certificate)
         )
 
     def _is_fresh(self, event: Transfer) -> bool:
@@ -641,6 +1038,11 @@ QUORUM_MESSAGE_TYPES = frozenset(
         "CERTIFICATE",
         "CERTIFICATE_SYNC",
         "CERTIFICATE_SYNC_REQUEST",
+        "EPOCH_CHANGE",
+        "EPOCH_REPORT",
+        "CLOSURE_VOTE_REQUEST",
+        "CLOSURE_VOTE",
+        "EPOCH_CLOSURE",
     }
 )
 
@@ -691,9 +1093,14 @@ class QuorumDriver:
     and then nothing is to be sent.
     """
 
-    def __init__(self, replica: QuorumReplica) -> None:
+    def __init__(self, replica: QuorumReplica, governance: Governance | None = None) -> None:
         self.replica = replica
-        self.committee = replica.committee
+        self.governance = governance
+        # What this node proposed: the reports, then the votes on the closure.
+        self._change: EpochChange | None = None
+        self._reports: dict[int, EpochReport] = {}
+        self._candidate: EpochClosure | None = None
+        self._closure_votes: dict[int, Vote] = {}
         self.equivocations: dict[tuple[str, int], EquivocationProof] = {}
         self.signed_events: dict[str, SignedTransfer] = {}
         self._first_signed: dict[tuple[str, int], SignedTransfer] = {}
@@ -708,6 +1115,10 @@ class QuorumDriver:
         # The log by sender, in order of nonce, so that an answer does not read it all.
         self._log_by_sender: dict[str, list[QuorumCertificate]] = {}
         self._indexed = 0
+
+    @property
+    def committee(self) -> Committee:
+        return self.replica.committee
 
     @property
     def halted(self) -> bool:
@@ -735,8 +1146,26 @@ class QuorumDriver:
 
         if message_type == "CERTIFICATE_SYNC_REQUEST":
             return self._handle_sync_request(
-                decode_certificate_sync_request(message)
+                decode_certificate_sync_request(message),
+                certificate_sync_request_epoch(message),
             )
+
+        if message_type == "EPOCH_CHANGE":
+            return self._handle_epoch_change(decode_epoch_change(message))
+
+        if message_type == "EPOCH_REPORT":
+            return self._handle_epoch_report(*decode_epoch_report(message))
+
+        if message_type == "CLOSURE_VOTE_REQUEST":
+            return self._handle_closure_vote_request(
+                decode_closure_vote_request(message)
+            )
+
+        if message_type == "CLOSURE_VOTE":
+            return self._handle_closure_vote(*decode_closure_vote(message))
+
+        if message_type == "EPOCH_CLOSURE":
+            return self._handle_epoch_closure(decode_epoch_closure(message))
 
         raise ValueError("NOT A QUORUM MESSAGE")
 
@@ -745,7 +1174,7 @@ class QuorumDriver:
         if self.halted:
             return None
 
-        return encode_certificate_sync_request(self._frontier())
+        return encode_certificate_sync_request(self._frontier(), self.committee.epoch)
 
     def _frontier(self) -> dict[str, int]:
         self._refresh_log_index()
@@ -775,8 +1204,13 @@ class QuorumDriver:
 
         self._indexed = len(log)
 
-    def _handle_sync_request(self, frontier: dict[str, int]) -> DriverOutput:
-        # Also after a halt: what was executed before it is still certified.
+    def _handle_sync_request(self, frontier: dict[str, int], epoch: int = 0) -> DriverOutput:
+        # Also after a halt: what was executed before it is still certified. The closures
+        # come first, because a certificate of a later epoch needs them to verify.
+        closures = tuple(
+            encode_epoch_closure(closure)
+            for closure in self.replica.closures(epoch)
+        )
         self._refresh_log_index()
         batch = []
         size = 0
@@ -789,14 +1223,16 @@ class QuorumDriver:
                 size += len(json.dumps(encode_certificate(certificate)))
 
                 if batch and size > SYNC_BATCH_BYTES:
-                    return DriverOutput(replies=(encode_certificate_sync(batch),))
+                    return DriverOutput(
+                        replies=(*closures, encode_certificate_sync(batch)),
+                    )
 
                 batch.append(certificate)
 
         if not batch:
-            return _NOTHING
+            return DriverOutput(replies=closures)
 
-        return DriverOutput(replies=(encode_certificate_sync(batch),))
+        return DriverOutput(replies=(*closures, encode_certificate_sync(batch)))
 
     def _handle_certificate_sync(
         self,
@@ -817,7 +1253,7 @@ class QuorumDriver:
 
             # No honest node sends this. Stopping here means that a frame full of bad
             # certificates costs one check of a signature.
-            if not certificate.verify(self.committee):
+            if not self.replica.certificate_is_valid(certificate):
                 return _NOTHING
 
             self._accept(certificate)
@@ -831,6 +1267,142 @@ class QuorumDriver:
             return _NOTHING
 
         return DriverOutput(replies=(request,))
+
+    def propose_epoch_change(self, change: EpochChange) -> DriverOutput:
+        """
+        Order the end of this epoch, as a proposer. This node collects the reports and the
+        votes on the closure. Only one proposer should act for an epoch: a closure that
+        splits the votes of the committee ends with no closure at all, as an equivocating
+        sender ends with no certificate.
+        """
+        if (
+            self.governance is None
+            or self.halted
+            or not change.verify(self.governance, self.committee)
+        ):
+            return _NOTHING
+
+        self._change = change
+        self._reports = {}
+        self._candidate = None
+        self._closure_votes = {}
+        broadcasts = [encode_epoch_change(change)]
+        report = self.replica.report_epoch(change.change_id)
+
+        if report is not None:
+            self._reports[report.validator] = report
+            broadcasts.extend(self._closure_if_reported().broadcasts)
+
+        return DriverOutput(broadcasts=tuple(broadcasts))
+
+    def _handle_epoch_change(self, change: EpochChange) -> DriverOutput:
+        if (
+            self.governance is None
+            or self.halted
+            or not change.verify(self.governance, self.committee)
+        ):
+            return _NOTHING
+
+        report = self.replica.report_epoch(change.change_id)
+
+        if report is None:
+            return _NOTHING
+
+        return DriverOutput(replies=(encode_epoch_report(change.change_id, report),))
+
+    def _handle_epoch_report(self, change_id: str, report: EpochReport) -> DriverOutput:
+        if (
+            self._change is None
+            or self._candidate is not None
+            or change_id != self._change.change_id
+            or not report.verify(self.committee, change_id)
+        ):
+            return _NOTHING
+
+        self._reports[report.validator] = report
+        return self._closure_if_reported()
+
+    def _closure_if_reported(self) -> DriverOutput:
+        if self._candidate is not None or len(self._reports) < self.committee.quorum:
+            return _NOTHING
+
+        self._candidate = EpochClosure(
+            self._change,
+            tuple(self._reports[validator] for validator in sorted(self._reports)),
+        )
+        vote = self.replica.vote_for_closure(self._candidate, self.governance)
+
+        if vote is not None:
+            self._closure_votes[vote.validator] = vote
+
+        return DriverOutput(broadcasts=(encode_closure_vote_request(self._candidate),))
+
+    def _handle_closure_vote_request(self, closure: EpochClosure) -> DriverOutput:
+        if (
+            self.governance is None
+            or self.halted
+            or not closure.is_valid_candidate(self.governance, self.committee)
+        ):
+            return _NOTHING
+
+        vote = self.replica.vote_for_closure(closure, self.governance)
+
+        if vote is None:
+            return _NOTHING
+
+        return DriverOutput(replies=(encode_closure_vote(closure.digest, vote),))
+
+    def _handle_closure_vote(self, digest: str, vote: Vote) -> DriverOutput:
+        candidate = self._candidate
+
+        if (
+            candidate is None
+            or digest != candidate.digest
+            or not vote.verify(
+                self.committee,
+                candidate.event(self.governance, self.committee),
+            )
+        ):
+            return _NOTHING
+
+        self._closure_votes[vote.validator] = vote
+
+        if len(self._closure_votes) < self.committee.quorum:
+            return _NOTHING
+
+        closure = EpochClosure(
+            candidate.change,
+            candidate.reports,
+            tuple(self._closure_votes[v] for v in sorted(self._closure_votes)),
+        )
+        self._install(closure)
+        return DriverOutput(broadcasts=(encode_epoch_closure(closure),))
+
+    def _handle_epoch_closure(self, closure: EpochClosure) -> DriverOutput:
+        """
+        One that does not continue the epoch in force is ignored, with no judgement: a node
+        behind gets the ones before it by synchronizing.
+        """
+        if (
+            self.governance is None
+            or self.halted
+            or closure.change.previous_id != self.committee.committee_id
+            or not closure.verify(self.governance, self.committee)
+        ):
+            return _NOTHING
+
+        self._install(closure)
+        return _NOTHING
+
+    def _install(self, closure: EpochClosure) -> None:
+        self.replica.install_closure(closure)
+        # Votes collected so far were signed for the committee that has ended.
+        self._aggregating.clear()
+        self._change = None
+        self._reports = {}
+        self._candidate = None
+        self._closure_votes = {}
+        self._retry_buffer()
 
     def submit(self, signed: SignedTransfer) -> DriverOutput:
         """
@@ -848,7 +1420,7 @@ class QuorumDriver:
         if known is not None and known.event.canonical() == event.canonical():
             return DriverOutput(broadcasts=(encode_certificate(known),))
 
-        vote = self.replica.handle_vote_request(event)
+        vote = self.replica.handle_vote_request(event, signed)
 
         if vote is None:
             return _NOTHING
@@ -880,7 +1452,7 @@ class QuorumDriver:
 
         # Before the replica, because a vote refused is when the proof appears.
         self._record_signed(signed)
-        vote = self.replica.handle_vote_request(signed.transfer)
+        vote = self.replica.handle_vote_request(signed.transfer, signed)
 
         if vote is None:
             return _NOTHING
@@ -920,12 +1492,13 @@ class QuorumDriver:
         certificate = QuorumCertificate(
             event,
             tuple(votes[validator] for validator in sorted(votes)),
+            self.committee.epoch,
         )
         self._accept(certificate)
         return certificate
 
     def _handle_certificate(self, certificate: QuorumCertificate) -> DriverOutput:
-        if not self.halted and certificate.verify(self.committee):
+        if not self.halted and self.replica.certificate_is_valid(certificate):
             self._accept(certificate)
 
         return _NOTHING
@@ -993,6 +1566,10 @@ class QuorumConfig:
     create: bool = False
     # Seconds between requests to each peer. None sends one only on connecting.
     sync_interval: float | None = 5.0
+    # Who may order the end of an epoch. None: this committee never changes.
+    governance: Governance | None = None
+    # This node is not in `committee`, the first of the chain, and enters later.
+    joining: bool = False
 
 
 class QuorumRuntime:
@@ -1025,6 +1602,8 @@ class QuorumRuntime:
                 config.committee,
                 config.identity.public_key,
                 create=config.create,
+                governance=config.governance,
+                joining=config.joining,
             )
         except BaseException:
             os.close(self._lock_file)
@@ -1042,7 +1621,7 @@ class QuorumRuntime:
             os.close(self._lock_file)
             raise
 
-        self.driver = QuorumDriver(self.replica)
+        self.driver = QuorumDriver(self.replica, config.governance)
 
     @staticmethod
     def _acquire_lock(path: Path) -> int:

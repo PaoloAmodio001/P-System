@@ -4,6 +4,7 @@ import json
 import re
 
 from core.event import Transfer
+from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity, verify_signature
 
@@ -114,8 +115,24 @@ class Committee:
     members: tuple[bytes, ...]
     f: int
     genesis_root: str
+    # Which committee of the chain this is. Epoch 0 has no previous one. Otherwise
+    # the id of the previous one binds a committee to its whole history.
+    epoch: int = 0
+    previous_id: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.epoch) is not int or self.epoch < 0:
+            raise ValueError("INVALID COMMITTEE EPOCH")
+
+        if self.epoch == 0:
+            if self.previous_id != "":
+                raise ValueError("INVALID PREVIOUS COMMITTEE")
+        elif (
+            type(self.previous_id) is not str
+            or _ROOT_PATTERN.fullmatch(self.previous_id) is None
+        ):
+            raise ValueError("INVALID PREVIOUS COMMITTEE")
+
         if type(self.f) is not int or self.f < 0:
             raise ValueError("INVALID COMMITTEE FAULT BOUND")
 
@@ -175,6 +192,11 @@ class Committee:
             "genesis_root": self.genesis_root,
             "members": [member.hex() for member in self.members],
         }
+
+        # Only from epoch 1, so that the id of a first committee stays what it was.
+        if self.epoch > 0:
+            data["epoch"] = self.epoch
+            data["previous"] = self.previous_id
 
         return sha256(
             json.dumps(
@@ -274,6 +296,7 @@ class QuorumCertificate:
 
     event: Transfer
     votes: tuple[Vote, ...]
+    epoch: int = 0
 
     def verify(self, committee: Committee) -> bool:
         """
@@ -288,6 +311,9 @@ class QuorumCertificate:
         values do not exist. Whatever the fields hold, the answer is False and not
         an exception.
         """
+        if type(self.epoch) is not int or self.epoch != committee.epoch:
+            return False
+
         if not is_well_formed_event(self.event):
             return False
 
@@ -313,3 +339,300 @@ class QuorumCertificate:
             vote._verify_payload(committee, payload)
             for vote in self.votes
         )
+
+
+def guilty_members(
+    committee: Committee,
+    first: QuorumCertificate,
+    second: QuorumCertificate,
+) -> tuple[bytes, ...]:
+    """
+    The members that signed both of two valid certificates in conflict, of one committee.
+    Each of them broke the vote lock, as `conflict_identifies_faulty` says, and there are
+    at least `2q - n`. It is computed from the certificates alone, so nobody has to be
+    believed. The caller has verified them.
+    """
+    common = {vote.validator for vote in first.votes} & {
+        vote.validator for vote in second.votes
+    }
+    return tuple(committee.members[validator] for validator in sorted(common))
+
+
+# A chain of committees: formal/lean/PSystem/QuorumEpochs.lean. An epoch ends in three steps,
+# all of them signed: governance orders it, a quorum of the committee reports its votes and
+# stops voting, and the committee certifies one closure. Governance can only order: what the
+# next committee must respect comes from the reports, and nobody chooses it.
+
+EPOCH_CHANGE_DOMAIN = b"P-SYSTEM/EPOCH-CHANGE/v1\0"
+EPOCH_REPORT_DOMAIN = b"P-SYSTEM/EPOCH-REPORT/v1\0"
+
+
+def _canonical_json(data) -> bytes:
+    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+
+
+@dataclass(frozen=True)
+class Governance:
+    """
+    Who may order the end of an epoch: `threshold` of `members`, never one key alone.
+
+    Governance chooses the next committee, and a committee with more than `f` faulty
+    members can fork. So this is an assumption of trust for safety and not only for
+    liveness, and no theorem removes it.
+    """
+
+    members: tuple[bytes, ...]
+    threshold: int
+
+    def __post_init__(self) -> None:
+        if type(self.members) is not tuple or not all(
+            type(member) is bytes and len(member) == ED25519_PUBLIC_KEY_SIZE
+            for member in self.members
+        ):
+            raise ValueError("INVALID GOVERNANCE MEMBER")
+
+        if list(self.members) != sorted(set(self.members)):
+            raise ValueError("GOVERNANCE MEMBERS MUST BE SORTED AND DISTINCT")
+
+        if (
+            type(self.threshold) is not int
+            or self.threshold < 2
+            or self.threshold > len(self.members)
+        ):
+            raise ValueError("INVALID GOVERNANCE THRESHOLD")
+
+    @property
+    def account(self) -> str:
+        """The sender of its closures, which no signature of an identity can match."""
+        digest = sha256(
+            _canonical_json(
+                {
+                    "members": [member.hex() for member in self.members],
+                    "threshold": self.threshold,
+                }
+            )
+        ).hexdigest()
+        return f"governance:{digest}"
+
+
+@dataclass(frozen=True)
+class EpochChange:
+    """An order of governance: end this committee, and this is the next one."""
+
+    previous_id: str
+    next_members: tuple[bytes, ...]
+    next_f: int
+    signatures: tuple[tuple[int, bytes], ...] = ()
+
+    def _body(self) -> bytes:
+        return _canonical_json(
+            {
+                "f": self.next_f,
+                "members": [member.hex() for member in self.next_members],
+                "previous": self.previous_id,
+            }
+        )
+
+    @property
+    def change_id(self) -> str:
+        return sha256(self._body()).hexdigest()
+
+    def _payload(self, governance: Governance) -> bytes:
+        return EPOCH_CHANGE_DOMAIN + governance.account.encode() + self._body()
+
+    @classmethod
+    def create(
+        cls,
+        current: Committee,
+        next_keys,
+        next_f: int,
+        governance: Governance,
+        signers,
+    ) -> "EpochChange":
+        unsigned = cls(current.committee_id, tuple(sorted(next_keys)), next_f)
+        payload = unsigned._payload(governance)
+        signatures = sorted(
+            (governance.members.index(signer.public_key), signer.sign(payload))
+            for signer in signers
+        )
+        return cls(unsigned.previous_id, unsigned.next_members, next_f, tuple(signatures))
+
+    def next_committee(self, current: Committee) -> Committee:
+        """Raises ValueError if the next committee is not a valid one."""
+        return Committee(
+            members=self.next_members,
+            f=self.next_f,
+            genesis_root=current.genesis_root,
+            epoch=current.epoch + 1,
+            previous_id=current.committee_id,
+        )
+
+    def verify(self, governance: Governance, current: Committee) -> bool:
+        """False, never an exception, whatever the fields hold."""
+        if self.previous_id != current.committee_id:
+            return False
+
+        try:
+            self.next_committee(current)
+        except ValueError:
+            return False
+
+        indexes = [index for index, _ in self.signatures]
+
+        if (
+            len(set(indexes)) != len(indexes)
+            or len(indexes) < governance.threshold
+            or not all(
+                type(index) is int and 0 <= index < len(governance.members)
+                for index in indexes
+            )
+        ):
+            return False
+
+        payload = self._payload(governance)
+        return all(
+            verify_signature(governance.members[index], signature, payload)
+            for index, signature in self.signatures
+        )
+
+
+def _is_signed_by_its_sender(signed: SignedTransfer) -> bool:
+    return (
+        is_well_formed_event(signed.transfer)
+        and signed.verify()
+        and signed.identity_id == signed.transfer.sender
+    )
+
+
+def _votes_digest(votes: tuple[SignedTransfer, ...]) -> bytes:
+    digest = sha256()
+
+    for signed in votes:
+        for part in (signed.transfer.canonical(), signed.public_key, signed.signature):
+            digest.update(len(part).to_bytes(4, "big"))
+            digest.update(part)
+
+    return digest.digest()
+
+
+@dataclass(frozen=True)
+class EpochReport:
+    """What a validator voted for in an epoch. It votes for nothing after this."""
+
+    validator: int
+    votes: tuple[SignedTransfer, ...]
+    signature: bytes
+
+    @staticmethod
+    def _payload(
+        committee: Committee,
+        change_id: str,
+        votes: tuple[SignedTransfer, ...],
+    ) -> bytes:
+        return (
+            EPOCH_REPORT_DOMAIN
+            + bytes.fromhex(committee.committee_id)
+            + bytes.fromhex(change_id)
+            + _votes_digest(votes)
+        )
+
+    @classmethod
+    def create(
+        cls,
+        committee: Committee,
+        identity: Identity,
+        change_id: str,
+        votes,
+    ) -> "EpochReport":
+        ordered = tuple(sorted(votes, key=lambda signed: signed.transfer.canonical()))
+        validator = committee.index_of(identity.public_key)
+
+        if validator is None:
+            raise ValueError("IDENTITY IS NOT A COMMITTEE MEMBER")
+
+        return cls(
+            validator=validator,
+            votes=ordered,
+            signature=identity.sign(cls._payload(committee, change_id, ordered)),
+        )
+
+    def verify(self, committee: Committee, change_id: str) -> bool:
+        """
+        One event the sender did not sign invalidates the whole report. Otherwise a
+        faulty validator could lock any account by reporting an event nobody signed.
+        """
+        return (
+            committee.has_validator(self.validator)
+            and type(self.votes) is tuple
+            and list(self.votes)
+            == sorted(self.votes, key=lambda signed: signed.transfer.canonical())
+            and all(_is_signed_by_its_sender(signed) for signed in self.votes)
+            and verify_signature(
+                committee.members[self.validator],
+                self.signature,
+                self._payload(committee, change_id, self.votes),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class EpochClosure:
+    """
+    An order of governance, the reports of a quorum, and the votes of the committee on
+    this closure. Without the votes it is only a candidate. The votes make it unique for
+    the epoch, as `closure_unique` says: different quorums of reports would otherwise give
+    different locks to different nodes.
+    """
+
+    change: EpochChange
+    reports: tuple[EpochReport, ...]
+    votes: tuple[Vote, ...] = ()
+
+    @property
+    def digest(self) -> str:
+        data = sha256(bytes.fromhex(self.change.change_id))
+
+        for report in self.reports:
+            data.update(report.validator.to_bytes(4, "big"))
+            data.update(_votes_digest(report.votes))
+            data.update(report.signature)
+
+        return data.hexdigest()
+
+    def event(self, governance: Governance, committee: Committee) -> Transfer:
+        """
+        The closure as an event of governance, with the epoch as nonce. Its amount is 0,
+        so no state can ever execute it: it exists to be voted on.
+        """
+        return Transfer(governance.account, self.digest, 0, committee.epoch)
+
+    def is_valid_candidate(self, governance: Governance, committee: Committee) -> bool:
+        validators = [report.validator for report in self.reports]
+        return (
+            self.change.verify(governance, committee)
+            and validators == sorted(set(validators))
+            and len(validators) >= committee.quorum
+            and all(
+                report.verify(committee, self.change.change_id)
+                for report in self.reports
+            )
+        )
+
+    def verify(self, governance: Governance, committee: Committee) -> bool:
+        return (
+            self.is_valid_candidate(governance, committee)
+            and QuorumCertificate(
+                self.event(governance, committee),
+                self.votes,
+                committee.epoch,
+            ).verify(committee)
+        )
+
+    def locks(self) -> tuple[Transfer, ...]:
+        """The events of all the reports, each once, in a fixed order."""
+        events = {
+            signed.transfer.canonical(): signed.transfer
+            for report in self.reports
+            for signed in report.votes
+        }
+        return tuple(events[canonical] for canonical in sorted(events))

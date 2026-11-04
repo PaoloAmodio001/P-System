@@ -57,7 +57,7 @@ class MemoryLockStore(SqliteVoteStore):
     def conflicts(self, old, new) -> bool:
         raise NotImplementedError
 
-    def record_vote(self, event):
+    def record_vote(self, event, signed=None):
         votes = self.votes_by_path[self._key]
         same = [v for v in votes if v.canonical() == event.canonical()]
         if any(self.conflicts(v, event) for v in votes if v not in same):

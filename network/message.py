@@ -1,6 +1,9 @@
 import re
 
 from core.attestation import (
+    EpochChange,
+    EpochClosure,
+    EpochReport,
     QuorumCertificate,
     Vote,
     is_well_formed_event,
@@ -196,7 +199,7 @@ def decode_vote(message) -> tuple[Transfer, Vote]:
 
 
 def encode_certificate(certificate: QuorumCertificate) -> dict:
-    return {
+    message = {
         "type": "CERTIFICATE",
         "transfer": _encode_quorum_event(certificate.event),
         "votes": [
@@ -208,11 +211,22 @@ def encode_certificate(certificate: QuorumCertificate) -> dict:
         ],
     }
 
+    # Only from epoch 1, so that each certificate has one form on the wire.
+    if certificate.epoch != 0:
+        message["epoch"] = certificate.epoch
+
+    return message
+
 
 def decode_certificate(message) -> QuorumCertificate:
-    data = _message_of_type(message, "CERTIFICATE", "transfer", "votes")
+    has_epoch = type(message) is dict and "epoch" in message
+    fields = ("transfer", "votes", "epoch") if has_epoch else ("transfer", "votes")
+    data = _message_of_type(message, "CERTIFICATE", *fields)
 
     if type(data["votes"]) is not list:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+    if has_epoch and (type(data["epoch"]) is not int or data["epoch"] <= 0):
         raise ValueError("INVALID QUORUM MESSAGE")
 
     votes = []
@@ -226,6 +240,7 @@ def decode_certificate(message) -> QuorumCertificate:
     return QuorumCertificate(
         event=_decode_quorum_event(data["transfer"]),
         votes=tuple(votes),
+        epoch=data["epoch"] if has_epoch else 0,
     )
 
 
@@ -249,12 +264,13 @@ def decode_certificate_sync(message) -> list[QuorumCertificate]:
     return [decode_certificate(item) for item in data["certificates"]]
 
 
-def encode_certificate_sync_request(frontier: dict[str, int]) -> dict:
+def encode_certificate_sync_request(frontier: dict[str, int], epoch: int = 0) -> dict:
     """
     For each sender, the next nonce the node asks for. A sender that is not listed
-    is one the node knows nothing about.
+    is one the node knows nothing about. `epoch` is the one the node is in, left out
+    when it is 0.
     """
-    return {
+    message = {
         "type": "CERTIFICATE_SYNC_REQUEST",
         "frontier": [
             [sender, frontier[sender]]
@@ -262,11 +278,26 @@ def encode_certificate_sync_request(frontier: dict[str, int]) -> dict:
         ],
     }
 
+    if epoch != 0:
+        message["epoch"] = epoch
+
+    return message
+
+
+def certificate_sync_request_epoch(message) -> int:
+    """The epoch in a request, which decode_certificate_sync_request has checked."""
+    return message.get("epoch", 0)
+
 
 def decode_certificate_sync_request(message) -> dict[str, int]:
-    data = _message_of_type(message, "CERTIFICATE_SYNC_REQUEST", "frontier")
+    has_epoch = type(message) is dict and "epoch" in message
+    fields = ("frontier", "epoch") if has_epoch else ("frontier",)
+    data = _message_of_type(message, "CERTIFICATE_SYNC_REQUEST", *fields)
 
     if type(data["frontier"]) is not list:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+    if has_epoch and (type(data["epoch"]) is not int or data["epoch"] <= 0):
         raise ValueError("INVALID QUORUM MESSAGE")
 
     frontier = {}
@@ -290,3 +321,176 @@ def decode_certificate_sync_request(message) -> dict[str, int]:
         previous = sender
 
     return frontier
+
+
+# Epochs. The same rule as the decoders above: a well-formed value or ValueError.
+
+_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _encode_signed_event(event: SignedTransfer) -> dict:
+    return {
+        "transfer": _encode_quorum_event(event.transfer),
+        "public_key": event.public_key.hex(),
+        "signature": event.signature.hex(),
+    }
+
+
+def _decode_signed_event(value) -> SignedTransfer:
+    data = _object_with_fields(value, "transfer", "public_key", "signature")
+    return SignedTransfer(
+        transfer=_decode_quorum_event(data["transfer"]),
+        public_key=_hex_bytes(data["public_key"], _PUBLIC_KEY_PATTERN),
+        signature=_hex_bytes(data["signature"], _SIGNATURE_PATTERN),
+    )
+
+
+def _natural(value) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+    return value
+
+
+def _list_of(value) -> list:
+    if type(value) is not list:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+    return value
+
+
+def _encode_change(change: EpochChange) -> dict:
+    return {
+        "previous": change.previous_id,
+        "members": [member.hex() for member in change.next_members],
+        "f": change.next_f,
+        "signatures": [
+            [index, signature.hex()]
+            for index, signature in change.signatures
+        ],
+    }
+
+
+def _decode_change(value) -> EpochChange:
+    data = _object_with_fields(value, "previous", "members", "f", "signatures")
+    signatures = []
+
+    for entry in _list_of(data["signatures"]):
+        if type(entry) is not list or len(entry) != 2:
+            raise ValueError("INVALID QUORUM MESSAGE")
+
+        signatures.append(
+            (_natural(entry[0]), _hex_bytes(entry[1], _SIGNATURE_PATTERN))
+        )
+
+    return EpochChange(
+        previous_id=_hex_bytes(data["previous"], _ID_PATTERN).hex(),
+        next_members=tuple(
+            _hex_bytes(member, _PUBLIC_KEY_PATTERN)
+            for member in _list_of(data["members"])
+        ),
+        next_f=_natural(data["f"]),
+        signatures=tuple(signatures),
+    )
+
+
+def encode_epoch_change(change: EpochChange) -> dict:
+    return {"type": "EPOCH_CHANGE", "change": _encode_change(change)}
+
+
+def decode_epoch_change(message) -> EpochChange:
+    return _decode_change(_message_of_type(message, "EPOCH_CHANGE", "change")["change"])
+
+
+def _encode_report(report: EpochReport) -> dict:
+    return {
+        "validator": report.validator,
+        "votes": [_encode_signed_event(signed) for signed in report.votes],
+        "signature": report.signature.hex(),
+    }
+
+
+def _decode_report(value) -> EpochReport:
+    data = _object_with_fields(value, "validator", "votes", "signature")
+    return EpochReport(
+        validator=_natural(data["validator"]),
+        votes=tuple(_decode_signed_event(item) for item in _list_of(data["votes"])),
+        signature=_hex_bytes(data["signature"], _SIGNATURE_PATTERN),
+    )
+
+
+def encode_epoch_report(change_id: str, report: EpochReport) -> dict:
+    return {
+        "type": "EPOCH_REPORT",
+        "change_id": change_id,
+        "report": _encode_report(report),
+    }
+
+
+def decode_epoch_report(message) -> tuple[str, EpochReport]:
+    data = _message_of_type(message, "EPOCH_REPORT", "change_id", "report")
+    return (
+        _hex_bytes(data["change_id"], _ID_PATTERN).hex(),
+        _decode_report(data["report"]),
+    )
+
+
+def _encode_closure(closure: EpochClosure) -> dict:
+    return {
+        "change": _encode_change(closure.change),
+        "reports": [_encode_report(report) for report in closure.reports],
+        "votes": [
+            {"validator": vote.validator, "signature": vote.signature.hex()}
+            for vote in closure.votes
+        ],
+    }
+
+
+def _decode_closure(value) -> EpochClosure:
+    data = _object_with_fields(value, "change", "reports", "votes")
+    votes = []
+
+    for item in _list_of(data["votes"]):
+        entry = _object_with_fields(item, "validator", "signature")
+        votes.append(_decode_vote_fields(entry["validator"], entry["signature"]))
+
+    return EpochClosure(
+        change=_decode_change(data["change"]),
+        reports=tuple(_decode_report(item) for item in _list_of(data["reports"])),
+        votes=tuple(votes),
+    )
+
+
+def encode_closure_vote_request(closure: EpochClosure) -> dict:
+    return {"type": "CLOSURE_VOTE_REQUEST", "closure": _encode_closure(closure)}
+
+
+def decode_closure_vote_request(message) -> EpochClosure:
+    return _decode_closure(
+        _message_of_type(message, "CLOSURE_VOTE_REQUEST", "closure")["closure"]
+    )
+
+
+def encode_closure_vote(digest: str, vote: Vote) -> dict:
+    return {
+        "type": "CLOSURE_VOTE",
+        "digest": digest,
+        "validator": vote.validator,
+        "signature": vote.signature.hex(),
+    }
+
+
+def decode_closure_vote(message) -> tuple[str, Vote]:
+    data = _message_of_type(message, "CLOSURE_VOTE", "digest", "validator", "signature")
+    return (
+        _hex_bytes(data["digest"], _ID_PATTERN).hex(),
+        _decode_vote_fields(data["validator"], data["signature"]),
+    )
+
+
+def encode_epoch_closure(closure: EpochClosure) -> dict:
+    return {"type": "EPOCH_CLOSURE", "closure": _encode_closure(closure)}
+
+
+def decode_epoch_closure(message) -> EpochClosure:
+    return _decode_closure(_message_of_type(message, "EPOCH_CLOSURE", "closure")["closure"])
