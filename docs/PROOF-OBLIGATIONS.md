@@ -194,6 +194,9 @@ Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacu
 | `closure_unique` | At most one certified closure for each epoch, as an event of governance with the epoch as nonce | FORMAL (model) |
 | `chain_satisfies_hypotheses`, `fork_without_carrying_locks`, `equivocation_run_6_satisfies_hypotheses`, `unlock_safe_witness` | The hypotheses can hold together, and without carrying the locks there is a fork | FORMAL (witnesses, one instance each) |
 
+| `honest_sender_certifies` | If `q` honest validators receive one version of an event and see no conflicting request that passes their check, each votes for it and their signatures form a valid certificate | FORMAL (model), with delivery as a hypothesis; not unconditional liveness |
+| `certificate_executes` | A valid certificate for an event that can run on the state of a node is executed | FORMAL (model) |
+
 Hypotheses that remain, in `no_double_spend_across_epochs`:
 
 - each committee respects its own bound on faulty validators (`Epoch.safe`): governance chooses
@@ -210,9 +213,9 @@ Hypotheses that remain, in `no_double_spend_across_epochs`:
   order matters.
 - Identity binding and TLS are not modelled. Signatures appear only as
   abstract parameters of `Quorum`, with unforgeability as a hypothesis.
-- O7 covers safety in the quorum model. No theorem establishes liveness or
-  complete Byzantine fault tolerance.
-- There is no liveness theorem.
+- O7 covers safety in the quorum model. No theorem establishes unconditional
+  liveness or complete Byzantine fault tolerance.
+- There is no unconditional liveness theorem: `honest_sender_certifies` assumes delivery.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
 

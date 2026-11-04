@@ -300,3 +300,15 @@ import PSystem
 
 #print axioms PSystem.QuorumExamples.unlock_safe_witness
 
+
+-- QuorumLiveness.lean
+#print axioms PSystem.Quorum.voteAllowed_of_free
+
+#print axioms PSystem.Quorum.votes_free_foldl
+
+#print axioms PSystem.Quorum.votes_for_delivered
+
+#print axioms PSystem.Quorum.honest_sender_certifies
+
+#print axioms PSystem.Quorum.certificate_executes
+
