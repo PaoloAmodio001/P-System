@@ -699,7 +699,7 @@ def _tamper_halt(path: Path, statement: str, *values) -> None:
             "UPDATE halt SET first_canonical = ?", ("{}",), id="event without fields"
         ),
         pytest.param(
-            "UPDATE halt SET first_canonical = ?", ("[" * 100000,), id="deep nesting"
+            "UPDATE halt SET first_canonical = ?", ("[" * 5_000_000,), id="deep nesting"
         ),
         pytest.param(
             "UPDATE halt SET second_canonical = ?",
