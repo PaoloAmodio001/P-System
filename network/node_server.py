@@ -126,7 +126,14 @@ class NodeServer:
                     daemon=True,
                 ).start()
 
-            except (ValueError, ConnectionError, OSError):
+            except (
+                ValueError,
+                ConnectionError,
+                OSError,
+                RecursionError,
+            ):
+                # RecursionError: a frame with JSON nested too deeply, which is
+                # not a ValueError. Nothing a peer sends may end this loop.
                 try:
                     connection.close()
                 except OSError:
