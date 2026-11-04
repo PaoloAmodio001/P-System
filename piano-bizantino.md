@@ -2,12 +2,18 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Sottofase 5.5 fatta. La 5.6 non è iniziata: per decisione di Paolo, il passo dopo la 5.5 è la proposta di `ROADMAP.md`, che non si committa senza il suo via. La 5.6 aspetta a sua volta il via.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**Sottofase 5.5 fatta. Fatte le regole permanenti in `CLAUDE.md` e il passo 1 del programma di Paolo (`ROADMAP.md`). Prossimo: il passo 2, cioè la 5.6, che non è iniziata. Prima servono il via di Paolo sulla divisione della suite e, prima di scrivere codice, il via sul piano della 5.6 (SOSTA 1).** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+
+### Riepilogo dell'ultimo passo
+
+**Regole e passo 1, 2026-11-04.** `CLAUDE.md` ha le regole permanenti e il nuovo obiettivo. `ROADMAP.md` è tutta in Python, con le decisioni di Paolo: obiettivo a proprietario singolo, percorso con consenso come possibile fase dopo la 1.0, tre anticipazioni, D1 con governo a soglia `k` su `m`, D2 con soglie configurabili: standard `3f+1`, `2f+1` senza sblocco, opzionale `5f+1`, `4f+1` con sblocco, che è ancora uno schizzo e non una promessa.
+
+**Divisione della suite.** Marker `slow`, assegnato in `tests/conftest.py`: tutti i `*_mutations.py` e i file con `differential` nel nome. Misure dal report di un giro completo: 1537 test in 593 secondi; mutazioni e differenziali 9 file, 167 test, 518 secondi; il resto 168 file, 1370 test, 74 secondi.
 
 ### Regole di lavoro in vigore
 
 - Lavorare su `byzantine-quorum`. **Non pushare su `main` finché la fase 5 non è completa e verificata.** Unica eccezione, decisa da Paolo il 2026-11-04: solo correzioni di rete, senza codice della modalità quorum. Vale per quelle già portate, elencate qui sotto, e ogni altra va chiesta.
-- Alla fine di ogni punto: push di `byzantine-quorum` su GitHub, riepilogo, e aspettare il via.
+- Le regole generali sono in `CLAUDE.md`, sezione "Regole di lavoro permanenti". Il programma ha tre soste con il via di Paolo: prima del codice della 5.6, prima del merge su `main`, prima del codice della fase B.
 - Se un differenziale trova una divergenza tra Python e `runNode`, **non correggerla**: fermarsi e mostrare il caso minimo e la diagnosi. L'errore può stare nel Python, nel driver, nel modello o nel generatore.
 - **Prima di unire `byzantine-quorum` a `main`:** `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py`.
 
