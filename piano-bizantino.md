@@ -2,7 +2,7 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**In corso: sottofase 5.5, punti da 1 a 6 fatti. Prossimo passo: il punto 7, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**Sottofase 5.5 fatta. La 5.6 non è iniziata: per decisione di Paolo, il passo dopo la 5.5 è la proposta di `ROADMAP.md`, che non si committa senza il suo via. La 5.6 aspetta a sua volta il via.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
 
 ### Regole di lavoro in vigore
 
@@ -15,7 +15,7 @@
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 6 della 5.5 e questa nota | Tutte le fasi fatte |
+| `origin/byzantine-quorum`, `byzantine-quorum` locale | 5.5 completa e questa nota | Tutte le fasi fatte |
 | `origin/main` | `9a0aed3` | Fasi 0-4 più le correzioni di rete. Nessun codice della modalità quorum |
 | `main` locale | `1139303` | Fermo e indietro rispetto a `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -36,7 +36,7 @@
 | 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. Connessione che sopravvive a `stop`, test in `fd98fb0`. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059`, `fd98fb0` |
-| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node`. Punto 5: differenziale B. Punto 6: test di comportamento | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4`, `b166ccb`, `5a7def4`, `520b581` |
+| 5.5 | Fatta | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node`. Punto 5: differenziale B. Punto 6: test di comportamento | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4`, `b166ccb`, `5a7def4`, `520b581` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
@@ -45,7 +45,7 @@
 
 ### Cosa resta da fare
 
-**5.5, integrazione in `Node`** (difficoltà alta, il rischio maggiore del piano):
+**5.5, integrazione in `Node`: fatta.** Resta qui il piano com'era, per confrontarlo con quello che è stato fatto (difficoltà alta, il rischio maggiore del piano):
 
 - Parametro `quorum=` in `network/node.py`. Con `quorum=None` il percorso resta quello attuale e i test esistenti non cambiano. La logica nuova sta fuori da `node.py`.
 - `Node` rifiuta di partire se il suo stato iniziale ha un'altra radice rispetto al comitato.
@@ -72,13 +72,13 @@
 4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma. Fatto. **Solo nei commit del punto 4** (da `50bb48e` a `d119fd4`) l'unica riga cambiata di `node.py` è `known`, che con `quorum=None` aggiunge una lista vuota, e nessun test esistente è stato modificato. Questo non significa che il percorso storico sia identico a `main`: vedi la sezione sulle correzioni di rete.
 5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica. Fatto: `tests/test_quorum_differential_node.py`, 500 casi per seed, 28 mutazioni. Differenza dal piano: una firma errata non genera input, e solo un mittente che non è un'identità diventa riga `U`.
 6. Test di comportamento: P15 in modalità quorum, voti divisi, permutazioni, riavvio dopo l'arresto, un test breve su TLS reale. Fatto: `520b581`, `tests/test_quorum_byzantine.py`, 20 test e 9 mutazioni. Differenza dal piano: su TLS gli scenari sono due, e oltre al riavvio c'è la morte del processo con `SIGKILL`, per l'arresto e per il voto.
-7. Aggiornamento di questo file. Le etichette restano alla 5.7.
+7. Aggiornamento di questo file. Fatto. Le etichette restano alla 5.7.
 
 **Decisioni approvate per la 5.5:** il nodo aggrega solo gli eventi inviati da lui. L'arresto blocca anche i voti e sopravvive al riavvio. Se due processi aprono lo stesso file di voti, `Node` rifiuta di partire, con un `flock` su `<file>.lock` (non affidabile su NFS).
 
 **5.6:** `CERTIFICATE_SYNC` a lotti (il transport ha un limite di 16 MB) e `reconciliation_protocol.py`. Differenziale C: 4 nodi su TCP/TLS reale con un nodo malevolo, pochi scenari. `no_double_spend` e `convergence_after_exchange` verificati come proprietà sulle run multi-nodo.
 
-**5.7:** ricreare dentro `pytest` le mutazioni di 5.1, 5.2 e 5.4, come `tests/test_quorum_differential_mutations.py` per la 5.3, così stanno nel repository e si possono rieseguire. I conteggi vecchi non vanno riusati: contano solo quelli nuovi. La §13.1 di `FORMAL-SPECIFICATION.md` e `PROOF-SCOPE.md` dicono "not implemented": finché il nodo non è collegato è vero. Etichette previste: `FORMAL (model)` per i teoremi, `EMPIRICAL (Python)` per il collegamento. La modalità storica va dichiarata senza garanzie bizantine.
+**5.7:** ricreare dentro `pytest` le mutazioni di 5.1, 5.2 e 5.4, come `tests/test_quorum_differential_mutations.py` per la 5.3, così stanno nel repository e si possono rieseguire. I conteggi vecchi non vanno riusati: contano solo quelli nuovi. La §13.1 di `FORMAL-SPECIFICATION.md` e `PROOF-SCOPE.md` dicono "not implemented": finché il nodo non è collegato è vero. Etichette previste: `FORMAL (model)` per i teoremi, `EMPIRICAL (Python)` per il collegamento. La modalità storica va dichiarata senza garanzie bizantine. Dopo la 5.5 sono superate anche la frase di `CLAUDE.md` "L'implementazione Python attuale non lo realizza ancora" e quella di `docs/PROOF-OBLIGATIONS.md` "Quorum mode is not implemented in Python": vanno corrette insieme alle etichette.
 
 ### Decisioni prese
 
@@ -103,7 +103,7 @@ Scelte tecniche da conservare:
 
 ### Limiti noti
 
-- **Non è un refinement:** il legame tra Python e Lean è `EMPIRICAL`, e oggi copre solo `QuorumReplica`, non `Node` né la rete.
+- **Non è un refinement:** il legame tra Python e Lean è `EMPIRICAL`. Il differenziale A copre `QuorumReplica`, il differenziale B un solo `Node` attraverso messaggi codificati. La rete reale non è confrontata con Lean.
 - **Liveness e totalità:** nessuna garanzia. Un mittente che firma due versioni può bloccare il proprio account, e un certificato può arrivare solo ad alcuni nodi.
 - **Convergenza condizionata:** vale solo *se* i log vengono scambiati.
 - **Crittografia idealizzata:** nessuna prova su Ed25519 o SHA-256. `auth` è astratto nel modello.
