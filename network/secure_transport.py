@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import selectors
 import socket
 import ssl
+import threading
+import time
 from dataclasses import dataclass
 
 
@@ -32,6 +35,111 @@ class TLSConfig:
     private_key: str
     ca_file: str
     server_hostname: str = "p-system"
+
+
+class DuplexTLSStream:
+    """
+    A TLS socket that one thread can read while another one writes.
+
+    An SSL object must not be in two calls at once: a reader and a writer on one
+    blocking SSLSocket corrupt the session, with errors such as BAD_RECORD_MAC. Here
+    the socket is nonblocking, each SSL call holds a lock, and the wait for the socket
+    happens outside the lock. No call can block with the lock held, so neither side
+    waits for the other.
+
+    A send has a deadline, so that a peer that does not read cannot hold the sender
+    forever. After a TimeoutError the frame may be partly written and the connection
+    is unusable: the caller has to close it. Only the writer of the frame is affected.
+
+    A frame may take several SSL calls, so concurrent writers need a lock of their own
+    above this one: PeerConnection.send holds it.
+    """
+
+    SEND_TIMEOUT = 5.0
+    # Added to the deadline, so that a long frame to a slow honest peer can finish.
+    SEND_BYTES_PER_SECOND = 1024 * 1024
+    # A close from another thread is noticed within this time.
+    WAIT_SLICE = 0.2
+    _CHUNK = 64 * 1024
+
+    def __init__(self, sock: ssl.SSLSocket) -> None:
+        self._sock = sock
+        self._io_lock = threading.Lock()
+        self._closed = False
+        sock.setblocking(False)
+
+    def _wait(self, error: ssl.SSLError, seconds: float = WAIT_SLICE) -> None:
+        events = (
+            selectors.EVENT_READ
+            if isinstance(error, ssl.SSLWantReadError)
+            else selectors.EVENT_WRITE
+        )
+
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(self._sock, events)
+                selector.select(max(0.0, min(seconds, self.WAIT_SLICE)))
+        except (OSError, ValueError) as closed:
+            # The socket was closed while waiting.
+            raise ConnectionError("CONNECTION CLOSED") from closed
+
+    def _check_open(self) -> None:
+        if self._closed:
+            raise ConnectionError("CONNECTION CLOSED")
+
+    def sendall(self, data: bytes) -> None:
+        frame = memoryview(data)
+        offset = 0
+        deadline = (
+            time.monotonic()
+            + self.SEND_TIMEOUT
+            + len(frame) / self.SEND_BYTES_PER_SECOND
+        )
+
+        while offset < len(frame):
+            self._check_open()
+            # After a "want" error OpenSSL needs the same bytes again, and the slice
+            # stays the same until a call succeeds.
+            chunk = frame[offset:offset + self._CHUNK]
+
+            try:
+                with self._io_lock:
+                    self._check_open()
+                    offset += self._sock.send(chunk)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError) as error:
+                remaining = deadline - time.monotonic()
+
+                if remaining <= 0:
+                    raise TimeoutError("PEER IS NOT READING") from error
+
+                self._wait(error, remaining)
+
+    def recv(self, size: int) -> bytes:
+        while True:
+            self._check_open()
+
+            try:
+                with self._io_lock:
+                    self._check_open()
+                    return self._sock.recv(size)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError) as error:
+                self._wait(error)
+
+    def shutdown(self, how: int) -> None:
+        # Under the lock because SSLSocket.shutdown drops the SSL object, and a call in
+        # progress must not find it gone.
+        with self._io_lock:
+            if not self._closed:
+                self._sock.shutdown(how)
+
+    def close(self) -> None:
+        with self._io_lock:
+            self._closed = True
+            self._sock.close()
+
+    def __getattr__(self, name: str):
+        # getpeercert and the like, which make no SSL call on the session.
+        return getattr(self._sock, name)
 
 
 class SecureTransport:

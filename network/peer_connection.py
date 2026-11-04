@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import threading
 
 from network.handshake import Handshake
 from network.peer import Peer
-from network.secure_transport import SecureTransport, TLSConfig
+from network.secure_transport import DuplexTLSStream, SecureTransport, TLSConfig
+
+
+def _duplex(connection):
+    """From here on a connection is read and written by different threads."""
+    if isinstance(connection, ssl.SSLSocket):
+        return DuplexTLSStream(connection)
+
+    return connection
 
 
 class PeerConnection:
@@ -72,7 +81,7 @@ class PeerConnection:
             # La connessione TLS persistente deve poter restare inattiva.
             connection.settimeout(None)
 
-            self.connection = connection
+            self.connection = _duplex(connection)
             self.remote_handshake = handshake
             self.tls_config = tls_config
 
@@ -95,7 +104,7 @@ class PeerConnection:
             port=handshake.port,
         )
 
-        peer_connection.connection = connection
+        peer_connection.connection = _duplex(connection)
         peer_connection.remote_handshake = handshake
         peer_connection.initiated_locally = False
 
@@ -104,7 +113,7 @@ class PeerConnection:
     def send(self, message: dict) -> None:
         # One frame at a time: threads writing together on a TLS socket mix their
         # frames and can crash the process. close does not take this lock, because
-        # closing is what frees a send blocked on a peer that does not read.
+        # closing also frees a send waiting on a peer that does not read.
         with self._send_lock:
             connection = self.connection
 
@@ -117,11 +126,13 @@ class PeerConnection:
             )
 
     def receive(self) -> dict:
-        if not self.connected:
+        connection = self.connection
+
+        if connection is None:
             raise ConnectionError("PEER NOT CONNECTED")
 
         return SecureTransport.receive(
-            self.connection,
+            connection,
         )
 
     def receive_loop(self, handler) -> None:
