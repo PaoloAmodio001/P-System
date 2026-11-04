@@ -247,3 +247,46 @@ def decode_certificate_sync(message) -> list[QuorumCertificate]:
         raise ValueError("INVALID QUORUM MESSAGE")
 
     return [decode_certificate(item) for item in data["certificates"]]
+
+
+def encode_certificate_sync_request(frontier: dict[str, int]) -> dict:
+    """
+    For each sender, the next nonce the node asks for. A sender that is not listed
+    is one the node knows nothing about.
+    """
+    return {
+        "type": "CERTIFICATE_SYNC_REQUEST",
+        "frontier": [
+            [sender, frontier[sender]]
+            for sender in sorted(frontier)
+        ],
+    }
+
+
+def decode_certificate_sync_request(message) -> dict[str, int]:
+    data = _message_of_type(message, "CERTIFICATE_SYNC_REQUEST", "frontier")
+
+    if type(data["frontier"]) is not list:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+    frontier = {}
+    previous = None
+
+    for entry in data["frontier"]:
+        if type(entry) is not list or len(entry) != 2:
+            raise ValueError("INVALID QUORUM MESSAGE")
+
+        sender, nonce = entry
+
+        # The rules of an event, so that a frontier holds nothing an event could not.
+        if not is_well_formed_event(Transfer(sender, sender, 0, nonce)):
+            raise ValueError("INVALID QUORUM MESSAGE")
+
+        # Strictly increasing, so that each frontier has one form on the wire.
+        if previous is not None and sender <= previous:
+            raise ValueError("INVALID QUORUM MESSAGE")
+
+        frontier[sender] = nonce
+        previous = sender
+
+    return frontier

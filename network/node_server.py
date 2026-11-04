@@ -189,6 +189,8 @@ class NodeServer:
                 daemon=True,
             ).start()
 
+            self.node._request_certificates(peer_connection)
+
         except (
             ValueError,
             ConnectionError,

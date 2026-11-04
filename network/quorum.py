@@ -27,9 +27,13 @@ from core.state import State
 from crypto.identity import Identity
 from network.message import (
     decode_certificate,
+    decode_certificate_sync,
+    decode_certificate_sync_request,
     decode_vote,
     decode_vote_request,
     encode_certificate,
+    encode_certificate_sync,
+    encode_certificate_sync_request,
     encode_vote,
     encode_vote_request,
 )
@@ -630,7 +634,21 @@ class QuorumReplica:
         self._executed_ids.add(certificate.event.event_id())
 
 
-QUORUM_MESSAGE_TYPES = frozenset({"VOTE_REQUEST", "VOTE", "CERTIFICATE"})
+QUORUM_MESSAGE_TYPES = frozenset(
+    {
+        "VOTE_REQUEST",
+        "VOTE",
+        "CERTIFICATE",
+        "CERTIFICATE_SYNC",
+        "CERTIFICATE_SYNC_REQUEST",
+    }
+)
+
+# Well under the 16 MiB of a frame. A node that needs more asks again.
+SYNC_BATCH_BYTES = 4 * 1024 * 1024
+# A sender left out is one the node asks everything about, which costs traffic and is
+# still correct. The limit keeps the request itself within a frame.
+SYNC_MAX_FRONTIER_SENDERS = 100_000
 
 
 @dataclass(frozen=True)
@@ -663,6 +681,12 @@ class QuorumDriver:
     on denial of service. Both are in memory, so a certificate still waiting is lost
     at a restart and has to be delivered again.
 
+    Synchronization adds no transition: a certificate that arrives in a batch goes
+    through the same path as one that arrives alone, and the model already allows any
+    list of inputs for each node. A node asks with the next nonce of each sender. The
+    position in the log would not do, because it differs from node to node. Nonces do,
+    because a sender's nonces execute in sequence.
+
     Not thread-safe: the caller serializes the calls. A VoteStoreError propagates,
     and then nothing is to be sent.
     """
@@ -681,6 +705,9 @@ class QuorumDriver:
             (certificate.event.sender, certificate.event.nonce): certificate
             for certificate in replica.log
         }
+        # The log by sender, in order of nonce, so that an answer does not read it all.
+        self._log_by_sender: dict[str, list[QuorumCertificate]] = {}
+        self._indexed = 0
 
     @property
     def halted(self) -> bool:
@@ -703,7 +730,107 @@ class QuorumDriver:
         if message_type == "CERTIFICATE":
             return self._handle_certificate(decode_certificate(message))
 
+        if message_type == "CERTIFICATE_SYNC":
+            return self._handle_certificate_sync(decode_certificate_sync(message))
+
+        if message_type == "CERTIFICATE_SYNC_REQUEST":
+            return self._handle_sync_request(
+                decode_certificate_sync_request(message)
+            )
+
         raise ValueError("NOT A QUORUM MESSAGE")
+
+    def sync_request(self) -> dict | None:
+        """What to ask a peer for. None once halted: there is nothing more to do."""
+        if self.halted:
+            return None
+
+        return encode_certificate_sync_request(self._frontier())
+
+    def _frontier(self) -> dict[str, int]:
+        self._refresh_log_index()
+        state = self.replica.state
+        frontier = {sender: state.nonce(sender) for sender in self._log_by_sender}
+
+        # What waits in the buffer counts as known. Otherwise a batch that cannot run
+        # yet would come back unchanged, and asking again would never reach the rest.
+        for sender in {certificate.event.sender for certificate in self._buffer.values()}:
+            nonce = frontier.get(sender, state.nonce(sender))
+
+            while (sender, nonce) in self._known:
+                nonce += 1
+
+            frontier[sender] = nonce
+
+        return dict(sorted(frontier.items())[:SYNC_MAX_FRONTIER_SENDERS])
+
+    def _refresh_log_index(self) -> None:
+        log = self.replica.log
+
+        for certificate in log[self._indexed:]:
+            self._log_by_sender.setdefault(
+                certificate.event.sender,
+                [],
+            ).append(certificate)
+
+        self._indexed = len(log)
+
+    def _handle_sync_request(self, frontier: dict[str, int]) -> DriverOutput:
+        # Also after a halt: what was executed before it is still certified.
+        self._refresh_log_index()
+        batch = []
+        size = 0
+
+        for sender in sorted(self._log_by_sender):
+            certificates = self._log_by_sender[sender]
+            start = max(0, frontier.get(sender, 0) - certificates[0].event.nonce)
+
+            for certificate in certificates[start:]:
+                size += len(json.dumps(encode_certificate(certificate)))
+
+                if batch and size > SYNC_BATCH_BYTES:
+                    return DriverOutput(replies=(encode_certificate_sync(batch),))
+
+                batch.append(certificate)
+
+        if not batch:
+            return _NOTHING
+
+        return DriverOutput(replies=(encode_certificate_sync(batch),))
+
+    def _handle_certificate_sync(
+        self,
+        certificates: list[QuorumCertificate],
+    ) -> DriverOutput:
+        learned = False
+
+        for certificate in certificates:
+            if self.halted:
+                return _NOTHING
+
+            event = certificate.event
+            known = self._known.get((event.sender, event.nonce))
+
+            # No signature to check, so that sending the log again costs nothing.
+            if known is not None and known.event.canonical() == event.canonical():
+                continue
+
+            # No honest node sends this. Stopping here means that a frame full of bad
+            # certificates costs one check of a signature.
+            if not certificate.verify(self.committee):
+                return _NOTHING
+
+            self._accept(certificate)
+            learned = True
+
+        request = self.sync_request() if learned else None
+
+        # Only after learning something: this is what ends the exchange, and a peer
+        # cannot make it last without new certificates.
+        if request is None:
+            return _NOTHING
+
+        return DriverOutput(replies=(request,))
 
     def submit(self, signed: SignedTransfer) -> DriverOutput:
         """
@@ -864,6 +991,8 @@ class QuorumConfig:
     identity: Identity
     store_path: Path
     create: bool = False
+    # Seconds between requests to each peer. None sends one only on connecting.
+    sync_interval: float | None = 5.0
 
 
 class QuorumRuntime:

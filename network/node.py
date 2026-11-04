@@ -118,8 +118,13 @@ class Node:
         self._quorum = None
         self._quorum_halt_events = []
 
+        self._sync_interval = None
+        self._sync_stop_event = threading.Event()
+        self._sync_thread = None
+
         if quorum is not None:
             self._quorum = QuorumRuntime(quorum, self._initial_state)
+            self._sync_interval = quorum.sync_interval
             self._publish_quorum_state()
 
     def _publish_quorum_state(self) -> None:
@@ -174,12 +179,26 @@ class Node:
             )
             self._reconnect_thread.start()
 
+        if self._sync_interval is not None and self._sync_thread is None:
+            self._sync_stop_event.clear()
+            self._sync_thread = threading.Thread(
+                target=self._sync_loop,
+                daemon=True,
+            )
+            self._sync_thread.start()
+
     def stop(self):
         self._reconnect_running = False
 
         if self._reconnect_thread is not None:
             self._reconnect_thread.join(timeout=1.0)
             self._reconnect_thread = None
+
+        self._sync_stop_event.set()
+
+        if self._sync_thread is not None:
+            self._sync_thread.join(timeout=1.0)
+            self._sync_thread = None
 
         # The server first: a handshake in progress could otherwise publish a
         # connection after the ones below are closed.
@@ -630,6 +649,7 @@ class Node:
             daemon=True,
         )
         thread.start()
+        self._request_certificates(connection)
 
         # Il successo è già stato registrato alla pubblicazione. Il lock
         # serializza questo controllo con la callback di disconnessione:
@@ -1207,6 +1227,28 @@ class Node:
 
         self._send_quorum_output(output, None)
         return bool(output.replies or output.broadcasts)
+
+    def _sync_loop(self) -> None:
+        while not self._sync_stop_event.wait(self._sync_interval):
+            with self._peer_connections_lock:
+                targets = list(self.peer_connections.values())
+
+            for connection in targets:
+                self._request_certificates(connection)
+
+    def _request_certificates(self, connection) -> None:
+        """Ask a peer for what this node lacks. In quorum mode only."""
+        if self._quorum is None:
+            return
+
+        with self._state_lock:
+            if self._quorum.closed:
+                return
+
+            request = self._quorum.driver.sync_request()
+
+        if request is not None:
+            self._send_quorum_reply(connection, request)
 
     def _handle_quorum_message(self, message, connection) -> None:
         # The lock covers the driver and nothing else: a peer that does not read
