@@ -583,3 +583,54 @@ def test_no_vote_can_be_created_on_a_malformed_event(name):
 def test_integer_bound_is_fixed():
     # Changing it changes which events are valid, so nodes would disagree.
     assert MAX_EVENT_INTEGER == 2**256 - 1
+
+
+# --- Types that have the right content in the wrong form -------------------------------
+
+
+class _LooksLikeARoot:
+    """Its string form is a valid root, but it is not a string."""
+
+    def __str__(self) -> str:
+        return "ab" * 32
+
+
+def test_committee_refuses_members_that_are_not_a_tuple():
+    # A list would pass every other check, and a frozen dataclass would then hold a value
+    # that anyone can change after the committee id was computed.
+    keys = sorted(identity.public_key for identity in make_committee()[1])
+    with pytest.raises(ValueError):
+        Committee(keys, 1, GENESIS.root())
+
+
+@pytest.mark.parametrize("convert", [bytearray, lambda key: key.hex()[:32]])
+def test_committee_refuses_a_member_of_the_right_length_that_is_not_bytes(convert):
+    keys = sorted(identity.public_key for identity in make_committee()[1])
+    members = tuple(convert(key) for key in keys)
+    assert all(len(member) == 32 for member in members)
+    with pytest.raises(ValueError):
+        Committee(members, 1, GENESIS.root())
+
+
+def test_committee_refuses_a_root_that_only_looks_like_one():
+    keys = tuple(sorted(identity.public_key for identity in make_committee()[1]))
+    with pytest.raises(ValueError):
+        Committee(keys, 1, _LooksLikeARoot())
+
+
+def test_create_refuses_a_mix_of_key_types_with_a_value_error():
+    # Without the check, sorted() raises TypeError on the mix, and a caller that handles
+    # invalid committees with ValueError does not see it.
+    with pytest.raises(ValueError):
+        Committee.create([b"\x01" * 32, 7, b"\x02" * 32, b"\x03" * 32], 1, GENESIS)
+
+
+def test_an_object_with_the_fields_of_an_event_is_not_an_event():
+    class Lookalike:
+        sender = "alice"
+        receiver = "bob"
+        amount = 8
+        nonce = 0
+        parents = ()
+
+    assert not is_well_formed_event(Lookalike())

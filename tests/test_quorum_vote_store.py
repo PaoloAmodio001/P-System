@@ -278,9 +278,9 @@ def test_invalid_text_is_an_error_and_records_nothing(store):
 
 def test_closed_store_refuses(path, store):
     store.close()
-    with pytest.raises(VoteStoreError):
+    with pytest.raises(VoteStoreError, match="CLOSED"):
         store.record_vote(A)
-    with pytest.raises(VoteStoreError):
+    with pytest.raises(VoteStoreError, match="CLOSED"):
         store.votes()
 
 

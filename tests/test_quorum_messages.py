@@ -618,3 +618,15 @@ def test_corrupted_messages_give_a_value_or_valueerror(name):
     # Otherwise the test would pass by refusing, or by accepting, everything.
     assert refused > 2000
     assert accepted > 50
+
+
+@pytest.mark.parametrize("field", ["public_key", "signature"])
+def test_hex_field_that_is_a_number_made_of_digits_is_a_value_error(field):
+    # JSON allows it, and its string form has the right digits. bytes.fromhex would then
+    # raise TypeError, and only ValueError means "malformed" to the caller.
+    make, decode = CODECS["VOTE_REQUEST"]
+    message = make()
+    message[field] = 10 ** (63 if field == "public_key" else 127)
+
+    with pytest.raises(ValueError):
+        decode(message)
