@@ -5,7 +5,9 @@ The model is in formal/lean/PSystem/Quorum.lean. The link between the two is
 empirical, not a refinement proof.
 """
 
+import fcntl
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import Callable
@@ -833,3 +835,86 @@ class QuorumDriver:
             and key not in self.equivocations
         ):
             self.equivocations[key] = EquivocationProof(first, signed)
+
+
+@dataclass(frozen=True)
+class QuorumConfig:
+    """What a node needs to run in quorum mode."""
+
+    committee: Committee
+    identity: Identity
+    store_path: Path
+    create: bool = False
+
+
+class QuorumRuntime:
+    """
+    Everything a node in quorum mode owns: the lock on the store, the store, the
+    replica and the driver. Node holds this and adds the network.
+
+    Only one process may use a store as a validator. Two processes would each
+    believe its own aggregation and buffer, and a node stopped through one would
+    still answer through the other. The lock is a flock on `<file>.lock`, which the
+    kernel releases when the process dies, even by SIGKILL. It is not in the store
+    because the store is allowed to be opened twice: the vote lock itself holds
+    across processes. flock is not reliable on NFS.
+
+    The replica gets no rule of its own for `auth`: the driver checks the signature
+    and the sender before an event reaches it.
+    """
+
+    def __init__(self, config: QuorumConfig, initial_state: State) -> None:
+        # Before anything on disk: a wrong genesis must leave no file behind.
+        if initial_state.root() != config.committee.genesis_root:
+            raise ValueError("INITIAL STATE IS NOT THE GENESIS OF THE COMMITTEE")
+
+        self.closed = False
+        self._lock_file = self._acquire_lock(Path(config.store_path))
+
+        try:
+            self._store = SqliteVoteStore(
+                Path(config.store_path),
+                config.committee,
+                config.identity.public_key,
+                create=config.create,
+            )
+        except BaseException:
+            os.close(self._lock_file)
+            raise
+
+        try:
+            self.replica = QuorumReplica(
+                config.identity,
+                initial_state,
+                self._store,
+                lambda _event: True,
+            )
+        except BaseException:
+            self._store.close()
+            os.close(self._lock_file)
+            raise
+
+        self.driver = QuorumDriver(self.replica)
+
+    @staticmethod
+    def _acquire_lock(path: Path) -> int:
+        try:
+            descriptor = os.open(f"{path}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as error:
+            raise VoteStoreError(f"CANNOT OPEN VOTE STORE LOCK: {error}") from error
+
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            os.close(descriptor)
+            raise VoteStoreError("VOTE STORE IS IN USE") from error
+
+        return descriptor
+
+    def close(self) -> None:
+        if self.closed:
+            return
+
+        self.closed = True
+        self._store.close()
+        os.close(self._lock_file)

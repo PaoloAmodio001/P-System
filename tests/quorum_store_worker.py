@@ -18,7 +18,11 @@ from core.attestation import Committee, QuorumCertificate, Vote  # noqa: E402
 from core.event import Transfer  # noqa: E402
 from core.state import State  # noqa: E402
 from crypto.identity import Identity  # noqa: E402
-from network.quorum import SqliteVoteStore  # noqa: E402
+from network.quorum import (  # noqa: E402
+    QuorumConfig,
+    QuorumRuntime,
+    SqliteVoteStore,
+)
 
 MEMBERS = tuple(bytes([value]) * 32 for value in (1, 2, 3, 4))
 COMMITTEE = Committee(MEMBERS, 1, State({"alice": 1000}).root())
@@ -104,6 +108,20 @@ def run_halt_mode(mode: str, path: Path) -> None:
 
 def main() -> None:
     mode, path, *rest = sys.argv[1:]
+
+    if mode == "hold-runtime":
+        QuorumRuntime(
+            QuorumConfig(
+                HALT_COMMITTEE,
+                HALT_IDENTITIES[0],
+                Path(path),
+                create=True,
+            ),
+            State(HALT_GENESIS),
+        )
+        report("READY")
+        signal.pause()
+        return
 
     if mode.startswith("halt-"):
         run_halt_mode(mode, Path(path))
