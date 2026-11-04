@@ -666,6 +666,7 @@ class QuorumDriver:
         self.replica = replica
         self.committee = replica.committee
         self.equivocations: dict[tuple[str, int], EquivocationProof] = {}
+        self.signed_events: dict[str, SignedTransfer] = {}
         self._first_signed: dict[tuple[str, int], SignedTransfer] = {}
         self._aggregating: dict[bytes, tuple[Transfer, dict[int, Vote]]] = {}
         self._buffer: dict[str, QuorumCertificate] = {}
@@ -728,6 +729,18 @@ class QuorumDriver:
             return DriverOutput(broadcasts=(encode_certificate(certificate),))
 
         return DriverOutput(broadcasts=(encode_vote_request(signed),))
+
+    def record_evidence(self, signed: SignedTransfer) -> bool:
+        """
+        Keep a signed event as evidence, with no vote and no execution. This is what
+        arrives by the paths that used to execute. True if it was kept, also after
+        a halt: a proof of equivocation is still worth having then.
+        """
+        if not self._is_authorized(signed):
+            return False
+
+        self._record_signed(signed)
+        return True
 
     def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
         if not self._is_authorized(signed):
@@ -828,6 +841,7 @@ class QuorumDriver:
     def _record_signed(self, signed: SignedTransfer) -> None:
         event = signed.transfer
         key = (event.sender, event.nonce)
+        self.signed_events.setdefault(event.event_id(), signed)
         first = self._first_signed.setdefault(key, signed)
 
         if (
