@@ -20,7 +20,7 @@ In sviluppo, stato in `docs/PROOF-OBLIGATIONS.md` (obbligo O7). L'implementazion
 
 ## Obiettivo
 
-Pochi risultati profondi e verificati, non tanti risultati superficiali. Il contributo raro che vogliamo: un sistema di trasferimenti senza consenso con proprietà di sicurezza dimostrate in Lean e collegate davvero al codice eseguibile.
+Una piattaforma per stato a proprietario singolo, in ogni settore dove questo modello basta, senza consenso e con proprietà di sicurezza dimostrate in Lean e collegate davvero al codice eseguibile. Il percorso è in `ROADMAP.md`. Pochi risultati profondi e verificati, non tanti risultati superficiali. Un percorso con consenso per gli oggetti condivisi non fa parte di questo obiettivo: è una possibile fase dopo la 1.0, non promessa.
 
 ## Regole sui teoremi Lean (obbligatorie)
 
@@ -33,7 +33,7 @@ Pochi risultati profondi e verificati, non tanti risultati superficiali. Il cont
 ## Regole sul codice Python
 
 - Ogni correzione di bug arriva con un test che fallisce prima e passa dopo.
-- `pytest -q` deve passare prima di ogni commit.
+- Prima di ogni commit e di ogni push valgono i controlli in "Regole di lavoro permanenti".
 - Non aggiungere nuovi moduli in `core/` se la funzione può stare in uno esistente. Obiettivo a lungo termine: ridurre i moduli, non aumentarli.
 - Il risultato della derivazione dello stato deve dipendere solo dall'insieme degli eventi, mai dall'ordine di arrivo.
 
@@ -42,6 +42,18 @@ Pochi risultati profondi e verificati, non tanti risultati superficiali. Il cont
 - Etichette coerenti in tutti i file (`PROOF-OBLIGATIONS.md`, `audit-reports/`, `PROOF-SCOPE.md`). Una proprietà testata ma non dimostrata si chiama EMPIRICAL o PROPERTY_TESTED, mai FORMAL.
 - Mai dichiarare tolleranza bizantina, liveness o refinement senza un teorema che lo dimostri davvero.
 - Niente affermazioni su missioni spaziali finché il nucleo non è solido.
+
+## Regole di lavoro permanenti
+
+- Tutto il codice è in Python; le dipendenze già usate, come `cryptography` e `sqlite3`, restano ammesse. Il modello formale resta in Lean.
+- Un commit per modifica logica. Prima di ogni commit: `pytest -q -m "not slow"` e `lake build` verdi.
+- Alla fine di ogni passo e prima di ogni push: `pytest -q` completo, con differenziali e mutazioni, e `lake build`, verdi sull'ultimo commit da pushare. Se il giro fallisce non si pusha: si corregge con un commit nuovo e si rilancia il giro completo.
+- Prima di un merge su `main`, in più: i differenziali con `PSYSTEM_DIFF_SEEDS=15`.
+- Push del branch di lavoro alla fine di ogni passo; mai push su `main` senza il via esplicito di Paolo.
+- Se un test differenziale trova una divergenza con Lean, non correggere: fermarsi e mostrare il caso minimo con la diagnosi.
+- Ogni test nuovo deve dimostrare di saper fallire, e le mutazioni stanno dentro `pytest`, mai solo in `/tmp`.
+- Ogni affermazione nei documenti va verificata prima di scriverla, e le etichette FORMAL, EMPIRICAL, OPEN vanno usate con rigore.
+- Alla fine di ogni passo, scrivere un riepilogo breve in `piano-bizantino.md`, così si può riprendere anche dopo un'interruzione.
 
 ## Modo di lavorare
 
