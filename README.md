@@ -51,7 +51,7 @@ Activate the Python environment and run `pytest -q`. Build the formal model with
 
 Main verified result (Lean, model level): two nodes that know the same events compute the same state, or both reject the batch, independently of arrival order, shared accounts and causal chains (`derive_knowledge_invariant`). The Python `StateDeriver` agrees with that model on 3000 random histories (`tests/test_lean_differential.py`); this is empirical evidence, not a refinement proof. See `docs/PROOF-OBLIGATIONS.md` for status labels and limits.
 
-Quorum mode (`Node(quorum=QuorumConfig(...))`, fixed committee of `n = 3f+1`) executes an event only with a certificate of `2f+1` signatures. Its safety is proved on the Lean model (`no_double_spend`); the link with Python is empirical, through differential tests, and it is not a refinement. There is no liveness guarantee, and without a committee (`quorum=None`) the code allows forks. Certificates are not synchronized between nodes yet.
+Quorum mode (`Node(quorum=QuorumConfig(...))`, fixed committee of `n = 3f+1`) executes an event only with a certificate of `2f+1` signatures. Its safety is proved on the Lean model (`no_double_spend`); the link with Python is empirical, through differential tests, and it is not a refinement. There is no liveness guarantee, and without a committee (`quorum=None`) the code allows forks.
 
 The differential tests run three seeds by default. Before merging `byzantine-quorum` into `main`, run all fifteen: `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py`.
 

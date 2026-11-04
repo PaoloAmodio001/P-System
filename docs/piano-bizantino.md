@@ -2,7 +2,7 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Sottofase 5.5 fatta. Fatte le regole permanenti in `CLAUDE.md`, il passo 1 del programma di Paolo (`ROADMAP.md`) e la parte della fase A che non ha soste. Prossimo: la 5.6, che non è iniziata. Prima di scrivere codice serve il via di Paolo sul piano qui sotto (SOSTA 1).** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è.
+**Fase A chiusa nel codice il 2026-11-05: 5.6 e 5.7 fatte. Paolo ha dato il via su tutto il 2026-11-05 («via libera su tutto, non ti fermare»): vale come via per le soste del programma. Prossimo: fase B.**
 
 ### Riepilogo dell'ultimo passo
 
@@ -19,17 +19,19 @@
 
 **Divisione della suite.** Marker `slow`, assegnato in `tests/conftest.py`: tutti i `*_mutations.py` e i file con `differential` nel nome.
 
-### Piano della 5.6, in attesa del via di Paolo (SOSTA 1)
+### 5.6 fatta, 2026-11-05
 
-Un commit per punto, e nessun nuovo teorema indispensabile: un certificato ricevuto per sincronizzazione entra nello stesso `_accept` di uno ricevuto da solo, e `no_double_spend` vale già per liste di input arbitrarie. Il modello non cambia. Questo è un argomento, e il differenziale C lo mette alla prova.
+- **Punto aperto 2 chiuso.** `DuplexTLSStream` in `network/secure_transport.py`: socket non bloccante, lock su ogni chiamata SSL, attesa fuori dal lock. Prima della correzione falliva circa un'esecuzione su tre, con `BAD_RECORD_MAC` o `RECORD_LAYER_FAILURE`. `tests/test_tls_duplex.py` usa 20 esecuzioni per questo. La causa misurata è la chiamata concorrente sullo stesso oggetto SSL, ma l'ipotesi sui ticket di TLS 1.3 non è stata verificata né serve più: il rimedio toglie la concorrenza.
+- **Invii con scadenza.** 5 secondi più un secondo per MiB. Un peer che non legge viene chiuso e il broadcast prosegue. Resta che i peer dopo di lui attendono quella scadenza: i broadcast sono sequenziali.
+- **Sincronizzazione.** `CERTIFICATE_SYNC_REQUEST` porta il prossimo nonce per mittente, `CERTIFICATE_SYNC` risponde a lotti da al massimo 4 MiB. Parte alla connessione e ogni `sync_interval` secondi. Un lotto si ferma al primo certificato invalido, e quelli già noti non richiedono verifiche.
+- **Differenziale C.** `tests/test_quorum_differential_network.py`: tre nodi onesti e un membro malevolo su TLS reale. Equivocazione, certificati falsi, frame e messaggi malformati, peer che non legge, nodo assente, riavvio, traffico casuale, due certificati in conflitto.
 
-1. **Punto aperto 2, `recv` e `send` simultanei su TLS.** Socket non bloccante e un lock per ogni chiamata SSL, con l'attesa di `select` fuori dal lock: mai due chiamate insieme sullo stesso oggetto SSL. Il prototipo ha dato 70 su 70, ma solo come sonda. Prima un test in `pytest` che fallisca sul codice attuale, ricavato da `benchmarks/tls_duplex_probe.py`. Se è intermittente lo si dichiara, con il tasso misurato.
-2. **Invii che non restano bloccati.** Oggi un peer che non legge trattiene i broadcast verso quelli dopo di lui: con un nodo malevolo è il primo attacco da provare. Scadenza su ogni invio, poi chiusura della connessione. Una coda per peer solo se la scadenza non basta.
-3. **`CERTIFICATE_SYNC` a richiesta.** Un messaggio nuovo, `CERTIFICATE_SYNC_REQUEST`, porta per ogni mittente il prossimo nonce atteso: basta, perché `_execution_failure` esegue i nonce di un mittente in sequenza, e la posizione nel log non serve, perché l'ordine cambia da nodo a nodo. La risposta è a lotti, con un limite in byte sotto i 16 MB del trasporto. Parte alla connessione e a intervalli configurabili. Le risposte passano una per una da `_accept`.
-4. **Differenziale C:** 4 nodi su TLS reale con un membro malevolo: equivocazione, firme false, frame malformati, peer che non legge, certificati trattenuti. Controlli su ogni run: `no_double_spend` tra i log, stato uguale a `StateDeriver`, stesso stato dopo la sincronizzazione. Un nodo ucciso con `SIGKILL` che recupera. Etichetta `EMPIRICAL`: non confronta con Lean, e la convergenza vale solo se la rete consegna.
-5. **Mutazioni** su ogni regola nuova, in `pytest`, poi documenti e questo file.
-
-**Cosa resta fuori:** la difesa da chi riempie il buffer con i propri eventi e le quote (fase E), la liveness come teorema (fase B).
+**Limiti della 5.6.**
+- `EMPIRICAL`, con `n = 4`, `f = 1`. Nessun confronto con Lean e nessun risultato di liveness: un nodo recupera solo se la rete consegna.
+- Il riavvio qui è `stop` e un nuovo `Node`. `SIGKILL` è provato altrove per voti e arresto, non su TLS reale.
+- Un nodo fermato non diffonde la prova di arresto: un altro nodo si ferma solo se riceve i due certificati.
+- Il costo di una richiesta cresce con il numero di mittenti, fino a 100.000: oltre, i mittenti in eccesso vengono richiesti da capo, il che costa traffico ma resta corretto.
+- Le risposte espongono il log a chiunque abbia un certificato TLS valido della CA, anche fuori dal comitato. Il comitato non è legato al certificato TLS: vedi fase E.
 
 ### Regole di lavoro in vigore
 
@@ -64,10 +66,10 @@ Un commit per punto, e nessun nuovo teorema indispensabile: un certificato ricev
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. Connessione che sopravvive a `stop`, test in `fd98fb0`. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059`, `fd98fb0` |
 | 5.5 | Fatta | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node`. Punto 5: differenziale B. Punto 6: test di comportamento | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4`, `b166ccb`, `5a7def4`, `520b581` |
-| 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
+| 5.6 | Fatta | Duplex TLS, invii con scadenza, sincronizzazione, differenziale C | `3e5ca59`, `af5b30c` e seguente |
 | Fase A, parte senza soste | Fatta | Integrazione continua, correzione dei documenti superati | vedi `git log` |
-| 5.7 | In parte | Fatte: mutazioni di 5.1, 5.2 e 5.4 in `pytest`. Da fare: revisione finale di documenti ed etichette | vedi `git log` |
-| 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
+| 5.7 | Fatta | Mutazioni di 5.1, 5.2 e 5.4 in `pytest`, documenti ed etichette | vedi `git log` |
+| 6 | Fatta | Differenziali A e B avversari sul modello, C su TLS reale | vedi sopra |
 
 **Ultima verifica:** `pytest -q` 1537 passati, `lake build` passa. Dopo quel giro è cambiata una sola mutazione in `tests/test_quorum_byzantine_mutations.py`, e quel file è stato rieseguito da solo: 10 passati. Differenziale A con 15 seed su `d7292db`, prima del punto 4: 45000 casi, nessuna differenza. Differenziale B con 15 seed: 7500 casi, nessuna differenza. Entrambi vanno ripetuti prima del merge. Con `quorum=None` il nodo ammette ancora il fork; con `quorum=` il fork è escluso nei test, che passano senza socket, tranne due scenari su TLS reale senza nodo malevolo.
 
@@ -159,9 +161,7 @@ Scelte tecniche da conservare:
   - le 9 mutazioni escludono i test su TLS e quelli con il processo separato, che quindi nessuna mutazione controlla. Il motivo per cui ogni mutazione muore è stato letto una volta a mano: `pytest` controlla solo che un test fallisca.
 - **`Node` in modalità quorum:**
   - su TLS reale ci sono solo due scenari a 4 nodi, con messaggi piccoli e nessun nodo malevolo: tutti gli altri test scambiano messaggi codificati senza socket. Lo scenario con un nodo malevolo resta nella 5.6;
-  - il punto aperto 2 pesa di più qui, perché questa modalità genera traffico in entrambe le direzioni sulla stessa connessione;
-  - i broadcast partono uno dopo l'altro: un peer che non legge trattiene quelli dopo di lui, e un certificato può non arrivare. Riguarda la liveness, che non è dichiarata;
-  - `CERTIFICATE_SYNC` non è ancora collegato: un nodo rimasto indietro non recupera finché non arriva la 5.6;
+  - i broadcast partono uno dopo l'altro: un peer che non legge trattiene quelli dopo di lui fino alla sua scadenza. Riguarda la liveness, che non è dichiarata;
   - le prove in `signed_events` ed `equivocations` sono in memoria e si perdono al riavvio. Voti, log e arresto restano su disco;
   - un nodo fermato con `stop` non riparte: per ripartire si crea un nuovo `Node`, che ricostruisce dal log;
   - `flock` non è affidabile su NFS.
@@ -217,8 +217,8 @@ Tutto il resto del branch è aggiunto dietro `quorum=`. `network/message.py` ha 
 
 ### Punti aperti
 
-1. **Questo file** va tolto o spostato in `docs/` prima del merge su `main`.
-2. **`recv` e `send` simultanei sullo stesso `SSLSocket`: non corretto, deciso da Paolo di affrontarlo nella 5.6.** Il lock di `0acac14` copre solo gli invii tra loro. Misure su TLS reale, con il lock attivo:
+1. **Questo file** è stato spostato in `docs/`.
+2. **`recv` e `send` simultanei sullo stesso `SSLSocket`: chiuso nella 5.6, con `DuplexTLSStream`. Misure di allora:** Il lock di `0acac14` copre solo gli invii tra loro. Misure su TLS reale, con il lock attivo:
    - se i due lati trasmettono subito dopo l'handshake TLS: su 60 esecuzioni, 12 danno `BAD_RECORD_MAC` o `RECORD_LAYER_FAILURE` e 5 si bloccano;
    - dopo un primo scambio di messaggi: 68 su 68 pulite;
    - attraverso `Node`, che fa l'handshake applicativo prima di avviare la lettura: 40 su 40 pulite, 20 sul branch e 20 su `origin/main`, con messaggi piccoli.

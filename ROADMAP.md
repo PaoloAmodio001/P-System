@@ -1,6 +1,6 @@
 # P-System: dal prototipo di ricerca alla piattaforma
 
-Del 2026-11-04. Punto di partenza: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
+Del 2026-11-04, aggiornata il 2026-11-05. Punto di partenza: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
 
 Niente di questo documento è un risultato. I teoremi elencati sono **da dimostrare**, e i nomi sono provvisori. Le stime di tempo sono giudizi a occhio, non misure: valgono come ordine di grandezza, in mesi-persona a tempo pieno.
 
@@ -8,19 +8,19 @@ Niente di questo documento è un risultato. I teoremi elencati sono **da dimostr
 
 - **Dimostrato sul modello:** `no_double_spend`, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, con comitato fisso e crittografia idealizzata.
 - **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`. Non è un refinement.
-- **Non esiste:** teorema di liveness, cambio di comitato, sincronizzazione (5.6), container, metriche, audit esterni, utenti.
+- **Non esiste:** teorema di liveness, cambio di comitato, container, metriche, audit esterni, utenti.
 - **Integrazione continua minima:** `.github/workflows/ci.yml`, aggiunta il 2026-11-04.
 
 ## Stato rispetto agli ambiti di `CLAUDE.md`, sezione 3.1
 
-Valutazione del 2026-11-04, dalla lettura del repository e dai controlli indicati in `piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**, e la colonna «Cosa manca» dice perché. Le fasi sono quelle qui sotto.
+Valutazione del 2026-11-04, dalla lettura del repository e dai controlli indicati in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**, e la colonna «Cosa manca» dice perché. Le fasi sono quelle qui sotto.
 
 | Ambito | Stato | Cosa manca | Fase |
 |---|---|---|---|
 | Core e motore di esecuzione | Modalità quorum funzionante con comitato fisso; un solo tipo di evento (trasferimento) | Oggetti e asset multipli. `core/` ha 75 file, molti legati alla modalità storica: da valutare, non ancora ridotti | C |
 | Sicurezza | Ed25519, TLS 1.3 con autenticazione reciproca, blocco del voto durevole | Quote contro DoS, HSM o KMS, modello delle minacce, audit esterni. Dipendenze non bloccate | E |
-| Networking | Connessioni TLS persistenti e riconnessione | Punto aperto 2 (`recv` e `send` simultanei su TLS), sincronizzazione dei certificati, invii che non restino bloccati da un peer che non legge | A (5.6) |
-| Tolleranza ai guasti | `FORMAL (model)` per la sicurezza con al massimo `f` difettosi; `EMPIRICAL` sul codice | Prova su rete reale con un membro malevolo. Liveness, ripartenza dopo l'arresto | A, B |
+| Networking | Connessioni TLS persistenti, riconnessione, invii con scadenza, sincronizzazione dei certificati | Un peer che non legge rallenta ancora i broadcast fino alla sua scadenza | E |
+| Tolleranza ai guasti | `FORMAL (model)` per la sicurezza con al massimo `f` difettosi; `EMPIRICAL` sul codice, anche su TLS reale con un membro malevolo | Liveness, ripartenza dopo l'arresto | B |
 | Formal verification | 104 teoremi, nessun assioma oltre ai tre standard | Epoche, soglie configurabili, liveness. Il legame con Python non è un refinement | B |
 | Prestazioni | Script in `benchmarks/`, nessun risultato pubblicato | Profilazione, misure riproducibili, voti a gruppi | D |
 | Scalabilità | Laboratori in `benchmarks/`, nessun risultato pubblicato | Misure al variare di `n` e del carico. Solo `n = 4` nelle prove a 4 nodi su TLS | D |

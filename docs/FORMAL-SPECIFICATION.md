@@ -264,10 +264,9 @@ validator observed first.
 
 ### 13.1 Quorum mode
 
-Status: implemented in Python behind `Node(quorum=...)`, except for the
-synchronization of certificates (`CERTIFICATE_SYNC` is defined as a message but
-no node sends it yet). Proof status: obligation O7 in
-`docs/PROOF-OBLIGATIONS.md`, with an empirical link to the code, not a refinement.
+Status: implemented in Python behind `Node(quorum=...)`. Proof status: obligation
+O7 in `docs/PROOF-OBLIGATIONS.md`, with an empirical link to the code, not a
+refinement.
 
 A fixed committee of `n = 3f+1` validators, known to all nodes, of which
 at most `f` are faulty.
@@ -299,8 +298,10 @@ at most `f` are faulty.
   its natural numbers have no upper bound. So Python refuses more than the model
   does, never less. A zero amount or a transfer to self is well formed, and is
   refused at execution, as in the model.
-- Messages are `VOTE_REQUEST`, `VOTE`, `CERTIFICATE` and `CERTIFICATE_SYNC`
-  (`network/message.py`). A decoder refuses unknown or missing fields and any
+- Messages are `VOTE_REQUEST`, `VOTE`, `CERTIFICATE`, `CERTIFICATE_SYNC` and
+  `CERTIFICATE_SYNC_REQUEST` (`network/message.py`). The last one carries the next
+  nonce of each sender, and a certificate received in a batch is handled as if it
+  had arrived alone. A decoder refuses unknown or missing fields and any
   value not in its one accepted form, such as uppercase hex. It sorts parents, as
   the canonical form does. It does not judge meaning: a certificate of the right
   form with too few or wrong signatures decodes, and `verify` refuses it.

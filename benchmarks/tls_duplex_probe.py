@@ -1,8 +1,8 @@
 """Measure a thread in recv and a thread in send on one TLS socket.
 
-This is a measurement for the open point in piano-bizantino.md, not a test: the
-failures depend on timing, and the problem is still open. Send against send is
-fixed, and tested in tests/test_peer_connection_send.py.
+This is a measurement of the problem behind DuplexTLSStream, not a test: the failures
+depend on timing. The test is tests/test_tls_duplex.py. The scenarios that use a bare
+SSLSocket still show the old failure, which is the point of keeping them.
 
 Each run is a separate process, because the outcome can be a crash or a hang.
 

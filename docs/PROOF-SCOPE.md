@@ -28,4 +28,6 @@ Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is
 
 O7 covers safety only, for a fixed committee of `n = 3f+1` validators, in the Lean model. It does not establish liveness, totality, committee reconfiguration, recovery from lost votes, or the security of Ed25519 and SHA-256, and it does not cover observers: nodes outside the committee that only execute certificates.
 
-Not done yet in quorum mode: synchronization of certificates, so a node left behind does not catch up by itself, and a test on a real network with a faulty member (phase 5.6 in `piano-bizantino.md`).
+Certificates are synchronized between nodes (`CERTIFICATE_SYNC_REQUEST` and `CERTIFICATE_SYNC`). A certificate that arrives this way goes through the same path as one that arrives alone, so the model has no new transition. `tests/test_quorum_differential_network.py` runs three honest nodes and one faulty member on real TLS and checks `no_double_spend`, `state_is_derive` and convergence as properties of each run: this is `EMPIRICAL`, for `n = 4`, `f = 1`, on those scenarios. A node catches up only if the network delivers, so this is not a liveness result.
+
+The historical mode (`quorum=None`) has no Byzantine guarantee of any kind.

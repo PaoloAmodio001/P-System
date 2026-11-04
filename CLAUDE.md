@@ -25,7 +25,7 @@ Questi riferimenti costituiscono materiale di confronto scientifico, non prove d
 
 Lo sviluppo del modello a quorum è tracciato in `docs/PROOF-OBLIGATIONS.md`, obbligo O7.
 
-L'implementazione Python attuale non realizza ancora completamente questo modello e ammette fork tra nodi onesti, come evidenziato da `tests/test_p15_byzantine_safety.py`.
+La modalità quorum è implementata in Python dietro `Node(quorum=...)`, con un legame `EMPIRICAL` con il modello. La modalità storica (`quorum=None`) ammette fork tra nodi onesti, come evidenziato da `tests/test_p15_byzantine_safety.py`.
 
 Le seguenti decisioni costituiscono vincoli architetturali:
 
@@ -121,7 +121,7 @@ Mantenere coerenza terminologica e documentale in tutti i file, in particolare:
 
 - `docs/PROOF-OBLIGATIONS.md`
 - `audit-reports/`
-- `PROOF-SCOPE.md`
+- `docs/PROOF-SCOPE.md`
 - `ROADMAP.md`
 
 Utilizzare rigorosamente le seguenti etichette:
@@ -151,7 +151,7 @@ Non attribuire a P-System applicazioni industriali o spaziali già operative qua
 - Se un test differenziale evidenzia una divergenza rispetto a Lean, interrompere il processo e presentare il caso minimo con relativa diagnosi. Non correggere arbitrariamente il risultato per far passare il test.
 - Ogni nuovo test deve dimostrare di essere in grado di rilevare il problema che intende prevenire.
 - I test mutazionali devono essere integrati nella suite `pytest`, non conservati soltanto in `/tmp`.
-- Alla fine di ogni fase aggiornare `piano-bizantino.md` con un riepilogo sintetico, indicando modifiche, risultati, problemi e attività ancora aperte.
+- Alla fine di ogni fase aggiornare `docs/piano-bizantino.md` con un riepilogo sintetico, indicando modifiche, risultati, problemi e attività ancora aperte.
 
 ## 8. Strategia di sviluppo e completamento
 
@@ -240,7 +240,7 @@ Non effettuare push o merge su `main` senza autorizzazione esplicita di Paolo.
 - Non eliminare funzionalità esistenti senza averne valutato le conseguenze.
 - Non inventare risultati, test superati o proprietà dimostrate.
 - Segnalare tempestivamente problemi, limitazioni e dipendenze esterne.
-- Mantenere aggiornato `piano-bizantino.md`.
+- Mantenere aggiornato `docs/piano-bizantino.md`.
 - Non interrompere il lavoro per attività secondarie quando esistono componenti fondamentali ancora incompleti.
 - Non dichiarare completata una fase senza averne verificato i criteri di uscita.
 
