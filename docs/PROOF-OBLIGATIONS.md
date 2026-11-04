@@ -176,6 +176,32 @@ properties of the formula, not a liveness result.
 A Lean theorem establishes a property of the formal model only. It does
 not establish that the Python implementation refines that model.
 
+## Thresholds and epochs (phase B of `ROADMAP.md`)
+
+Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacuity`.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `no_double_spend_q` | `no_double_spend` for any quorum `q`, under `n + \|F\| < 2q` | FORMAL (model) |
+| `no_double_spend_5f1` | The instance `n = 5f+1`, `q = 4f+1` | FORMAL (model) |
+| `conflict_identifies_faulty` | Two valid certificates in conflict name at least `2q - n` common signers, and each is faulty. No bound on the faulty is assumed | FORMAL (model) |
+| `split_lock_ambiguous` | With `n = 4`, `q = 3`, no rule on the reports alone can return the certified event in every history | FORMAL (model), for that instance |
+| `unlock_safe_5f1` | With `n = 5f+1`, `q = 4f+1` and `4f+1` reports, a certified event has at least `2f+1` reports and any other at most `2f` | FORMAL (model), for one `(sender, nonce)`; no protocol uses it yet |
+| `report_holds_every_vote` | A report holds every vote of its validator, also those requested after the close | FORMAL (model) |
+| `closure_preserves_certified` | What has a certificate in an epoch is in the locks of the next | FORMAL (model) |
+| `locks_carried` | A lock stays in every later epoch | FORMAL (model) |
+| `no_double_spend_across_epochs` | No two different events with one `(sender, nonce)` have a certificate, in any two epochs | FORMAL (model) |
+| `closure_unique` | At most one certified closure for each epoch, as an event of governance with the epoch as nonce | FORMAL (model) |
+| `chain_satisfies_hypotheses`, `fork_without_carrying_locks`, `equivocation_run_6_satisfies_hypotheses`, `unlock_safe_witness` | The hypotheses can hold together, and without carrying the locks there is a fork | FORMAL (witnesses, one instance each) |
+
+Hypotheses that remain, in `no_double_spend_across_epochs`:
+
+- each committee respects its own bound on faulty validators (`Epoch.safe`): governance chooses
+  the committee, so this is an assumption of trust that no theorem removes;
+- `Certified` says that an honest signer really voted, which is what `Unforgeable` says;
+- `ChainValid` says that the reports reach the locks of the next epoch. Nothing says that a
+  closure is ever reached: this is safety, not liveness.
+
 ## Limitations of the current model
 
 - `ApplyEvent` does not check `Executable` (subtraction truncates at zero).
