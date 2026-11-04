@@ -2,7 +2,7 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**In corso: sottofase 5.5, punto 1 fatto. Prossimo passo: il punto 2, solo dopo il via di Paolo e la decisione sul punto aperto 2.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**In corso: sottofase 5.5, punto 1 fatto. Prossimo passo: il punto 2, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
 
 ### Regole di lavoro in vigore
 
@@ -42,7 +42,7 @@
 | 5.7 | Da fare | Documenti ed etichette | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
-**Ultima verifica:** `pytest -q` 1169 passati, `lake build` passa. I 15 seed sono passati con la validazione attiva (45000 casi, nessuna differenza), prima dei messaggi e delle correzioni di rete, che non toccano il differenziale. `Node` non usa ancora né la replica né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
+**Ultima verifica:** `pytest -q` 1169 passati, `lake build` passa, entrambi dopo aver ricostruito da zero `.lake/build` e i `.pyc`. I 15 seed sono passati con la validazione attiva (45000 casi, nessuna differenza), prima dei messaggi e delle correzioni di rete, che non toccano il differenziale. `Node` non usa ancora né la replica né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
 
 ### Cosa resta da fare
 
@@ -116,7 +116,7 @@ Scelte tecniche da conservare:
   - i voti sono confrontati come insieme, quindi la restituzione della firma è coperta altrove;
   - le mutazioni girano su un solo seed;
   - il driver Lean è controllato solo da vettori a mano.
-- **Mutazioni di 5.1, 5.2 e 5.4:** eseguite solo nello scratchpad (rilevate 25, 23 e 45). Quegli script stanno in `/tmp` e non sono nel repo.
+- **Mutazioni di 5.1, 5.2 e 5.4:** eseguite solo nello scratchpad (rilevate 25, 23 e 45). Quegli script stavano in `/tmp`, che è un `tmpfs`, e si sono persi con il riavvio del 2026-11-04: vedi l'incidente qui sotto. Restano i soli conteggi riportati qui, che non si possono più rieseguire.
 - **DoS:** nessuna difesa da nonce arbitrariamente alti o da flussi di firme da verificare.
 - **Connessioni mute:** il timeout di 5 secondi sull'intero handshake e il limite di 64 handshake simultanei riducono il problema ma non lo eliminano. Chi tiene occupati tutti i posti, riaprendo le connessioni quando scadono, non ha bisogno di un certificato e continua a tenere fuori i peer onesti. Un test lo dichiara.
 - **Costo:** un `fsync` per voto, circa 350-400 voti al secondo su ext4.
@@ -124,12 +124,38 @@ Scelte tecniche da conservare:
 ### Punti aperti
 
 1. **Questo file** va tolto o spostato in `docs/` prima del merge su `main`.
-2. **`recv` e `send` simultanei sullo stesso `SSLSocket`: non corretto, da decidere.** Il lock di `0acac14` copre solo gli invii tra loro. Misure su TLS reale, con il lock attivo:
+2. **`recv` e `send` simultanei sullo stesso `SSLSocket`: non corretto, deciso da Paolo di affrontarlo nella 5.6.** Il lock di `0acac14` copre solo gli invii tra loro. Misure su TLS reale, con il lock attivo:
    - se i due lati trasmettono subito dopo l'handshake TLS: su 60 esecuzioni, 12 danno `BAD_RECORD_MAC` o `RECORD_LAYER_FAILURE` e 5 si bloccano;
    - dopo un primo scambio di messaggi: 68 su 68 pulite;
    - attraverso `Node`, che fa l'handshake applicativo prima di avviare la lettura: 40 su 40 pulite, 20 sul branch e 20 su `origin/main`, con messaggi piccoli.
 
    Non è una garanzia: la causa della finestra iniziale non è stata accertata (ipotesi: i ticket di TLS 1.3). Un prototipo con socket non bloccante e un lock su ogni chiamata SSL ha dato 70 su 70, ma solo come sonda, fuori dal repo.
+
+### Incidente del 2026-11-04: arresto della macchina
+
+**Cosa è successo.** La macchina si è fermata verso le 17:39, subito dopo il push di `ef9b3dd`, ed è ripartita alle 17:40. La causa non è accertata. Nove oggetti git scritti in quel momento sono rimasti vuoti, HEAD compreso (`bad object HEAD`), e tre reflog e il transcript della sessione avevano una coda di byte nulli.
+
+**Riparazione.**
+
+- Copia di `.git` prima di ogni modifica, in un `tmpfs`: non sopravvive a un riavvio.
+- I nove oggetti riscritti da un clone di GitHub con `git hash-object -w`, controllando che l'hash coincidesse. GitHub aveva `ef9b3dd`, quindi nessun oggetto era solo locale.
+- Tolti i byte nulli in coda ai tre reflog. Le voci di `5322059` e `ef9b3dd` non ci sono più nel reflog; i commit sì.
+
+**Verifica.**
+
+- `git fsck --full`: uscita 0, nessun errore. Restano 8 oggetti pendenti, cioè non raggiungibili da un ref, che non sono un danno.
+- File tracciati: 347, con il contenuto ricalcolato e confrontato con HEAD, senza fidarsi dell'indice. Nessuna differenza, nessuno mancante, nessun byte nullo. I 5 file vuoti sono `__init__.py`, vuoti anche in HEAD.
+- File non tracciati e non ignorati: nessuno.
+- File ignorati (`audit-reports/`, `backups/`, `.venv/`, cache): nessun byte nullo sospetto, nessun file di lavoro modificato vicino all'arresto. `pip check` passa. Sui file binari ignorati il controllo è solo su vuoti e code nulle: un danno interno non si vedrebbe.
+- Cache: `.lake/build` e le cartelle `__pycache__` fuori da `.venv` cancellate e ricostruite. I 32 artefatti Lean di `lake build` sono identici byte per byte a quelli precedenti, quindi non erano danneggiati. Gli altri 62 file erano di moduli già cancellati dal repo, o degli eseguibili dei driver che i test ricompilano.
+
+**Cosa si è perso.**
+
+- Nel repo, nulla di rilevabile. Non si può escludere una modifica fatta nell'ultimo istante e mai arrivata su disco: non lascia tracce.
+- In `backups/`, per un errore di Claude durante la ricostruzione delle cache: la cancellazione dei `__pycache__` ha percorso anche `backups/final-audit-artifacts-20261004-162853` e `backups/signed-transfer`. Quest'ultima conteneva solo quello ed è rimasta vuota. Erano bytecode non tracciati, senza copia: i file sorgente e i log accanto non sono stati toccati, ma l'elenco di ciò che è stato cancellato non è recuperabile.
+- In `/tmp`, tutto: gli script di mutazione di 5.1, 5.2 e 5.4, `probe_open_points.py` e lo schizzo `QuorumSketch.lean`, ormai superato. Le mutazioni della 5.3 sono al sicuro in `tests/test_quorum_differential_mutations.py`.
+
+**Da ricordare.** Quello che deve durare non va in `/tmp`, compreso lo scratchpad: anche le sonde del punto aperto 2 sono lì.
 
 ---
 
