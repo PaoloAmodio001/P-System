@@ -35,13 +35,13 @@
 | 5.3 | Fatta | `QuorumReplica`, differenziale A, 31 mutazioni in `pytest` | `da4b340`, `18d6279`, `828c3c0`, documento `eb5707b` |
 | 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
-| Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059` |
+| Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. Connessione che sopravvive a `stop`, test in `fd98fb0`. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059`, `fd98fb0` |
 | **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node` | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
-**Ultima verifica:** `pytest -q` 1473 passati, `lake build` passa. Differenziale con `PSYSTEM_DIFF_SEEDS=15` su `d7292db`, cioè con il punto 3 e prima del punto 4: 15 seed passati, 45000 casi, nessuna differenza. Il punto 4 non cambia ciò che la replica decide, ma va ripetuto prima del merge. Con `quorum=None` il nodo si comporta come prima e ammette ancora il fork; con `quorum=` il fork è escluso nei test, che però non passano ancora da TLS reale e non sono confrontati con Lean.
+**Ultima verifica:** `pytest -q` 1475 passati, `lake build` passa. Differenziale con `PSYSTEM_DIFF_SEEDS=15` su `d7292db`, cioè con il punto 3 e prima del punto 4: 15 seed passati, 45000 casi, nessuna differenza. Il punto 4 non cambia ciò che la replica decide, ma va ripetuto prima del merge. Con `quorum=None` il nodo si comporta come prima e ammette ancora il fork; con `quorum=` il fork è escluso nei test, che però non passano ancora da TLS reale e non sono confrontati con Lean.
 
 ### Cosa resta da fare
 
@@ -69,7 +69,7 @@
 1. Lock di invio in `PeerConnection.send`. Fatto.
 2. Prova di arresto durevole in `SqliteVoteStore`, schema v2: salva i due certificati in conflitto e li riverifica all'apertura. Fatto. Il controllo sui due certificati sta in `_is_halt_proof`, che il punto 3 può riusare.
 3. `QuorumDriver` in `network/quorum.py`, senza rete né `Node`: riceve input e restituisce i messaggi da inviare. Un certificato invalido non ferma mai il nodo. Il buffer dei certificati non ha limite, perché un limite farebbe dipendere il risultato dall'ordine di arrivo. Fatto. La replica del nodo riceve `auth` da chi la crea, ma è il driver a controllare firma e `sender`: il punto 4 deve deciderne il collegamento.
-4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma. Fatto. In `node.py` l'unica riga cambiata del percorso storico è `known`, che con `quorum=None` aggiunge una lista vuota. Il resto sono aggiunte, e nessun test esistente è stato modificato.
+4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma. Fatto. **Solo nei commit del punto 4** (da `50bb48e` a `d119fd4`) l'unica riga cambiata di `node.py` è `known`, che con `quorum=None` aggiunge una lista vuota, e nessun test esistente è stato modificato. Questo non significa che il percorso storico sia identico a `main`: vedi la sezione sulle correzioni di rete.
 5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica.
 6. Test di comportamento: P15 in modalità quorum, voti divisi, permutazioni, riavvio dopo l'arresto, un test breve su TLS reale.
 7. Aggiornamento di questo file. Le etichette restano alla 5.7.
@@ -137,6 +137,31 @@ Scelte tecniche da conservare:
 - **DoS:** nessuna difesa da nonce arbitrariamente alti o da flussi di firme da verificare.
 - **Connessioni mute:** il timeout di 5 secondi sull'intero handshake e il limite di 64 handshake simultanei riducono il problema ma non lo eliminano. Chi tiene occupati tutti i posti, riaprendo le connessioni quando scadono, non ha bisogno di un certificato e continua a tenere fuori i peer onesti. Un test lo dichiara.
 - **Costo:** un `fsync` per voto, circa 350-400 voti al secondo su ext4.
+
+### Correzioni di rete da portare su `main`
+
+Non ancora portate. La regola qui sopra vieta di pushare su `main` prima della fine della fase 5, quindi serve un'eccezione di Paolo.
+
+**Cherry-pick, in quest'ordine:** `cd77718 7f29574 9551c5f 5322059 0acac14 fd98fb0`. Provati in un clone su `origin/main` (`18bc871`) e su `main` locale (`1139303`): nessun conflitto, nessun codice di quorum, 483 test passati su entrambe le basi. La base giusta è `origin/main`, perché `main` locale è 11 commit indietro.
+
+| Commit | Bug su `main` | Chi può farlo |
+|---|---|---|
+| `cd77718` | Un frame malformato uccide il thread di lettura, e la connessione resta contata come attiva | Un peer con certificato |
+| `7f29574` | JSON annidato nell'handshake: il thread che accetta muore, e il nodo non accetta più peer | Un peer con certificato |
+| `9551c5f` | Una connessione TCP muta blocca tutti gli altri peer. Contiene anche il nuovo ordine di `stop` | Chiunque raggiunga la porta |
+| `5322059` | Risposta annidata all'handshake: il thread di riconnessione muore | Un peer con certificato |
+| `0acac14` | Invii concorrenti: frame mescolati su socket, e su TLS sessione corrotta o processo terminato | Thread del nodo stesso, non provato attraverso `Node` |
+| `fd98fb0` | Solo il test: una connessione sopravvive a `stop`, e il nodo fermato continua a eseguire. La correzione è in `9551c5f` | Un peer con certificato che finisce l'handshake mentre il nodo si ferma |
+
+**Perché `9551c5f` ha spostato `self._server_controller.stop()`.** Il vecchio `Node.stop` chiudeva le connessioni trovate e solo dopo fermava il server: un handshake in corso poteva pubblicare una connessione che nessuno avrebbe più chiuso. Ora il server si ferma prima, dopo il thread di riconnessione e non all'inizio assoluto di `stop`. Misurato su `origin/main`: dopo `stop` la connessione è ancora registrata, e un evento firmato inviato su di essa porta `bob` da 0 a 8. Sul branch no. Lo spostamento era arrivato senza un test proprio, e il suo messaggio di commit parlava di handshake: lo copre `fd98fb0`.
+
+**Con `quorum=None` il branch non è identico a `origin/main`.** Queste correzioni cambiano il percorso storico, per scelta:
+
+- `network/peer_connection.py`: chiusura su frame malformato in `receive_loop`, lock su `send`;
+- `network/node_server.py`: un thread e una scadenza per ogni handshake, limite di 64 simultanei, `stop` che termina quelli in corso;
+- `network/node.py`: ordine di `stop`, e `open_peer_connection` che cattura `ValueError` e `RecursionError` sulla risposta all'handshake.
+
+Tutto il resto del branch è aggiunto dietro `quorum=`. `network/message.py` ha solo decoder nuovi.
 
 ### Punti aperti
 
