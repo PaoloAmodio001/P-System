@@ -35,6 +35,7 @@
 | 5.3 | Fatta | `QuorumReplica`, differenziale A, 31 mutazioni in `pytest` | `da4b340`, `18d6279`, `828c3c0`, documento `eb5707b` |
 | 5.4 | Fatta | Validazione degli eventi e messaggi | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
+| Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059` |
 | **5.5** | **Da fare, la prossima** | Integrazione in `Node`, differenziale B | |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette | |
@@ -106,13 +107,12 @@ Scelte tecniche da conservare:
   - il driver Lean è controllato solo da vettori a mano.
 - **Mutazioni di 5.1, 5.2 e 5.4:** eseguite solo nello scratchpad (rilevate 25, 23 e 45). Quegli script stanno in `/tmp` e non sono nel repo.
 - **DoS:** nessuna difesa da nonce arbitrariamente alti o da flussi di firme da verificare.
+- **Connessioni mute:** il timeout di 5 secondi sull'intero handshake e il limite di 64 handshake simultanei riducono il problema ma non lo eliminano. Chi tiene occupati tutti i posti, riaprendo le connessioni quando scadono, non ha bisogno di un certificato e continua a tenere fuori i peer onesti. Un test lo dichiara.
 - **Costo:** un `fsync` per voto, circa 350-400 voti al secondo su ext4.
 
 ### Punti aperti
 
-1. **Bug da correggere, trovato il 4 novembre:** in `network/node_server.py`, `_serve` non cattura `RecursionError`. Un frame con JSON annidato in profondità durante l'handshake uccide il thread che accetta le connessioni, e il nodo non accetta più peer. Verificato con una prova che aggira TLS. Nella realtà serve un certificato valido, perché TLS è mutuo, ma un validatore malevolo ce l'ha. Non corretto. Il file non è stato modificato sul branch, quindi il bug è anche su `main`. Va deciso se correggerlo prima della 5.5: consigliato, con un test che fallisce prima.
-2. **Handshake bloccante:** la stessa `_serve` legge l'handshake nel thread che accetta. Da verificare se un peer che non invia nulla la blocca. Non ancora provato.
-3. **Questo file** va tolto o spostato in `docs/` prima del merge su `main`.
+1. **Questo file** va tolto o spostato in `docs/` prima del merge su `main`.
 
 ---
 
