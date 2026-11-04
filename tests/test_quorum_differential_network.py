@@ -460,6 +460,23 @@ def test_with_no_intervals_the_node_that_connects_asks_at_once(make_nodes):
     assert wait_until(lambda: behind.local_events == [event], seconds=5)
 
 
+def test_connecting_asks_before_connect_peer_returns(make_nodes, monkeypatch):
+    # On a real network the peer usually connects back and that connection asks too, which
+    # hides a missing request on this side. So this looks at the call itself.
+    ahead, behind, _ = _node_ahead_and_one_behind(make_nodes)
+    asked = []
+    real = Node._request_certificates
+
+    def spy(self, connection):
+        asked.append((self.node_id, connection.initiated_locally))
+        real(self, connection)
+
+    monkeypatch.setattr(Node, "_request_certificates", spy)
+    host, port = ahead.address()
+    assert behind.connect_peer(Peer(node_id=ahead.node_id, host=host, port=port))
+    assert (behind.node_id, True) in asked
+
+
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_with_no_intervals_the_node_connected_to_asks_at_once(make_nodes):
     ahead, behind, event = _node_ahead_and_one_behind(make_nodes)
