@@ -5,7 +5,6 @@ The model is in formal/lean/PSystem/Quorum.lean. The link between the two is
 empirical, not a refinement proof.
 """
 
-import fcntl
 import json
 import os
 import sqlite3
@@ -912,6 +911,10 @@ class QuorumRuntime:
 
     @staticmethod
     def _acquire_lock(path: Path) -> int:
+        # Here and not at the top: node.py imports this module, and a node with
+        # quorum=None must not need a module that only POSIX systems have.
+        import fcntl
+
         try:
             descriptor = os.open(f"{path}.lock", os.O_RDWR | os.O_CREAT, 0o600)
         except OSError as error:

@@ -37,6 +37,7 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
+from network.quorum import QuorumConfig, QuorumRuntime
 
 
 class Node:
@@ -50,6 +51,7 @@ class Node:
         host: str = "127.0.0.1",
         port: int = 0,
         relevance_graph: RelevanceGraph | None = None,
+        quorum: QuorumConfig | None = None,
     ):
         self.node_id = node_id
         self.tls_config = get_node_tls_config(node_id)
@@ -110,9 +112,45 @@ class Node:
             tls_config=self.tls_config,
         )
 
+        # Quorum mode: docs/FORMAL-SPECIFICATION.md, section 13.1. With None nothing
+        # below this point changes what the node does. The rules are in
+        # network/quorum.py, and here is only how they meet the network.
+        self._quorum = None
+
+        if quorum is not None:
+            self._quorum = QuorumRuntime(quorum, self._initial_state)
+            self._publish_quorum_state()
+
+    def _publish_quorum_state(self) -> None:
+        """
+        Copy what the replica holds into the public fields. Call with _state_lock,
+        or before the node is shared. The log is the only source: events and
+        local_events are the same list of certified events, and evidence stays in
+        signed_events and equivocations. After a restart the first two come back
+        from the log, and the evidence, which is in memory, does not.
+        """
+        replica = self._quorum.replica
+        driver = self._quorum.driver
+        executed = replica.executed
+        equivocations = self.equivocations
+
+        for proof in driver.equivocations.values():
+            equivocations = equivocations.add(proof)
+
+        self.events = list(executed)
+        self.local_events = list(executed)
+        self.signed_events = dict(driver.signed_events)
+        self.equivocations = equivocations
+        # A copy, so that a reader without the lock never sees a state in the middle
+        # of an execution, and cannot change the one the replica works on.
+        self.state = replica.state.copy()
+
     def start(self):
         if self._running:
             return
+
+        if self._quorum is not None and self._quorum.closed:
+            raise RuntimeError("QUORUM NODE IS CLOSED: CREATE A NEW NODE")
 
         self._server_controller.start()
         self._server = self._server_controller.server
@@ -149,6 +187,12 @@ class Node:
         self._server = None
         self._thread = None
         self._running = False
+
+        # Last, so that the lock on the store is free when stop returns. Under the
+        # lock, so that no message being handled finds the store closed halfway.
+        if self._quorum is not None:
+            with self._state_lock:
+                self._quorum.close()
 
     def _reconnect_loop(self):
         while self._reconnect_running:
