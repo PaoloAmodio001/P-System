@@ -37,7 +37,7 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
-from network.quorum import QuorumConfig, QuorumRuntime
+from network.quorum import QUORUM_MESSAGE_TYPES, QuorumConfig, QuorumRuntime
 
 
 class Node:
@@ -1180,12 +1180,77 @@ class Node:
 
         return event.transfer.sender == claim.alias
 
+    def submit(self, event: SignedTransfer) -> bool:
+        """
+        Quorum mode: start an event from this node, which then collects the votes.
+        True if there was something to send, False if the event was refused. An
+        answer of True says nothing about the certificate: it may never arrive.
+        """
+        if self._quorum is None:
+            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+
+        with self._state_lock:
+            try:
+                output = self._quorum.driver.submit(event)
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, None)
+        return bool(output.replies or output.broadcasts)
+
+    def _handle_quorum_message(self, message, connection) -> None:
+        # The lock covers the driver and nothing else: a peer that does not read
+        # blocks a send, and must not block the node with it. A VoteStoreError goes
+        # up to receive_loop, which closes the connection and raises it again, and
+        # nothing was signed.
+        with self._state_lock:
+            if self._quorum.closed:
+                return
+
+            # In finally: a failed write can come after an execution that did
+            # happen, and the public state must not stay behind.
+            try:
+                output = self._quorum.driver.handle_message(message)
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, connection)
+
+    def _send_quorum_output(self, output, connection) -> None:
+        for message in output.replies:
+            if connection is not None:
+                self._send_quorum_reply(connection, message)
+
+        if not output.broadcasts:
+            return
+
+        with self._peer_connections_lock:
+            targets = list(self.peer_connections.items())
+
+        for message in output.broadcasts:
+            for node_id, target in targets:
+                try:
+                    target.send(message)
+                except (ConnectionError, OSError, TimeoutError):
+                    self._disconnect_peer_connection(node_id, target)
+
+    def _send_quorum_reply(self, connection, message) -> None:
+        try:
+            connection.send(message)
+        except (ConnectionError, OSError, TimeoutError):
+            self._peer_disconnected(connection)
+            connection.close()
+
     def _handle_peer_message(
         self,
         message,
         connection=None,
     ) -> None:
         message_type = message.get("type")
+
+        if self._quorum is not None and message_type in QUORUM_MESSAGE_TYPES:
+            self._handle_quorum_message(message, connection)
+            return
 
         if message_type == "IDENTITY_CLAIM":
             claim = decode_identity_claim(message)

@@ -627,6 +627,9 @@ class QuorumReplica:
         self._executed_ids.add(certificate.event.event_id())
 
 
+QUORUM_MESSAGE_TYPES = frozenset({"VOTE_REQUEST", "VOTE", "CERTIFICATE"})
+
+
 @dataclass(frozen=True)
 class DriverOutput:
     """What to send. Sending comes after the call, with no lock held."""
