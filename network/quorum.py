@@ -9,6 +9,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.attestation import (
@@ -19,8 +20,18 @@ from core.attestation import (
 )
 from core.derive import StateDeriver
 from core.event import Transfer
+from core.equivocation import EquivocationProof
+from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
+from network.message import (
+    decode_certificate,
+    decode_vote,
+    decode_vote_request,
+    encode_certificate,
+    encode_vote,
+    encode_vote_request,
+)
 
 
 class VoteStoreError(Exception):
@@ -542,6 +553,16 @@ class QuorumReplica:
         """Read from the store: what counts is what would survive a restart."""
         return self._store.votes()
 
+    def halted(self) -> bool:
+        return self._store.halted()
+
+    def record_halt(
+        self,
+        first: QuorumCertificate,
+        second: QuorumCertificate,
+    ) -> None:
+        self._store.record_halt(first, second)
+
     def handle_vote_request(self, event: Transfer) -> Vote | None:
         """
         Return a vote, or None if the event is refused. The signature comes after
@@ -603,3 +624,212 @@ class QuorumReplica:
         StateDeriver._apply_one(self.state, certificate.event)
         self.log.append(certificate)
         self._executed_ids.add(certificate.event.event_id())
+
+
+@dataclass(frozen=True)
+class DriverOutput:
+    """What to send. Sending comes after the call, with no lock held."""
+
+    replies: tuple[dict, ...] = ()
+    broadcasts: tuple[dict, ...] = ()
+
+
+_NOTHING = DriverOutput()
+
+
+class QuorumDriver:
+    """
+    The protocol around a replica: takes messages, returns messages to send. It
+    uses no network and no Node.
+
+    What it decides that the model has no counterpart for: which vote requests
+    reach the replica, which votes count, and when the node halts. The retries of
+    the buffer are what the model gets by delivering an input again.
+
+    Each node aggregates only the votes for events submitted to it. If that node
+    is lost, nobody completes the certificate until someone submits the event
+    elsewhere. What it aggregated is in memory and lost at a restart, and the
+    remedy is to submit again: a new vote gives the same signature.
+
+    The buffer has no limit, because a limit would make the result depend on the
+    order of arrival. Neither has the record of signed events: see the known limits
+    on denial of service. Both are in memory, so a certificate still waiting is lost
+    at a restart and has to be delivered again.
+
+    Not thread-safe: the caller serializes the calls. A VoteStoreError propagates,
+    and then nothing is to be sent.
+    """
+
+    def __init__(self, replica: QuorumReplica) -> None:
+        self.replica = replica
+        self.committee = replica.committee
+        self.equivocations: dict[tuple[str, int], EquivocationProof] = {}
+        self._first_signed: dict[tuple[str, int], SignedTransfer] = {}
+        self._aggregating: dict[bytes, tuple[Transfer, dict[int, Vote]]] = {}
+        self._buffer: dict[str, QuorumCertificate] = {}
+        # One certificate for each (sender, nonce), executed or waiting: a second
+        # one for another event is the conflict that halts the node.
+        self._known: dict[tuple[str, int], QuorumCertificate] = {
+            (certificate.event.sender, certificate.event.nonce): certificate
+            for certificate in replica.log
+        }
+
+    @property
+    def halted(self) -> bool:
+        return self.replica.halted()
+
+    def handle_message(self, message: dict) -> DriverOutput:
+        """
+        Raises ValueError if the message is malformed, and the caller closes the
+        connection. A message of the right form that is not valid only gets no
+        answer: anyone can send one, and it must never stop the node.
+        """
+        message_type = message.get("type")
+
+        if message_type == "VOTE_REQUEST":
+            return self._handle_vote_request(decode_vote_request(message))
+
+        if message_type == "VOTE":
+            return self._handle_vote(*decode_vote(message))
+
+        if message_type == "CERTIFICATE":
+            return self._handle_certificate(decode_certificate(message))
+
+        raise ValueError("NOT A QUORUM MESSAGE")
+
+    def submit(self, signed: SignedTransfer) -> DriverOutput:
+        """
+        Start an event here: vote for it, then ask the others. If it already has a
+        certificate, send that instead. If the vote is refused, nobody is asked,
+        because an honest node does not ask for what it would not sign.
+        """
+        if not self._is_authorized(signed) or self.halted:
+            return _NOTHING
+
+        self._record_signed(signed)
+        event = signed.transfer
+        known = self._known.get((event.sender, event.nonce))
+
+        if known is not None and known.event.canonical() == event.canonical():
+            return DriverOutput(broadcasts=(encode_certificate(known),))
+
+        vote = self.replica.handle_vote_request(event)
+
+        if vote is None:
+            return _NOTHING
+
+        _, votes = self._aggregating.setdefault(event.canonical(), (event, {}))
+        votes[vote.validator] = vote
+        certificate = self._complete(event, votes)
+
+        if certificate is not None:
+            return DriverOutput(broadcasts=(encode_certificate(certificate),))
+
+        return DriverOutput(broadcasts=(encode_vote_request(signed),))
+
+    def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
+        if not self._is_authorized(signed):
+            return _NOTHING
+
+        # Before the replica, because a vote refused is when the proof appears.
+        self._record_signed(signed)
+        vote = self.replica.handle_vote_request(signed.transfer)
+
+        if vote is None:
+            return _NOTHING
+
+        return DriverOutput(replies=(encode_vote(signed.transfer, vote),))
+
+    def _handle_vote(self, event: Transfer, vote: Vote) -> DriverOutput:
+        aggregating = self._aggregating.get(event.canonical())
+
+        # A halt empties the aggregation, so nothing is found here after one.
+        if aggregating is None:
+            return _NOTHING
+
+        event, votes = aggregating
+
+        if not vote.verify(self.committee, event):
+            return _NOTHING
+
+        # By validator, so that the same one twice counts once.
+        votes[vote.validator] = vote
+        certificate = self._complete(event, votes)
+
+        if certificate is None:
+            return _NOTHING
+
+        return DriverOutput(broadcasts=(encode_certificate(certificate),))
+
+    def _complete(
+        self,
+        event: Transfer,
+        votes: dict[int, Vote],
+    ) -> QuorumCertificate | None:
+        if len(votes) < self.committee.quorum:
+            return None
+
+        del self._aggregating[event.canonical()]
+        certificate = QuorumCertificate(
+            event,
+            tuple(votes[validator] for validator in sorted(votes)),
+        )
+        self._accept(certificate)
+        return certificate
+
+    def _handle_certificate(self, certificate: QuorumCertificate) -> DriverOutput:
+        if not self.halted and certificate.verify(self.committee):
+            self._accept(certificate)
+
+        return _NOTHING
+
+    def _accept(self, certificate: QuorumCertificate) -> None:
+        """The certificate is valid. Halt on a conflict, or try to execute it."""
+        event = certificate.event
+        key = (event.sender, event.nonce)
+        known = self._known.get(key)
+
+        if known is not None and known.event.canonical() != event.canonical():
+            self.replica.record_halt(known, certificate)
+            self._buffer.clear()
+            self._aggregating.clear()
+            return
+
+        if known is None:
+            self._known[key] = certificate
+            self._buffer[event.event_id()] = certificate
+
+        self._retry_buffer()
+
+    def _retry_buffer(self) -> None:
+        # In order of id and up to the fixed point, so that the result depends on
+        # the set of certificates. A failed write leaves the certificate here, and
+        # any later certificate tries it again.
+        progress = True
+
+        while progress:
+            progress = False
+
+            for event_id in sorted(self._buffer):
+                if self.replica.handle_certificate(self._buffer[event_id]):
+                    del self._buffer[event_id]
+                    progress = True
+
+    @staticmethod
+    def _is_authorized(signed: SignedTransfer) -> bool:
+        return (
+            is_well_formed_event(signed.transfer)
+            and signed.verify()
+            and signed.identity_id == signed.transfer.sender
+        )
+
+    def _record_signed(self, signed: SignedTransfer) -> None:
+        event = signed.transfer
+        key = (event.sender, event.nonce)
+        first = self._first_signed.setdefault(key, signed)
+
+        if (
+            first.transfer.canonical() != event.canonical()
+            and key not in self.equivocations
+        ):
+            self.equivocations[key] = EquivocationProof(first, signed)

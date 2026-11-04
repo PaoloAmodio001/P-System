@@ -158,9 +158,10 @@ MUTATIONS = {
 }
 
 
-def _run(source: str) -> subprocess.CompletedProcess:
+def run_with_source(source: str, tests: list[str]) -> subprocess.CompletedProcess:
+    """Run `tests` with `source` in place of network/quorum.py."""
     return subprocess.run(
-        [sys.executable, "-c", RUNNER, source, *TESTS],
+        [sys.executable, "-c", RUNNER, source, *tests],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -170,7 +171,7 @@ def _run(source: str) -> subprocess.CompletedProcess:
 
 def test_the_tests_pass_on_the_real_source():
     # Otherwise every mutation below would look detected.
-    result = _run(SOURCE)
+    result = run_with_source(SOURCE, TESTS)
     assert result.returncode == 0, result.stdout
 
 
@@ -180,7 +181,7 @@ def test_mutation_is_detected(name):
     # A mutation that no longer applies must not pass as detected.
     assert SOURCE.count(old) == 1, name
 
-    result = _run(SOURCE.replace(old, new))
+    result = run_with_source(SOURCE.replace(old, new), TESTS)
 
     # 1 is a failing test. Any other code is a mutation written wrongly.
     assert result.returncode == 1, result.stdout + result.stderr
