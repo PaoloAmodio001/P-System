@@ -30,15 +30,15 @@
 | 3 | Fatta | `state_is_derive` e `autoImplicit = false` | `40732cd`, `7174e43`, `b1c254d` |
 | 4 | Fatta | `convergence_after_exchange` | `e243bb5`, `18bc871` |
 | 5.0 | Fatta | `delivered_certs_agree`, `executed_authorized`, driver `quorum_check` | `d0291bf`, `2d95651`, `7c42121` |
-| 5.1 | Fatta | `Committee`, `Vote`, `QuorumCertificate` | `ac553d6` |
-| 5.2 | Fatta | `SqliteVoteStore` e test di crash | `cdfd1fb`, correzione del test `25fbf57` |
+| 5.1 | Fatta | `Committee`, `Vote`, `QuorumCertificate`. Mutazioni non riproducibili, script perso il 2026-11-04 | `ac553d6` |
+| 5.2 | Fatta | `SqliteVoteStore` e test di crash. Mutazioni non riproducibili, script perso il 2026-11-04 | `cdfd1fb`, correzione del test `25fbf57` |
 | 5.3 | Fatta | `QuorumReplica`, differenziale A, 31 mutazioni in `pytest` | `da4b340`, `18d6279`, `828c3c0`, documento `eb5707b` |
-| 5.4 | Fatta | Validazione degli eventi e messaggi | `0491cbc`, `1b13ace` |
+| 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059` |
 | **5.5** | **In corso** | Punto 1 fatto: un frame alla volta in `PeerConnection.send`. Il bug è anche su `main` | `0acac14` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
-| 5.7 | Da fare | Documenti ed etichette | |
+| 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
 **Ultima verifica:** `pytest -q` 1169 passati, `lake build` passa, entrambi dopo aver ricostruito da zero `.lake/build` e i `.pyc`. I 15 seed sono passati con la validazione attiva (45000 casi, nessuna differenza), prima dei messaggi e delle correzioni di rete, che non toccano il differenziale. `Node` non usa ancora né la replica né i messaggi: il nodo si comporta come prima e ammette ancora il fork.
@@ -78,7 +78,7 @@
 
 **5.6:** `CERTIFICATE_SYNC` a lotti (il transport ha un limite di 16 MB) e `reconciliation_protocol.py`. Differenziale C: 4 nodi su TCP/TLS reale con un nodo malevolo, pochi scenari. `no_double_spend` e `convergence_after_exchange` verificati come proprietà sulle run multi-nodo.
 
-**5.7:** la §13.1 di `FORMAL-SPECIFICATION.md` e `PROOF-SCOPE.md` dicono "not implemented": finché il nodo non è collegato è vero. Etichette previste: `FORMAL (model)` per i teoremi, `EMPIRICAL (Python)` per il collegamento. La modalità storica va dichiarata senza garanzie bizantine.
+**5.7:** ricreare dentro `pytest` le mutazioni di 5.1, 5.2 e 5.4, come `tests/test_quorum_differential_mutations.py` per la 5.3, così stanno nel repository e si possono rieseguire. I conteggi vecchi non vanno riusati: contano solo quelli nuovi. La §13.1 di `FORMAL-SPECIFICATION.md` e `PROOF-SCOPE.md` dicono "not implemented": finché il nodo non è collegato è vero. Etichette previste: `FORMAL (model)` per i teoremi, `EMPIRICAL (Python)` per il collegamento. La modalità storica va dichiarata senza garanzie bizantine.
 
 ### Decisioni prese
 
@@ -115,7 +115,7 @@ Scelte tecniche da conservare:
   - i voti sono confrontati come insieme, quindi la restituzione della firma è coperta altrove;
   - le mutazioni girano su un solo seed;
   - il driver Lean è controllato solo da vettori a mano.
-- **Mutazioni di 5.1, 5.2 e 5.4:** eseguite solo nello scratchpad (rilevate 25, 23 e 45). Quegli script stavano in `/tmp`, che è un `tmpfs`, e si sono persi con il riavvio del 2026-11-04: vedi l'incidente qui sotto. Restano i soli conteggi riportati qui, che non si possono più rieseguire.
+- **Mutazioni di 5.1, 5.2 e 5.4:** rilevate 25, 23 e 45: **non riproducibili, script perso il 2026-11-04**. Stavano in `/tmp`, svuotato dal riavvio: vedi l'incidente qui sotto. Vanno ricreate dentro `pytest` nella 5.7.
 - **DoS:** nessuna difesa da nonce arbitrariamente alti o da flussi di firme da verificare.
 - **Connessioni mute:** il timeout di 5 secondi sull'intero handshake e il limite di 64 handshake simultanei riducono il problema ma non lo eliminano. Chi tiene occupati tutti i posti, riaprendo le connessioni quando scadono, non ha bisogno di un certificato e continua a tenere fuori i peer onesti. Un test lo dichiara.
 - **Costo:** un `fsync` per voto, circa 350-400 voti al secondo su ext4.
@@ -128,7 +128,7 @@ Scelte tecniche da conservare:
    - dopo un primo scambio di messaggi: 68 su 68 pulite;
    - attraverso `Node`, che fa l'handshake applicativo prima di avviare la lettura: 40 su 40 pulite, 20 sul branch e 20 su `origin/main`, con messaggi piccoli.
 
-   Non è una garanzia: la causa della finestra iniziale non è stata accertata (ipotesi: i ticket di TLS 1.3). Un prototipo con socket non bloccante e un lock su ogni chiamata SSL ha dato 70 su 70, ma solo come sonda, fuori dal repo.
+   Non è una garanzia: la causa della finestra iniziale non è stata accertata (ipotesi: i ticket di TLS 1.3). Un prototipo con socket non bloccante e un lock su ogni chiamata SSL ha dato 70 su 70, ma solo come sonda, non in `network/`. Le misure si ripetono con `benchmarks/tls_duplex_probe.py`.
 
 ### Incidente del 2026-11-04: arresto della macchina
 
@@ -156,7 +156,7 @@ Scelte tecniche da conservare:
   - `signed-transfer`: conteneva solo `__pycache__`, quindi i suoi `.pyc` **non avevano il `.py` accanto**. I nomi probabili sono quelli dei due file che git aveva lì, `test_node.py.before-signed-transfer-send-20261004-113812.py` e `test_node_to_node.py.before-signed-transfer-send-20261004-113812.py`, rimossi da `ee8b054`. Non sono su disco, ma si leggono da `c225e94`, anche su GitHub, e compilano. Se erano davvero quelli, si è perso solo bytecode rigenerabile. Non è dimostrato.
 - In `/tmp`, tutto: gli script di mutazione di 5.1, 5.2 e 5.4, `probe_open_points.py` e lo schizzo `QuorumSketch.lean`, ormai superato. Le mutazioni della 5.3 sono al sicuro in `tests/test_quorum_differential_mutations.py`.
 
-**Da ricordare.** Quello che deve durare non va in `/tmp`, compreso lo scratchpad: anche le sonde del punto aperto 2 sono lì.
+**Prevenzione.** `git config core.fsync committed` è impostato in questo repository, così git forza su disco anche gli oggetti sciolti. Quello che deve durare non va in `/tmp`, compreso lo scratchpad: le sonde del punto aperto 2 ora stanno in `benchmarks/`.
 
 ---
 
