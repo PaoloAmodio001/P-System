@@ -2,20 +2,20 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**In corso: sottofase 5.5, punti 1, 2, 3 e 4 fatti. Prossimo passo: il punto 5, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
+**In corso: sottofase 5.5, punti da 1 a 5 fatti. Prossimo passo: il punto 6, solo dopo il via di Paolo.** Prima di iniziare: `git switch byzantine-quorum`. Su `main` locale questo file non c'è, e `CLAUDE.md` non ha la sezione sul modello a quorum.
 
 ### Regole di lavoro in vigore
 
 - Lavorare su `byzantine-quorum`. **Non pushare su `main` finché la fase 5 non è completa e verificata.**
 - Alla fine di ogni punto: push di `byzantine-quorum` su GitHub, riepilogo, e aspettare il via.
 - Se un differenziale trova una divergenza tra Python e `runNode`, **non correggerla**: fermarsi e mostrare il caso minimo e la diagnosi. L'errore può stare nel Python, nel driver, nel modello o nel generatore.
-- **Prima di unire `byzantine-quorum` a `main`:** `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py`.
+- **Prima di unire `byzantine-quorum` a `main`:** `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py`.
 
 ### Dove si trova il codice
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 4 della 5.5 e questa nota | Tutte le fasi fatte |
+| `origin/byzantine-quorum`, `byzantine-quorum` locale | Punto 5 della 5.5 e questa nota | Tutte le fasi fatte |
 | `origin/main` | `18bc871` | Fasi 0-4, pushate su richiesta. Nessun commit della fase 5 |
 | `main` locale | `1139303` | Fermo, 11 commit dietro `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -36,12 +36,12 @@
 | 5.4 | Fatta | Validazione degli eventi e messaggi. Mutazioni non riproducibili, script perso il 2026-11-04 | `0491cbc`, `1b13ace` |
 | Fuori piano | Fatta | `receive_loop` su frame malformato. Il bug è anche su `main` | `cd77718` |
 | Fuori piano | Fatta | Handshake: JSON annidato, connessioni mute, risposta annidata lato client. Connessione che sopravvive a `stop`, test in `fd98fb0`. I bug sono anche su `main` | `7f29574`, `9551c5f`, `5322059`, `fd98fb0` |
-| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node` | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4` |
+| **5.5** | **In corso** | Punto 1: un frame alla volta in `PeerConnection.send`, il bug è anche su `main`. Punto 2: prova di arresto durevole, schema v2. Punto 3: `QuorumDriver`. Punto 4: collegamento in `Node`. Punto 5: differenziale B | `0acac14`, `31ce78c`, `1202eac`, da `50bb48e` a `d119fd4`, `b166ccb`, `5a7def4` |
 | 5.6 | Da fare | Sincronizzazione, TCP reale, differenziale C | |
 | 5.7 | Da fare | Documenti ed etichette. Ricreare in `pytest` le mutazioni di 5.1, 5.2 e 5.4 | |
 | 6 | Da fare | Differenziale avversario e documenti. In parte anticipata dalla 5.3 | |
 
-**Ultima verifica:** `pytest -q` 1475 passati, `lake build` passa. Differenziale con `PSYSTEM_DIFF_SEEDS=15` su `d7292db`, cioè con il punto 3 e prima del punto 4: 15 seed passati, 45000 casi, nessuna differenza. Il punto 4 non cambia ciò che la replica decide, ma va ripetuto prima del merge. Con `quorum=None` il nodo si comporta come prima e ammette ancora il fork; con `quorum=` il fork è escluso nei test, che però non passano ancora da TLS reale e non sono confrontati con Lean.
+**Ultima verifica:** `pytest -q` 1507 passati, `lake build` passa. Differenziale A con 15 seed su `d7292db`, prima del punto 4: 45000 casi, nessuna differenza. Differenziale B con 15 seed: 7500 casi, nessuna differenza. Entrambi vanno ripetuti prima del merge. Con `quorum=None` il nodo ammette ancora il fork; con `quorum=` il fork è escluso nei test, che però non passano ancora da TLS reale.
 
 ### Cosa resta da fare
 
@@ -70,7 +70,7 @@
 2. Prova di arresto durevole in `SqliteVoteStore`, schema v2: salva i due certificati in conflitto e li riverifica all'apertura. Fatto. Il controllo sui due certificati sta in `_is_halt_proof`, che il punto 3 può riusare.
 3. `QuorumDriver` in `network/quorum.py`, senza rete né `Node`: riceve input e restituisce i messaggi da inviare. Un certificato invalido non ferma mai il nodo. Il buffer dei certificati non ha limite, perché un limite farebbe dipendere il risultato dall'ordine di arrivo. Fatto. La replica del nodo riceve `auth` da chi la crea, ma è il driver a controllare firma e `sender`: il punto 4 deve deciderne il collegamento.
 4. Collegamento in `Node` con `quorum=QuorumConfig(...)`: logica sotto `_state_lock`, invii fuori dal lock, `VoteStoreError` chiude la connessione e non parte nessuna firma. Fatto. **Solo nei commit del punto 4** (da `50bb48e` a `d119fd4`) l'unica riga cambiata di `node.py` è `known`, che con `quorum=None` aggiunge una lista vuota, e nessun test esistente è stato modificato. Questo non significa che il percorso storico sia identico a `main`: vedi la sezione sulle correzioni di rete.
-5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica.
+5. Differenziale B, circa 500 casi, con mutazioni fuori dalla replica. L'input per Lean nasce dai messaggi, non dalla traccia della replica. Fatto: `tests/test_quorum_differential_node.py`, 500 casi per seed, 28 mutazioni. Differenza dal piano: una firma errata non genera input, e solo un mittente che non è un'identità diventa riga `U`.
 6. Test di comportamento: P15 in modalità quorum, voti divisi, permutazioni, riavvio dopo l'arresto, un test breve su TLS reale.
 7. Aggiornamento di questo file. Le etichette restano alla 5.7.
 
@@ -116,6 +116,13 @@ Scelte tecniche da conservare:
   - le mutazioni girano su un solo seed;
   - il driver Lean è controllato solo da vettori a mano.
 - **Mutazioni di 5.1, 5.2 e 5.4:** rilevate 25, 23 e 45: **non riproducibili, script perso il 2026-11-04**. Stavano in `/tmp`, svuotato dal riavvio: vedi l'incidente qui sotto. Vanno ricreate dentro `pytest` nella 5.7.
+- **Differenziale B:**
+  - è `EMPIRICAL`, non un refinement, e confronta un solo nodo per caso;
+  - niente socket: i messaggi entrano direttamente in `_handle_peer_message`, dopo un passaggio da JSON;
+  - niente collisioni di id, perché il decoder ricostruisce l'evento: restano coperte dal differenziale A;
+  - l'arresto non è nel modello: il confronto vale fino all'arresto, poi si verifica che lo stato resti fermo;
+  - l'oracolo nel test è codice scritto a mano, come il driver Lean: un errore comune all'oracolo e al nodo non si vedrebbe. Le mutazioni riducono questo rischio, non lo eliminano;
+  - gli errori di disco non sono nei casi.
 - **`Node` in modalità quorum:**
   - nessun test è ancora passato da TLS reale: i 4 nodi dei test si scambiano messaggi codificati senza socket. Il test breve su TLS è nel punto 6, lo scenario a 4 nodi nella 5.6;
   - il punto aperto 2 pesa di più qui, perché questa modalità genera traffico in entrambe le direzioni sulla stessa connessione;
