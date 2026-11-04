@@ -1,5 +1,8 @@
 import socket
 import ssl
+import time
+
+import pytest
 
 from network.node import Node
 from network.node_tls_identity import get_node_tls_config
@@ -17,6 +20,15 @@ def _open_tls_connection(node: Node, client_id: str) -> ssl.SSLSocket:
     return SecureTransport.wrap_client(connection, context, node.node_id)
 
 
+def _wait_until(condition, seconds: float = 5.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return condition()
+
+
 def _closed_by_server(connection: ssl.SSLSocket) -> bool:
     try:
         return connection.recv(1) == b""
@@ -27,6 +39,9 @@ def _closed_by_server(connection: ssl.SSLSocket) -> bool:
         return True
 
 
+# A handshake has its own thread, so an error there no longer stops accepting
+# peers. It must still be handled: an unhandled one fails this test.
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_deeply_nested_handshake_does_not_stop_accepting_peers():
     server = Node("handshake-server")
     honest = Node("handshake-honest")
@@ -39,8 +54,6 @@ def test_deeply_nested_handshake_does_not_stop_accepting_peers():
         payload = b"[" * 200000
         attacker.sendall(len(payload).to_bytes(4, "big") + payload)
 
-        # The server handles one handshake at a time, so this one comes after
-        # the frame above has been handled.
         assert honest.connect_peer(
             Peer(server.node_id, server.host, server.port)
         )
@@ -50,3 +63,121 @@ def test_deeply_nested_handshake_does_not_stop_accepting_peers():
         attacker.close()
         honest.stop()
         server.stop()
+
+
+def _server_closed_within(connection: socket.socket, seconds: float) -> bool:
+    connection.settimeout(seconds)
+    try:
+        return connection.recv(1) == b""
+    except TimeoutError:
+        return False
+    except OSError:
+        return True
+
+
+def test_silent_connection_does_not_block_an_honest_peer():
+    # No certificate is needed: the connection never starts TLS.
+    server = Node("silent-server")
+    honest = Node("silent-honest")
+    server.start()
+    honest.start()
+    silent = socket.create_connection(server.address())
+
+    try:
+        assert honest.connect_peer(
+            Peer(server.node_id, server.host, server.port)
+        )
+    finally:
+        silent.close()
+        honest.stop()
+        server.stop()
+
+
+def test_silent_connection_is_closed_at_the_deadline():
+    server = Node("deadline-server")
+    server._server_controller.HANDSHAKE_TIMEOUT = 0.2
+    server.start()
+    silent = socket.create_connection(server.address())
+
+    try:
+        assert _server_closed_within(silent, 5.0)
+    finally:
+        silent.close()
+        server.stop()
+
+
+def test_slowly_sent_bytes_do_not_extend_the_deadline():
+    # The deadline is for the whole handshake, not for each read.
+    server = Node("slow-server")
+    server._server_controller.HANDSHAKE_TIMEOUT = 0.5
+    server.start()
+    slow = socket.create_connection(server.address())
+    slow.settimeout(0.1)
+    deadline = time.monotonic() + 5.0
+    closed = False
+
+    try:
+        # The header of a TLS record of 16 KB, whose body never ends. Each byte is
+        # valid and each read succeeds, so only a deadline on the whole handshake
+        # closes this.
+        slow.sendall(b"\x16\x03\x01\x40\x00")
+
+        while not closed and time.monotonic() < deadline:
+            try:
+                slow.sendall(b"\x00")
+                closed = slow.recv(1) == b""
+            except TimeoutError:
+                pass
+            except OSError:
+                closed = True
+
+        assert closed
+    finally:
+        slow.close()
+        server.stop()
+
+
+def test_connection_over_the_limit_is_closed_and_a_slot_frees_up():
+    server = Node("limit-server")
+    honest = Node("limit-honest")
+    server._server_controller.MAX_PENDING_HANDSHAKES = 1
+    server.start()
+    honest.start()
+    peer = Peer(server.node_id, server.host, server.port)
+    holder = socket.create_connection(server.address())
+
+    try:
+        assert _wait_until(lambda: len(server._server_controller._pending) == 1)
+        refused = socket.create_connection(server.address())
+        try:
+            assert _server_closed_within(refused, 5.0)
+        finally:
+            refused.close()
+
+        # This is the limit of the defense: the slot is taken, so an honest
+        # peer is refused too while the silent connection lasts.
+        assert not honest.connect_peer(peer)
+
+        holder.close()
+        assert _wait_until(lambda: not server._server_controller._pending)
+        assert honest.open_peer_connection(peer)
+    finally:
+        holder.close()
+        honest.stop()
+        server.stop()
+
+
+def test_stop_ends_a_handshake_in_progress():
+    server = Node("stop-server")
+    server.start()
+    controller = server._server_controller
+    silent = socket.create_connection(server.address())
+
+    try:
+        assert _wait_until(lambda: len(controller._pending) == 1)
+        threads = list(controller._pending.values())
+        server.stop()
+        assert not any(thread.is_alive() for thread in threads)
+        assert _server_closed_within(silent, 5.0)
+    finally:
+        silent.close()

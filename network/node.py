@@ -135,6 +135,10 @@ class Node:
             self._reconnect_thread.join(timeout=1.0)
             self._reconnect_thread = None
 
+        # The server first: a handshake in progress could otherwise publish a
+        # connection after the ones below are closed.
+        self._server_controller.stop()
+
         with self._peer_connections_lock:
             connections = list(self.peer_connections.values())
             self.peer_connections.clear()
@@ -142,7 +146,6 @@ class Node:
         for connection in connections:
             connection.close()
 
-        self._server_controller.stop()
         self._server = None
         self._thread = None
         self._running = False
