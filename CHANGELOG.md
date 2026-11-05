@@ -8,6 +8,7 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 ### Added in `verso-1.0`
 
 - Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 20 s to 0.9 s, 0.1 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
+- **A closure no longer takes votes.** It is an order of governance and any quorum of reports, and a member reports for one order per epoch. Two proposers at once, or one that dies, can no longer block an epoch: only a governance that signs two orders can. `QuorumReports.lean`, `tests/test_quorum_reports.py`. This replaces the closure votes and their retries of the earlier passage. `CLOSURE_VOTE_REQUEST`, `CLOSURE_LOCKED` and `CLOSURE_VOTE` are gone. Stores migrate to schema 5.
 - `scripts/install_hooks.sh`: a pre-commit hook that runs the fast tests and the proofs.
 
 ### Fixed
@@ -54,7 +55,7 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 - Group commit: messages received together share one write. Measured in `docs/BENCHMARKS.md`.
 - Safe restore: a node restored from a backup abstains until the next epoch.
 - Lean: `no_double_spend_q`, `conflict_identifies_faulty`, `split_lock_ambiguous`, `unlock_safe_5f1`,
-  `no_double_spend_across_epochs`, `closure_preserves_certified`, `closure_unique`, `honest_sender_certifies`.
+  `no_double_spend_across_epochs`, `closure_preserves_certified`, `honest_sender_certifies`.
 - Continuous integration of the proofs and of the whole suite. Mutations of phases 5.1, 5.2 and 5.4 back inside `pytest`.
 
 ### Changed

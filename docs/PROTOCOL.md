@@ -48,9 +48,7 @@ All Ed25519.
 | `CERTIFICATE_SYNC` | `certificates`, at most about 4 MiB | a new request if something new was learned |
 | `EPOCH_CHANGE` | `change` | `EPOCH_REPORT` |
 | `EPOCH_REPORT` | `change_id`, `report` | |
-| `CLOSURE_VOTE_REQUEST` | `closure`, with no votes | `CLOSURE_VOTE` |
-| `CLOSURE_VOTE` | `digest`, `validator`, `signature` | |
-| `EPOCH_CLOSURE` | `closure`, with its votes | |
+| `EPOCH_CLOSURE` | `closure`: `change`, `reports` | |
 | `SNAPSHOT_REQUEST` | `epoch`, `digest`, `nonces` | `SNAPSHOT_VOTE`, or nothing if this member cannot derive it |
 | `SNAPSHOT_VOTE` | `digest`, `attestation` | |
 | `SNAPSHOT` | `snapshot`: `epoch`, `balances`, `nonces`, `ids`, `attestations` | a new request if it was taken |
@@ -70,13 +68,13 @@ members. A node stops for good and keeps both: see `docs/OPERATIONS.md`.
 
 1. Governance signs `EpochChange`, `threshold` of `members`, with at least 2 signatures.
 2. Whoever proposes it sends `EPOCH_CHANGE`. Each member stops voting, durably, and answers with its
-   report: all its votes of this epoch, each with the signature of its sender.
-3. With `2f+1` valid reports the proposer asks for votes on the closure: an event with `sender`
-   = account of governance, `receiver` = digest of the closure, `amount` = 0, `nonce` = epoch. It can
-   never execute. A member votes for one closure per epoch, for good.
-4. With `2f+1` votes, `EPOCH_CLOSURE` installs the next committee on every node that verifies it.
-5. The events of the reports become locks, added to the earlier ones. A validator votes for `e` only if
+   report: all its votes of this epoch, each with the signature of its sender. **A member reports for one order per epoch, for good.**
+3. With `2f+1` valid reports the closure exists: the order and those reports. `EPOCH_CLOSURE` installs the next committee on
+   every node that verifies it. No vote on the closure, and no second round.
+4. The events of the reports become locks, added to the earlier ones. A validator votes for `e` only if
    every lock on its `(sender, nonce)` is `e`.
+
+**Two nodes can hold different closures of one epoch**, with different locks. That is safe: any quorum of reports holds every certified event (`closure_preserves_certified`), and the theorem holds with validators that hold different locks (`no_double_spend_any_closures`). The next committee is the same, because it comes from the order, and one order can have a quorum of reports (`order_unique`).
 
 A certificate of an ended committee counts only for an event in the locks. Its keys can be stolen after the closure, and then
 any signature verifies, while everything really certified is in the locks (`closure_preserves_certified`). A conflict over an
@@ -87,22 +85,11 @@ So an event with no certificate and one alternative finishes when sent again in 
 equivocated one stays locked for good. `split_lock_ambiguous` shows no rule on the reports can avoid
 that with `n = 3f+1`.
 
-A proposer can die, and an order can get lost. Each member keeps on disk the closure it voted for, so:
+A proposer can die, and an order can get lost. A member that reported and sees no closure for 10 seconds sends the order again and collects the reports itself. Any number of nodes can do this at once: they gather subsets of the same reports, and each subset is good (`one_order_never_blocks`).
 
-- A member asked for another closure, or given the order again, answers `CLOSURE_LOCKED` with the one it voted for, and a
-  proposer works for that one in place of its own. Any quorum of reporters includes a member of any closure that could block
-  the others, so a retry finds it.
-- A proposer sends again what it asked every 10 seconds, until the closure is installed.
-- A member that voted and sees no closure for 10 seconds asks for the votes on that closure itself. Several doing this ask for
-  one closure, so this splits nothing.
+What remains: **a governance that signs two orders for one epoch** can split the reports, so that neither gets a quorum. That epoch then never closes, and voting has stopped (`two_orders_can_block`). It takes `threshold` keys of governance, and the two signatures are the proof. The protocol has no way out of it.
 
-No member ever signs a second closure for an epoch, so `closure_unique` is not touched.
-
-What remains: **two proposers acting at once before any vote** can still split the votes so that no closure gets a quorum, and a
-faulty member can try the same. That epoch then never closes, and voting has stopped. Preventing it for good would take
-consensus, which this system does not have. So one proposer should act: this is an operating rule, since nothing enforces it.
-
-A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `CLOSURE_VOTE_REQUEST` and `EPOCH_CLOSURE`, and only
+A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `EPOCH_CLOSURE`, `SNAPSHOT_REQUEST` and `SNAPSHOT`, and only
 those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB, next to each other on the connection, with
 the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between, a piece out of order or a wrong digest closes
 the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
@@ -122,7 +109,7 @@ A node takes a snapshot only from the committee in force. The keys of an ended c
 | Votes of ended epochs | Removed when a closure is installed |
 | Locks under the floor | Removed when a closure is installed, and from then on no vote under the floor: **the two are one rule** |
 | Ids of executed events | Stay, because a parent can name any past event |
-| Closures | Stay |
+| Closures | The last stays whole. Older ones become a header: the order and the signatures of the reports, which prove the chain and hold no votes. A header never leaves the node |
 
 The floor of a validator is the `nonces` of its last snapshot at the moment a closure is installed. Theorems: `QuorumSnapshot.lean`. A valid certificate under a floor that conflicts with what the snapshot holds can only come from more than `f` faulty members. It stays out, and the log says so at critical level, but with its other half pruned there is no proof to halt on: this is the price of pruning.
 

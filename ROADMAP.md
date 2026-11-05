@@ -20,7 +20,7 @@ Valutazione del 2026-11-05, dopo il lavoro di A, B (senza consenso sullo sblocco
 | Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, firmatario separato con un proprio blocco, chiavi cifrate, revoca a elenco, regola sulle chiavi delle epoche finite, limiti di frequenza, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS integrati, CRL o OCSP | E |
 | Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, una coda e uno scrittore per peer, messaggi oltre il frame, scrittura a gruppi | Prove su reti vere | E |
 | Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL`, 4 container e campagne di guasti di rete iniettati | Prove su macchine separate. Liveness incondizionata | G |
-| Formal verification | 181 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
+| Formal verification | 182 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
 | Prestazioni | Misure riproducibili su una macchina in `docs/BENCHMARKS.md` | Macchine separate; riproduzione esterna; confronto con FastPay | D |
 | Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000 | Misure con nodi separati e carichi lunghi. Chiudere un'epoca prima di circa 50 000 eventi. Log senza potatura | D |
 | Interoperabilità | API HTTP `/v1` con TLS opzionale, descrizione OpenAPI verificata da un test, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
@@ -134,7 +134,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase B. Liveness e recupero
 
-**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `closure_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); sblocco con `n = 5f+1`, dimostrato solo nel conteggio; `new_key_old_epoch` come teorema.
+**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `order_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); sblocco con `n = 5f+1`, dimostrato solo nel conteggio; `new_key_old_epoch` come teorema.
 
 **Obiettivo.** Un sistema che può cambiare comitato, ruotare le chiavi e riprendersi, senza perdere la proprietà di sicurezza. È **la fase più difficile e la più interessante**: è il punto in cui FastPay si ferma e Sui ricorre al consenso.
 
@@ -153,7 +153,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 - `conflict_identifies_faulty`: da due certificati validi in conflitto si ricavano almeno f+1 firmatari colpevoli. Utile e ben delimitato.
 - `no_double_spend_across_epochs`: due nodi onesti, anche in epoche diverse. L'ipotesi su ogni comitato (al massimo `f` difettosi) è esplicita.
 - `closure_preserves_executed`: un evento eseguito da un nodo onesto appare in ogni chiusura valida.
-- `closure_unique`: al massimo una chiusura per epoca.
+- `order_unique`: al massimo un ordine per epoca con un quorum di rapporti. Le chiusure di un'epoca possono essere più d'una, senza danno (`no_double_spend_any_closures`).
 - `locks_carried`: nella configurazione standard, un blocco resta valido oltre l'epoca.
 - `honest_sender_certifies`: mittente onesto, una sola versione, consegna equa tra 2f+1 nodi onesti: il certificato si forma. **Richiede un modello di rete con equità**, che oggi non esiste, e sarebbe il primo vero teorema di liveness.
 - `new_key_old_epoch`: una chiave compromessa dopo la chiusura non produce certificati accettati nelle epoche successive.
