@@ -16,6 +16,7 @@ import json
 import os
 import sqlite3
 import time
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -202,10 +203,17 @@ class ChainVerifier:
 class Client:
     """One node of the API. Nothing here retries: what to do after an error is the caller's."""
 
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None = None,
+        timeout: float = 10.0,
+        ca_file: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self._context = ssl.create_default_context(cafile=ca_file) if ca_file else None
 
     def _request(self, method: str, path: str, body=None) -> dict:
         data = None if body is None else json.dumps(body).encode()
@@ -222,7 +230,11 @@ class Client:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout,
+                context=self._context,
+            ) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:
             raise ApiError(error.code, json.loads(error.read() or b"{}")) from error

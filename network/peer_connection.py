@@ -3,6 +3,7 @@ from __future__ import annotations
 import socket
 import ssl
 import threading
+import time
 from collections import deque
 
 from network.fragments import MAX_ASSEMBLED_SIZE, FragmentAssembler, split_payload
@@ -19,8 +20,33 @@ def _duplex(connection):
     return connection
 
 
+class Pacer:
+    """
+    At most `rate` messages per second on average, by waiting. Reading less makes the peer wait,
+    through TCP. An honest peer never gets near this, and one that floods costs only itself.
+    """
+
+    def __init__(self, rate: float, burst: float, clock=time.monotonic, sleep=time.sleep) -> None:
+        self.rate = rate
+        self.burst = burst
+        self._clock = clock
+        self._sleep = sleep
+        self._tokens = burst
+        self._last = clock()
+
+    def take(self, count: int = 1) -> None:
+        now = self._clock()
+        self._tokens = min(self.burst, self._tokens + (now - self._last) * self.rate)
+        self._last = now
+        self._tokens -= count
+
+        if self._tokens < 0:
+            self._sleep(-self._tokens / self.rate)
+
+
 class PeerConnection:
     MAX_RECEIVED_TOGETHER = 64
+    MAX_MESSAGES_PER_SECOND = 5000.0
     # Room for the largest message and for what is sent next to it. A peer this far behind
     # loses the connection, and catches up from the log when it comes back.
     MAX_QUEUED_BYTES = MAX_ASSEMBLED_SIZE + 64 * 1024 * 1024
@@ -41,6 +67,7 @@ class PeerConnection:
         self.initiated_locally = True
         self._send_lock = threading.Lock()
         self._assembler = FragmentAssembler()
+        self._pacer = Pacer(self.MAX_MESSAGES_PER_SECOND, 2 * self.MAX_MESSAGES_PER_SECOND)
         self._queue_changed = threading.Condition()
         self._queue: deque[list[bytes]] = deque()
         self._queued_bytes = 0
@@ -88,6 +115,9 @@ class PeerConnection:
 
             if handshake.node_id == self.node_id:
                 raise ValueError("INVALID PEER IDENTITY")
+
+            if SecureTransport.is_revoked(connection, tls_config):
+                raise ValueError("CERTIFICATE OF THE PEER IS REVOKED")
 
             # Il timeout breve serve solo per stabilire la connessione.
             # La connessione TLS persistente deve poter restare inattiva.
@@ -299,9 +329,11 @@ class PeerConnection:
             try:
                 if batch_handler is None:
                     handler(message, self)
+                    self._pacer.take()
                 else:
                     messages, broken = self._received_together(message)
                     batch_handler(messages, self)
+                    self._pacer.take(len(messages))
             except (ValueError, KeyError, TypeError, IndexError):
                 self._close_and_notify()
                 return

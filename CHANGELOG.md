@@ -19,8 +19,14 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 - A peer that did not read delayed every other peer. Each peer now has its own queue and writer.
 - An epoch of more than about 12 000 events could never close, because a closure had to fit in one frame.
 
+- Certificates of the authority failed strict verification, which is the default in recent Python, because they lacked
+  the identifier of their authority.
+
 ### Added
 
+- Keys encrypted at rest, and a signer in another process with its own vote lock (`psystem signer`).
+- TLS, rate limit and a bound on connections on the API. Connections between nodes are paced.
+- A list of revoked certificates, read at each connection, which also closes live ones.
 - Differential D, one validator across epochs against `runEpoch`, `reportOf` and `lockAllows` in Lean.
 - `tests/chaos.py` and `scripts/soak.py`: network faults between real processes.
 

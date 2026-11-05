@@ -75,6 +75,21 @@ def create_authority(directory: Path, days: int = AUTHORITY_DAYS) -> Authority:
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=days))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
         .sign(key, hashes.SHA256())
     )
     _write_private(directory / "ca.key", _key_bytes(key))
@@ -110,6 +125,34 @@ def issue_node_certificate(
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=days))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName(node_id)]), critical=False)
+        # What strict verification asks for: Python's default context refuses a certificate
+        # without these, and so would many clients of the API.
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage(
+                [x509.oid.ExtendedKeyUsageOID.SERVER_AUTH, x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH]
+            ),
+            critical=False,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(authority.key.public_key()),
+            critical=False,
+        )
         .sign(authority.key, hashes.SHA256())
     )
     safe_id = "".join(c if c.isalnum() or c in "._-" else "_" for c in node_id)

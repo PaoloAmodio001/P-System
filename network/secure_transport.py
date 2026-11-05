@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import selectors
 import socket
@@ -7,6 +8,7 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 
 MAX_MESSAGE_SIZE = 16 * 1024 * 1024
@@ -29,12 +31,16 @@ class TLSConfig:
     server_hostname:
         TLS hostname/SAN used by the client.  P-System additionally
         verifies the node identity carried by the application handshake.
+
+    revoked_file:
+        Optional. SHA-256 fingerprints of certificates to refuse, one per line.
     """
 
     certificate: str
     private_key: str
     ca_file: str
     server_hostname: str = "p-system"
+    revoked_file: str | None = None
 
 
 class DuplexTLSStream:
@@ -274,6 +280,29 @@ class SecureTransport:
             raise ssl.SSLError("PEER CERTIFICATE NOT AVAILABLE")
 
         return certificate
+
+    @staticmethod
+    def certificate_fingerprint(connection: ssl.SSLSocket) -> str | None:
+        """The SHA-256 of the certificate of the peer, as `psystem authority fingerprint` prints."""
+        certificate = connection.getpeercert(binary_form=True)
+        return None if not certificate else hashlib.sha256(certificate).hexdigest()
+
+    @staticmethod
+    def is_revoked(connection: ssl.SSLSocket, tls_config: "TLSConfig") -> bool:
+        """
+        The list is read on each call, so that a change needs no restart. A list that cannot be
+        read refuses everyone: revoking must not fail open.
+        """
+        if tls_config.revoked_file is None:
+            return False
+
+        try:
+            lines = Path(tls_config.revoked_file).read_text().splitlines()
+        except OSError:
+            return True
+
+        revoked = {line.split("#", 1)[0].strip().lower() for line in lines}
+        return SecureTransport.certificate_fingerprint(connection) in revoked
 
     @staticmethod
     def peer_names(connection: ssl.SSLSocket) -> set[str]:

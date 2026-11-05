@@ -32,6 +32,7 @@ from core.equivocation import EquivocationProof
 from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
+from network.remote_signer import SignerUnavailable
 from network.message import (
     certificate_sync_request_epoch,
     decode_certificate,
@@ -743,6 +744,18 @@ class SqliteVoteStore:
 
     # Epochs: formal/lean/PSystem/QuorumEpochs.lean.
 
+    def epoch_vote_count(self) -> int:
+        with self._lock:
+            self._require_open()
+
+            try:
+                return self._connection.execute(
+                    "SELECT COUNT(*) FROM votes WHERE epoch = ?",
+                    (self.committee.epoch,),
+                ).fetchone()[0]
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ VOTES: {error}") from error
+
     def _is_closed(self, epoch: int) -> bool:
         return (
             self._connection.execute(
@@ -1091,7 +1104,18 @@ class QuorumReplica:
         if not self._store.record_vote(event, signed):
             return None
 
-        return Vote.create(self.committee, self._identity, event)
+        return self._signed_vote(event)
+
+    def _signed_vote(self, event: Transfer) -> Vote | None:
+        """
+        With a signer in another process, it can refuse or be away. No signature then: the
+        same as no vote, and a request sent again asks again, since the vote stays recorded.
+        """
+        try:
+            return Vote.create(self.committee, self._identity, event)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
 
     def report_epoch(self, change_id: str) -> EpochReport | None:
         """
@@ -1101,12 +1125,13 @@ class QuorumReplica:
         if not self.is_member or self._store.halted() or self._store.is_restored():
             return None
 
-        return EpochReport.create(
-            self.committee,
-            self._identity,
-            change_id,
-            self._store.close_epoch(),
-        )
+        votes = self._store.close_epoch()
+
+        try:
+            return EpochReport.create(self.committee, self._identity, change_id, votes)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
 
     def vote_for_closure(
         self,
@@ -1117,11 +1142,7 @@ class QuorumReplica:
         if not self.is_member or not self._store.record_closure_vote(closure):
             return None
 
-        return Vote.create(
-            self.committee,
-            self._identity,
-            closure.event(governance, self.committee),
-        )
+        return self._signed_vote(closure.event(governance, self.committee))
 
     def voted_closure(self) -> EpochClosure | None:
         return self._store.voted_closure()

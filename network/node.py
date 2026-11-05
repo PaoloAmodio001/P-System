@@ -37,7 +37,7 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
-from network.secure_transport import TLSConfig
+from network.secure_transport import SecureTransport, TLSConfig
 from core.attestation import guilty_members
 from network.quorum import (
     DriverOutput,
@@ -1357,6 +1357,23 @@ class Node:
                 self._request_certificates(connection)
 
             self._retry_closure()
+            self._close_revoked(targets)
+
+    def _close_revoked(self, connections) -> None:
+        """A certificate revoked after its connection started. It stops here, with no restart."""
+        for connection in connections:
+            stream = connection.connection
+
+            if stream is None or not hasattr(stream, "getpeercert"):
+                continue
+
+            if SecureTransport.is_revoked(stream, self.tls_config):
+                QUORUM_LOG.warning(
+                    "peer certificate revoked: connection closed",
+                    extra={"peer": connection.node_id},
+                )
+                self._peer_disconnected(connection)
+                connection.close()
 
     def _retry_closure(self) -> None:
         if self._quorum is None:

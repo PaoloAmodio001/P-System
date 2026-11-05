@@ -51,6 +51,10 @@ max_evidence = 100000     # proofs of equivocation kept in memory
 host = "127.0.0.1"
 port = 8080
 # token_file = "api.token"   # required on any other address; mode 0600, 16 characters or more
+# tls_certificate = "api.crt" # with tls_key: the API over TLS. Otherwise a token travels in clear
+# tls_key = "api.key"
+# requests_per_second = 1000  # for each client address; 429 beyond it
+# burst = 2000
 
 [[peers]]
 node_id = "n1"
@@ -58,7 +62,25 @@ host = "n1.example.org"
 port = 7000
 ```
 
-A setting the program does not recognize is an error, on purpose. Then, once:
+A setting the program does not recognize is an error, on purpose.
+
+**Protecting a key.** In order of strength, and only the first is the default:
+
+1. `identity_key` with mode 0600. The key is in the file and in the memory of the node.
+2. Also `identity_passphrase_file`, for a key made with `psystem key generate --passphrase-file F`. A copied key file or
+   backup gives nothing without the passphrase. Keep it apart, for example in a systemd credential or a container secret. On the
+   same disk it adds little.
+3. `identity_signer = "signer.sock"` in place of the two above, with `psystem signer --key K --socket signer.sock --guard
+   guard.sqlite` as a separate process and user-owned socket. The node holds no key, and the signer refuses a second vote for one
+   `(sender, nonce)` in a committee, also after a bad restore. Start it first. Back up `guard.sqlite`, and never go back to an older
+   copy without knowing why. If the signer is away the node simply does not vote. **No HSM or KMS has been integrated**: the
+   signer is where one would go.
+
+**Revoking a certificate.** Set `tls_revoked = "revoked.txt"`: one SHA-256 per line, from `psystem authority fingerprint
+CERT`, with `#` for notes. It is read on each connection and at each synchronization, so a change needs no restart, and live connections close. A
+list that cannot be read refuses every peer. It stops the TLS certificate and not the key of a member: for that, change the committee.
+
+Then, once:
 
 ```sh
 psystem init-store --config n0/node.toml

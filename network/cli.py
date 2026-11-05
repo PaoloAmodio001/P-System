@@ -3,7 +3,9 @@ The `psystem` command: create a deployment, run a node, talk to one.
 
     psystem authority init ca/
     psystem authority issue ca/ --node-id n0 --out n0/
-    psystem key generate n0/identity.key
+    psystem authority fingerprint n0/n0.crt
+    psystem key generate n0/identity.key [--passphrase-file F]
+    psystem signer --key K --socket S --guard G [--passphrase-file F]
     psystem key show n0/identity.key
     psystem genesis genesis.json --member KEY... --f 1 --balance ACCOUNT=AMOUNT...
     psystem init-store --config n0/node.toml
@@ -46,20 +48,55 @@ def _authority_issue(args) -> int:
     return 0
 
 
+def _authority_fingerprint(args) -> int:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+
+    certificate = x509.load_pem_x509_certificate(Path(args.certificate).read_bytes())
+    print(certificate.fingerprint(hashes.SHA256()).hex())
+    return 0
+
+
+def _passphrase_of(args) -> bytes | None:
+    from network.deployment import read_passphrase
+
+    return read_passphrase(Path(args.passphrase_file)) if args.passphrase_file else None
+
+
 def _key_generate(args) -> int:
     identity = Identity.create()
-    identity.save(Path(args.path))
+    identity.save(Path(args.path), _passphrase_of(args))
     print(json.dumps(_describe(identity)))
     return 0
 
 
 def _key_show(args) -> int:
-    print(json.dumps(_describe(Identity.load(Path(args.path)))))
+    print(json.dumps(_describe(Identity.load(Path(args.path), _passphrase_of(args)))))
     return 0
 
 
 def _describe(identity: Identity) -> dict:
     return {"public_key": identity.public_key.hex(), "account": identity.identity_id}
+
+
+def _signer(args) -> int:
+    from network.remote_signer import SignerServer
+
+    server = SignerServer(
+        Identity.load(Path(args.key), _passphrase_of(args)),
+        Path(args.socket),
+        Path(args.guard),
+    )
+    stop = threading.Event()
+
+    for name in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(name, lambda *_: stop.set())
+
+    server.start()
+    print(json.dumps({"socket": args.socket, "public_key": server.public_key.hex()}), flush=True)
+    stop.wait()
+    server.stop()
+    return 0
 
 
 def _genesis(args) -> int:
@@ -149,7 +186,7 @@ def _client(args):
     from sdk.client import Client
 
     token = Path(args.token_file).read_text().strip() if args.token_file else None
-    return Client(args.api, token)
+    return Client(args.api, token, ca_file=args.api_ca)
 
 
 def _status(args) -> int:
@@ -236,10 +273,21 @@ def _parser() -> argparse.ArgumentParser:
     key = commands.add_parser("key").add_subparsers(required=True, dest="action")
     generate = key.add_parser("generate")
     generate.add_argument("path")
+    generate.add_argument("--passphrase-file")
     generate.set_defaults(run=_key_generate)
     show = key.add_parser("show")
     show.add_argument("path")
+    show.add_argument("--passphrase-file")
     show.set_defaults(run=_key_show)
+    fingerprint = authority.add_parser("fingerprint")
+    fingerprint.add_argument("certificate")
+    fingerprint.set_defaults(run=_authority_fingerprint)
+    signer = commands.add_parser("signer")
+    signer.add_argument("--key", required=True)
+    signer.add_argument("--socket", required=True)
+    signer.add_argument("--guard", required=True)
+    signer.add_argument("--passphrase-file")
+    signer.set_defaults(run=_signer)
 
     genesis = commands.add_parser("genesis")
     genesis.add_argument("path")
@@ -263,6 +311,7 @@ def _parser() -> argparse.ArgumentParser:
         sub = commands.add_parser(name)
         sub.add_argument("--api", required=True)
         sub.add_argument("--token-file")
+        sub.add_argument("--api-ca")
         sub.set_defaults(run=run)
         if name == "transfer":
             sub.add_argument("--key", required=True)
