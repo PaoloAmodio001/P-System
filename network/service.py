@@ -30,6 +30,7 @@ from network.quorum import VoteStoreError
 
 API_VERSION = "v1"
 MAX_BODY_BYTES = 1024 * 1024
+MAX_DISCARDED_BYTES = 8 * 1024 * 1024
 MAX_BATCH = 256
 REQUEST_TIMEOUT = 10.0
 
@@ -155,6 +156,19 @@ class _Handler(BaseHTTPRequestHandler):
 
         if length < 0 or length > MAX_BODY_BYTES:
             self.close_connection = True
+            # Read what is on its way, up to a limit. Closing right away would turn this answer
+            # into a broken pipe for a client still sending.
+            remaining = min(max(length, 0), MAX_DISCARDED_BYTES)
+
+            try:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                return None
+
             self._reply(413, {"error": "BODY TOO LARGE"})
             return None
 
