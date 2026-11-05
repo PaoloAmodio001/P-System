@@ -147,6 +147,10 @@ class NodeServer:
                 connection.close()
                 return
 
+            if SecureTransport.is_revoked(connection, self.tls_config):
+                connection.close()
+                return
+
             # From where it connected: a peer may announce all its interfaces or nothing
             # useful. Only the port is its own to say, because the connection came from an
             # ephemeral one.

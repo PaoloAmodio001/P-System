@@ -71,15 +71,17 @@ IN_QUORUM = {
         "",
     ),
     "a vote executes": (
-        "        return Vote.create(self.committee, self._identity, event)\n",
-        "        if self._is_fresh(event) and self._is_ready(event) and"
+        "            return Vote.create(self.committee, self._identity, event)\n",
+        "            if self._is_fresh(event) and self._is_ready(event) and"
         " self._is_executable(event):\n"
-        "            self._execute(QuorumCertificate(event, ()))\n"
-        "        return Vote.create(self.committee, self._identity, event)\n",
+        "                self._execute(QuorumCertificate(event, ()))\n"
+        "            return Vote.create(self.committee, self._identity, event)\n",
     ),
     "a node refuses a certificate against its own vote": (
-        "            and self.certificate_is_valid(certificate)\n"
-        "        )\n",
+        "        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)\n",
+        "        event = certificate.event\n"
+        "        return (\n"
+        "            self._can_run_now(event)\n"
         "            and self.certificate_is_valid(certificate)\n"
         "            and not any(\n"
         "                (v.sender, v.nonce) == (event.sender, event.nonce)\n"

@@ -2,7 +2,26 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Non iniziata di proposito: C, che richiede prima un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05.
+**Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.
+
+### Secondo passo del 2026-11-05, branch `hardening-2`: modifiche
+
+Paolo ha autorizzato il merge della PR #1 e ha dato autonomia di decisione.
+
+- **Falla grave corretta: chiavi delle epoche finite.** Con le chiavi di un comitato chiuso, rubate dopo la chiusura, un nodo di un'epoca successiva eseguiva un trasferimento mai firmato dal mittente: cambiare comitato non proteggeva da una chiave rubata. Ora un certificato di un comitato finito vale solo per un evento nei blocchi. Dimostrato: `accepted_complete`, `old_keys_no_double_spend`. Limite formale: un mittente che ha firmato due versioni, entrambe riportate.
+- **Blocco definitivo corretto: morte di chi propone.** Un proponente caduto al momento sbagliato e un nuovo tentativo fermavano l'intero comitato per sempre. Ora i membri conservano la chiusura votata e la offrono, e chi ha votato può finirla da solo. Dimostrato: `blocking_closure_is_seen`, `retry_gets_every_vote`. Resta `split_closures_block`: due proponenti insieme possono ancora bloccare un'epoca.
+- **Interrogare lo stato fermava il nodo.** `/v1/status` era quadratico sotto il lock: 32 secondi con 2000 eventi. Trovato da una campagna di guasti lunga, invisibile a tutti i test con pochi eventi.
+- **Altri difetti corretti.** Un peer che non legge rallentava tutti gli altri. Un'epoca oltre circa 12 000 eventi non poteva chiudersi. I certificati fallivano la verifica rigorosa di Python. L'API della demo in container era irraggiungibile, quindi l'esempio del README non poteva funzionare.
+- **Aggiunte.** Differenziale D tra un validatore e Lean sulle epoche; guasti di rete iniettati tra processi veri e prova lunga (`tests/chaos.py`, `scripts/soak.py`); firmatario separato con proprio blocco del voto; chiavi cifrate; TLS e limiti sull'API; revoca a elenco; OpenAPI; allarmi; bozza del preprint, non pubblicata.
+- **Fase C, decisione presa in autonomia.** Asset come conti `titolare/emittente.nome.quantità`: non cambiano il formato degli eventi né le prove. Gli oggetti con stato proprio restano fuori, perché cambierebbero entrambi e serve ancora un caso reale.
+- **Lean.** 160 teoremi, 22 moduli, solo i tre assiomi standard.
+
+### Problemi del secondo passo
+
+- **Un altro commit con un test veloce fallito**, per la stessa causa di `48a1d72`: il comando non si fermava sull'errore. Non pushato, corretto con un amend prima di ogni altro commit. Dopo, il commit parte solo a controlli verdi.
+- **Un'eccezione nel controllo di revoca uccideva il thread di sincronizzazione.** L'ho introdotta io in questo passo, l'ha mostrata un avviso di pytest. Corretta con un test; ora la suite completa tratta queste eccezioni come errori.
+- **18 mutazioni si erano disallineate** per i refactor, e un test non vedeva più il comportamento nuovo. Altre 14 mutazioni sono sopravvissute quando le ho scritte: 13 hanno richiesto test più forti o bersagli corretti, una era equivalente ed è stata tolta con la motivazione.
+- **Durata delle prove.** Le campagne da 40 secondi passavano: il difetto quadratico è emerso solo a 120 secondi. Una prova di qualche ora su una macchina non equivale a settimane su macchine separate.
 
 ### Passo del 2026-11-05: modifiche
 
@@ -23,8 +42,8 @@
 Vedi la tabella in `ROADMAP.md`. Soprattutto:
 
 - **Serve qualcuno di esterno:** audit di codice e crittografico, test di penetrazione, revisione del protocollo, Jepsen, operatori indipendenti, pilota, consulenza legale. Il preprint va scritto e deciso da Paolo.
-- **Fase C:** un utente potenziale deve dire se il modello a proprietario singolo gli basta, prima di cambiare il formato degli eventi.
-- **Tecnico:** nessun differenziale tra le epoche in Python e Lean; prove su macchine separate; prove lunghe; HSM o KMS; un'epoca regge circa 12 000 eventi con `n = 4`.
+- **Fase C:** fatti gli asset. Per gli oggetti con stato proprio, un utente potenziale deve dire se servono, prima di cambiare il formato degli eventi.
+- **Tecnico:** prove su macchine separate; prove lunghe settimane; HSM o KMS; nessuna istantanea né potatura del log; una catena falsa mostrata a chi entra dalla genesi, con le chiavi del governo rubate.
 
 ### Riepilogo dell'ultimo passo
 

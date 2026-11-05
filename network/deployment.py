@@ -18,6 +18,7 @@ from core.state import State
 from crypto.identity import Identity
 from network.peer import Peer
 from network.quorum import QuorumConfig
+from network.remote_signer import RemoteIdentity, SignerUnavailable
 from network.secure_transport import TLSConfig
 
 
@@ -123,6 +124,10 @@ class ApiConfig:
     host: str = "127.0.0.1"
     port: int = 8080
     token: str | None = None
+    tls_certificate: Path | None = None
+    tls_key: Path | None = None
+    requests_per_second: float = 1000.0
+    burst: float = 2000.0
 
 
 @dataclass(frozen=True)
@@ -130,7 +135,7 @@ class NodeConfig:
     node_id: str
     host: str
     port: int
-    identity: Identity
+    identity: Identity | RemoteIdentity
     tls: TLSConfig
     genesis: Genesis
     store: Path
@@ -162,9 +167,12 @@ _TOP_LEVEL = {
     "host",
     "port",
     "identity_key",
+    "identity_passphrase_file",
+    "identity_signer",
     "tls_certificate",
     "tls_key",
     "tls_authority",
+    "tls_revoked",
     "genesis",
     "store",
     "peers",
@@ -201,6 +209,46 @@ def _port(value: int, what: str) -> int:
     return value
 
 
+def read_passphrase(path: Path) -> bytes:
+    """A file for a passphrase has the rules of a file for a key."""
+    try:
+        if path.stat().st_mode & 0o077:
+            raise DeploymentError("PASSPHRASE FILE IS READABLE BY OTHERS")
+        passphrase = path.read_bytes().strip()
+    except OSError as error:
+        raise DeploymentError(f"CANNOT READ PASSPHRASE: {error}") from error
+
+    if not passphrase:
+        raise DeploymentError("PASSPHRASE FILE IS EMPTY")
+
+    return passphrase
+
+
+def _read_identity(data: dict, base: Path) -> Identity | RemoteIdentity:
+    """The key of this node, from a file or from a signer in another process. One of the two."""
+    if ("identity_key" in data) == ("identity_signer" in data):
+        raise DeploymentError("SET EXACTLY ONE OF identity_key AND identity_signer")
+
+    if "identity_signer" in data:
+        if "identity_passphrase_file" in data:
+            raise DeploymentError("A PASSPHRASE BELONGS TO THE SIGNER, NOT TO THE NODE")
+
+        try:
+            return RemoteIdentity(base / _require(data, "identity_signer", str))
+        except SignerUnavailable as error:
+            raise DeploymentError(f"CANNOT REACH THE SIGNER: {error}") from error
+
+    passphrase = None
+
+    if "identity_passphrase_file" in data:
+        passphrase = read_passphrase(base / _require(data, "identity_passphrase_file", str))
+
+    try:
+        return Identity.load(base / _require(data, "identity_key", str), passphrase)
+    except (OSError, ValueError, TypeError) as error:
+        raise DeploymentError(f"CANNOT READ IDENTITY KEY: {error}") from error
+
+
 def read_node_config(path: Path) -> NodeConfig:
     """Paths in the file are relative to the file."""
     path = Path(path)
@@ -235,8 +283,25 @@ def read_node_config(path: Path) -> NodeConfig:
 
     api_data = _optional(data, "api", dict, {}, "configuration")
 
-    if api_data.keys() - {"host", "port", "token_file"}:
+    if api_data.keys() - {
+        "host",
+        "port",
+        "token_file",
+        "tls_certificate",
+        "tls_key",
+        "requests_per_second",
+        "burst",
+    }:
         raise DeploymentError("UNKNOWN SETTINGS IN api")
+
+    if ("tls_certificate" in api_data) != ("tls_key" in api_data):
+        raise DeploymentError("API TLS NEEDS BOTH tls_certificate AND tls_key")
+
+    api_rate = _optional(api_data, "requests_per_second", (int, float), 1000.0, "api")
+    api_burst = _optional(api_data, "burst", (int, float), 2 * api_rate, "api")
+
+    if api_rate <= 0 or api_burst < 1:
+        raise DeploymentError("requests_per_second AND burst MUST BE POSITIVE")
 
     api_host = _optional(api_data, "host", str, "127.0.0.1", "api")
     token = None
@@ -267,10 +332,7 @@ def read_node_config(path: Path) -> NodeConfig:
     if interval <= 0:
         raise DeploymentError("sync_interval MUST BE POSITIVE")
 
-    try:
-        identity = Identity.load(relative("identity_key"))
-    except (OSError, ValueError, TypeError) as error:
-        raise DeploymentError(f"CANNOT READ IDENTITY KEY: {error}") from error
+    identity = _read_identity(data, path.parent)
 
     node_id = _require(data, "node_id", str)
 
@@ -284,6 +346,7 @@ def read_node_config(path: Path) -> NodeConfig:
             private_key=str(relative("tls_key")),
             ca_file=str(relative("tls_authority")),
             server_hostname=node_id,
+            revoked_file=str(relative("tls_revoked")) if "tls_revoked" in data else None,
         ),
         genesis=read_genesis(relative("genesis")),
         store=relative("store"),
@@ -292,6 +355,10 @@ def read_node_config(path: Path) -> NodeConfig:
             api_host,
             _port(_optional(api_data, "port", int, 8080, "api"), "api"),
             token,
+            path.parent / api_data["tls_certificate"] if "tls_certificate" in api_data else None,
+            path.parent / api_data["tls_key"] if "tls_key" in api_data else None,
+            float(api_rate),
+            float(api_burst),
         ),
         sync_interval=float(interval),
         joining=_optional(data, "joining", bool, False, "configuration"),

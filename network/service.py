@@ -11,9 +11,11 @@ import hmac
 import json
 import logging
 import re
+import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
 
 from core.attestation import EpochChange
 from core.decision_status import DecisionStatus
@@ -33,6 +35,8 @@ MAX_BODY_BYTES = 1024 * 1024
 MAX_DISCARDED_BYTES = 8 * 1024 * 1024
 MAX_BATCH = 256
 REQUEST_TIMEOUT = 10.0
+MAX_CONNECTIONS = 256
+MAX_TRACKED_CLIENTS = 10_000
 
 _EVENT_ID = re.compile(r"[0-9a-f]{64}")
 LOG = logging.getLogger("psystem.service")
@@ -92,6 +96,7 @@ def metrics_text(node: Node) -> str:
             ("psystem_peers_connected", "gauge", "Connected peers", len(node.peer_connections)),
             ("psystem_store_commits_total", "counter", "Durable writes", store.commits),
             ("psystem_store_commit_seconds_total", "counter", "Time spent in durable writes", round(store.commit_seconds, 6)),
+            ("psystem_epoch_votes", "gauge", "Votes of this node in this epoch: close an epoch before about 50000", store.epoch_vote_count()),
         ]
 
     lines = []
@@ -106,6 +111,45 @@ def metrics_text(node: Node) -> str:
         )
 
     return "\n".join(lines) + "\n"
+
+
+class RateLimiter:
+    """A bucket per client address, in bounded memory. The oldest client goes first."""
+
+    def __init__(self, rate: float, burst: float, clock=time.monotonic) -> None:
+        self.rate = rate
+        self.burst = burst
+        self.rejected = 0
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._clients: dict[str, tuple[float, float]] = {}
+
+    def _charge(self, client: str, cost: float) -> float:
+        now = self._clock()
+        tokens, last = self._clients.pop(client, (self.burst, now))
+        tokens = min(self.burst, tokens + (now - last) * self.rate) - cost
+        self._clients[client] = (tokens, now)
+
+        while len(self._clients) > MAX_TRACKED_CLIENTS:
+            del self._clients[next(iter(self._clients))]
+
+        return tokens
+
+    def allow(self, client: str) -> bool:
+        with self._lock:
+            tokens = self._charge(client, 0)
+
+            if tokens < 1:
+                self.rejected += 1
+                return False
+
+            self._charge(client, 1)
+            return True
+
+    def charge(self, client: str, cost: int) -> None:
+        """A request that turned out to cost more, such as a batch. It can go below zero."""
+        with self._lock:
+            self._charge(client, cost)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -137,6 +181,21 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _within_rate(self) -> bool:
+        if self.server.limiter.allow(self.client_address[0]):
+            return True
+
+        # The body, if any, stays unread, so this connection cannot be used again.
+        self.close_connection = True
+        data = json.dumps({"error": "TOO MANY REQUESTS"}).encode()
+        self.send_response(429)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Retry-After", "1")
+        self.end_headers()
+        self.wfile.write(data)
+        return False
 
     def _authorized(self) -> bool:
         token = self.server.token
@@ -186,6 +245,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(503 if halted else 200, {"status": "halted" if halted else "ok"})
             return
 
+        if not self._within_rate():
+            return
+
         if not self._authorized():
             self._reply(401, {"error": "TOKEN REQUIRED"})
             return
@@ -194,7 +256,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._text(200, metrics_text(self.node))
             return
 
-        parts = path.strip("/").split("/")
+        # An account of an asset holds a slash, which arrives as %2F.
+        parts = [unquote(part) for part in path.strip("/").split("/")]
 
         if parts[0] != API_VERSION:
             self._reply(404, {"error": "UNKNOWN PATH"})
@@ -269,6 +332,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(200, encode_certificate(found))
 
     def do_POST(self) -> None:
+        if not self._within_rate():
+            return
+
         if not self._authorized():
             self._reply(401, {"error": "TOKEN REQUIRED"})
             self.close_connection = True
@@ -286,6 +352,7 @@ class _Handler(BaseHTTPRequestHandler):
             if type(body) is not list or not 0 < len(body) <= MAX_BATCH:
                 self._reply(400, {"error": f"A BATCH IS A LIST OF 1 TO {MAX_BATCH}"})
                 return
+            self.server.limiter.charge(self.client_address[0], len(body) - 1)
             self._post_transfers(body, single=False)
         elif path == f"/{API_VERSION}/epoch-changes":
             self._post_epoch_change(body)
@@ -344,6 +411,43 @@ class _Handler(BaseHTTPRequestHandler):
 class _ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    ssl_context: ssl.SSLContext | None = None
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._places = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        connection, address = super().get_request()
+
+        # The handshake happens in the thread of this connection, at the first read, under the
+        # timeout of the handler. Here, one silent client would stop all the others.
+        if self.ssl_context is not None:
+            connection = self.ssl_context.wrap_socket(
+                connection,
+                server_side=True,
+                do_handshake_on_connect=False,
+            )
+
+        return connection, address
+
+    def process_request(self, request, client_address) -> None:
+        # A connection beyond the limit is closed, instead of becoming one more thread.
+        if not self._places.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._places.release()
+
+    def handle_error(self, request, client_address) -> None:
+        # A client that breaks a TLS handshake or goes away is no event for an operator.
+        LOG.debug("API connection failed", exc_info=True)
 
 
 class Service:
@@ -362,6 +466,16 @@ class Service:
         self._api = _ApiServer((config.api.host, config.api.port), _Handler)
         self._api.node = self.node
         self._api.token = config.api.token
+        self._api.limiter = RateLimiter(config.api.requests_per_second, config.api.burst)
+
+        if config.api.tls_certificate is not None:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(config.api.tls_certificate, config.api.tls_key)
+            self._api.ssl_context = context
+        elif config.api.token is not None:
+            LOG.warning("the API token travels in clear: set tls_certificate or use a proxy with TLS")
+
         self._api.genesis_hash = config.genesis.file_hash
         self._api_thread = None
 

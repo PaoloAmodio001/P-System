@@ -557,6 +557,19 @@ def test_the_event_is_on_disk_before_it_is_signed(tmp_path, monkeypatch):
         wallet.transfer("bob", 1)
 
 
+def test_a_journal_from_before_accounts_of_another_key_is_refused(tmp_path):
+    # A journal made by an earlier version names only its key.
+    import sqlite3
+
+    Wallet(Identity.create(), tmp_path / "j").close()
+    connection = sqlite3.connect(tmp_path / "j")
+    connection.execute("DROP TABLE journal_account")
+    connection.commit()
+    connection.close()
+    with pytest.raises(WalletError, match="ANOTHER KEY"):
+        Wallet(Identity.create(), tmp_path / "j")
+
+
 def test_a_journal_of_another_key_is_refused(tmp_path):
     first = Wallet(Identity.create(), tmp_path / "w.sqlite")
     first.close()

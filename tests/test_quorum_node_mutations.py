@@ -49,7 +49,7 @@ MUTATIONS = {
         "        self.state = replica.state\n",
     ),
     "public events shared with the replica": (
-        "        self.local_events = list(executed)\n",
+        "        self.local_events.extend(added)\n",
         "        self.local_events = self._quorum.replica.log\n",
     ),
     "evidence not published": (
@@ -177,23 +177,23 @@ MUTATIONS = {
         "                pass\n",
     ),
     "broadcasts not sent": (
-        "                    target.send(message)\n",
+        "                    target.enqueue(message)\n",
         "                    pass\n",
     ),
     "failed broadcast stops the others": (
-        "                    target.send(message)\n"
+        "                    target.enqueue(message)\n"
         "                except (ConnectionError, OSError, TimeoutError):\n"
         "                    self._disconnect_peer_connection(node_id, target)\n",
-        "                    target.send(message)\n"
+        "                    target.enqueue(message)\n"
         "                except ZeroDivisionError:\n"
         "                    self._disconnect_peer_connection(node_id, target)\n",
     ),
     "failed reply raises": (
-        "            connection.send(message)\n"
+        "            connection.enqueue(message)\n"
         "        except (ConnectionError, OSError, TimeoutError):\n"
         "            self._peer_disconnected(connection)\n"
         "            connection.close()\n",
-        "            connection.send(message)\n"
+        "            connection.enqueue(message)\n"
         "        except ZeroDivisionError:\n"
         "            self._peer_disconnected(connection)\n"
         "            connection.close()\n",

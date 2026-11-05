@@ -37,7 +37,7 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
-from network.secure_transport import TLSConfig
+from network.secure_transport import SecureTransport, TLSConfig
 from core.attestation import guilty_members
 from network.quorum import (
     DriverOutput,
@@ -55,6 +55,7 @@ class Node:
     SIMULTANEOUS_DIAL_SECONDS = 3.0
     RECONNECT_BASE_DELAY = 2.0
     RECONNECT_MAX_DELAY = 60.0
+    STOP_FLUSH_SECONDS = 1.0
 
     def __init__(
         self,
@@ -152,14 +153,28 @@ class Node:
         """
         replica = self._quorum.replica
         driver = self._quorum.driver
-        executed = replica.executed
         equivocations = self.equivocations
 
         for proof in driver.equivocations.values():
             equivocations = equivocations.add(proof)
 
-        self.events = list(executed)
-        self.local_events = list(executed)
+        # This runs for every message, so it only adds what is new. The log grows at the end, and
+        # only a rebuild from disk after a failed write can leave it shorter.
+        log = replica.log
+        known = len(self.events)
+
+        if (
+            known > len(log)
+            or len(self.local_events) != known
+            or (known and self.events[known - 1] is not log[known - 1].event)
+        ):
+            known = 0
+            self.events = []
+            self.local_events = []
+
+        added = [certificate.event for certificate in log[known:]]
+        self.events.extend(added)
+        self.local_events.extend(added)
         self.signed_events = dict(driver.signed_events)
         self.equivocations = equivocations
 
@@ -223,7 +238,16 @@ class Node:
             connections = list(self.peer_connections.values())
             self.peer_connections.clear()
 
+        # What was already decided should leave, but a peer that does not read must not
+        # hold up a stop.
+        deadline = time.monotonic() + self.STOP_FLUSH_SECONDS
+
         for connection in connections:
+            flush = getattr(connection, "flush", None)
+
+            if flush is not None:
+                flush(max(0.0, deadline - time.monotonic()))
+
             connection.close()
 
         self._server = None
@@ -1054,11 +1078,26 @@ class Node:
         # halt are the only way to CONFLICTED, and a simple equivocation is not one.
         known = list(self.events) + self._quorum_halt_events
 
-        for index, first in enumerate(known):
-            for second in known[index + 1:]:
-                if ConflictResolver.conflicting(first, second):
-                    conflict = conflict.add(first)
-                    conflict = conflict.add(second)
+        # Linear in the events, and this runs under the lock of the node: every question about
+        # its status would otherwise stop it for longer and longer as the log grows. It finds what
+        # ConflictResolver.conflicting finds on every pair: tests/test_node_status_scale.py.
+        payload_of_id: dict[str, bytes] = {}
+        events_of_spend: dict[tuple[str, int], dict[str, Transfer]] = {}
+
+        for event in known:
+            event_id = event.event_id()
+            payload = event_payload(event)
+
+            # A later event equal to an earlier one changes nothing, so each id keeps its first.
+            if payload_of_id.setdefault(event_id, payload) != payload:
+                raise ValueError("DUPLICATE EVENT ID WITH DIFFERENT CONTENT")
+
+            events_of_spend.setdefault((event.sender, event.nonce), {}).setdefault(event_id, event)
+
+        for by_id in events_of_spend.values():
+            if len(by_id) > 1:
+                for event in by_id.values():
+                    conflict = conflict.add(event)
 
         return conflict
 
@@ -1346,6 +1385,42 @@ class Node:
             for connection in targets:
                 self._request_certificates(connection)
 
+            self._retry_closure()
+            self._close_revoked(targets)
+
+    def _close_revoked(self, connections) -> None:
+        """A certificate revoked after its connection started. It stops here, with no restart."""
+        for connection in connections:
+            stream = connection.connection
+
+            if stream is None or not hasattr(stream, "getpeercert"):
+                continue
+
+            try:
+                revoked = SecureTransport.is_revoked(stream, self.tls_config)
+            except (OSError, ValueError, AttributeError):
+                # The connection closed in the meantime, and there is nothing left to stop.
+                continue
+
+            if revoked:
+                QUORUM_LOG.warning(
+                    "peer certificate revoked: connection closed",
+                    extra={"peer": connection.node_id},
+                )
+                self._peer_disconnected(connection)
+                connection.close()
+
+    def _retry_closure(self) -> None:
+        if self._quorum is None:
+            return
+
+        def call():
+            if self._quorum.closed:
+                return _NOTHING_SENT
+            return self._quorum.driver.retry()
+
+        self._send_quorum_output(self._driver_call(call), None)
+
     def _request_certificates(self, connection) -> None:
         """Ask a peer for what this node lacks. In quorum mode only."""
         if self._quorum is None:
@@ -1392,7 +1467,7 @@ class Node:
         for message in output.broadcasts:
             for node_id, target in targets:
                 try:
-                    target.send(message)
+                    target.enqueue(message)
                 except (ConnectionError, OSError, TimeoutError):
                     self._disconnect_peer_connection(node_id, target)
                 except ValueError as error:
@@ -1406,7 +1481,7 @@ class Node:
 
     def _send_quorum_reply(self, connection, message) -> None:
         try:
-            connection.send(message)
+            connection.enqueue(message)
         except (ConnectionError, OSError, TimeoutError):
             self._peer_disconnected(connection)
             connection.close()

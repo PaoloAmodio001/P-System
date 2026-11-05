@@ -21,34 +21,40 @@ authors of the code, and it is what an audit should start from and attack.
 |---|---|---|---|
 | Sender | Signs two versions of a spend | Vote lock: at most one is certified, maybe none | `no_double_spend` FORMAL (model); differentials A, B, C EMPIRICAL |
 | Up to `f` members | Vote for everything, forge, withhold | Quorum intersection | Same |
+| Thief of keys of an ended committee, all of them | Certify a spend nobody signed, or a second one | An old certificate counts only for an event in the locks | `old_keys_no_double_spend`, `accepted_complete` FORMAL (model); `tests/test_quorum_old_keys.py` EMPIRICAL |
+| Same, and of governance | Show a joining node or a light client another chain from the genesis | **Not stopped.** Compare the id of a recent committee out of band before trusting one | None |
 | Up to `f` members | Lie in a report to lose a certified event | An honest signer among any quorum of reports | `closure_preserves_certified` FORMAL (model) |
 | Up to `f` members | Report events nobody signed, to lock accounts | A report with one such event is refused | `tests/test_quorum_epochs.py` EMPIRICAL |
 | More than `f` members | Sign two certificates | Not stopped. Detected if one node sees both, with the guilty named | `conflict_identifies_faulty` FORMAL (model) |
 | Holder of any node certificate | Claim another node id | Id checked against the certificate | `tests/test_node_tls_config.py` EMPIRICAL |
 | Holder of any node certificate | Send malformed frames or messages | The connection closes and the node goes on | `tests/test_quorum_differential_network.py`, `tests/test_fuzz_inputs.py` EMPIRICAL |
-| Holder of any node certificate | Stop reading | Send deadline, then the connection closes | `tests/test_quorum_differential_network.py` EMPIRICAL |
+| Holder of any node certificate | Stop reading | Each peer has its own queue and writer, so only that peer waits. Send deadline and bound on the queue, then the connection closes | `tests/test_peer_queue_and_fragments.py`, `tests/test_quorum_differential_network.py` EMPIRICAL |
 | Anyone who reaches the port | Hold connections open | Deadline and limit on handshakes. **Reduced, not removed** | `tests/test_node_server_handshake.py` |
 | Holder of any node certificate | Fill a node with signed events | Nonce window, funds check, bound on evidence. **Reduced, not removed** | `tests/test_service.py` |
+| Intruder in a node with a separate signer | Make the member equivocate | Second vote lock in the signer | `tests/test_hardening.py` EMPIRICAL |
+| Anyone who reaches the API | Flood it | Rate limit per address, bound on connections | `tests/test_hardening.py` EMPIRICAL |
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
+| Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
+| Crash | A proposer dies during a closure | Members keep the closure they voted for, and finish it | `tests/test_quorum_epoch_retry.py` EMPIRICAL |
 
 ## Known gaps
 
 - **Python is not proved.** The theorems are about the Lean model. The link with Python is tests. A bug in Python can
   break what the model proves. This is the largest gap, and no number of tests closes it.
-- **Denial of service.** A certificate holder can still consume CPU and bandwidth: there is no rate limit per
-  connection, and a bad frame costs one signature check. Anyone who reaches the port can keep the 64 handshake places
-  busy. Broadcasts are sequential, so a peer that does not read delays those after it, by up to its deadline.
-- **Keys** are files with mode 0600. No HSM, no KMS, no encryption at rest. A signer in a separate process, keeping the
-  lock durable before the signature, is the next step.
-- **Revocation.** No revocation list for TLS certificates.
+- **Denial of service.** A certificate holder can still consume CPU and bandwidth: each connection is paced at 5000 messages per second, by reading less, and a bad frame costs one signature check. Anyone who reaches the port can keep the 64 handshake places
+  busy. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
+- **Keys** are files with mode 0600 by default. They can be encrypted, and they can live in a signer in another process that
+  keeps its own vote lock (`network/remote_signer.py`, `EMPIRICAL`). That guard does not know the locks of earlier epochs, and
+  its last signatures can be forgotten in a power cut. No HSM or KMS has been integrated.
+- **Revocation** is a list of fingerprints on each node, kept by hand. It stops a TLS certificate, not a member key. No CRL or OCSP.
 - **Timing.** Python and `cryptography` have not been examined for side channels, and neither has the comparison of API
   tokens beyond `hmac.compare_digest`.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
 - **Liveness.** `honest_sender_certifies` assumes delivery. Nothing promises progress against an adversarial network,
-  and a proposer that splits the votes on a closure can stop an epoch from closing for good.
-- **API.** No TLS on the HTTP interface. No rate limit.
+  and proposers acting at once can still split the votes on a closure, which stops that epoch from closing for good.
+- **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.
 - **Power loss.** `kill -9` is tested. Power loss is not, and `fsync` calls were traced by hand once.
 
 ## What an external audit should do

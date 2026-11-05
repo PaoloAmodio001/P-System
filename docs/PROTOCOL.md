@@ -75,13 +75,49 @@ members. A node stops for good and keeps both: see `docs/OPERATIONS.md`.
 5. The events of the reports become locks, added to the earlier ones. A validator votes for `e` only if
    every lock on its `(sender, nonce)` is `e`.
 
+A certificate of an ended committee counts only for an event in the locks. Its keys can be stolen after the closure, and then
+any signature verifies, while everything really certified is in the locks (`closure_preserves_certified`). A conflict over an
+ended committee is logged and ignored: it does not halt the node. See `QuorumOldKeys.lean`, and its limit: a sender that signed
+two versions, both reported, can have the wrong one taken with stolen keys.
+
 So an event with no certificate and one alternative finishes when sent again in the next epoch, and an
 equivocated one stays locked for good. `split_lock_ambiguous` shows no rule on the reports can avoid
 that with `n = 3f+1`.
 
-Two proposers at once can split the votes on the closure, and then that epoch never closes. Only one
-should act: this is an operating rule, since nothing enforces it.
+A proposer can die, and an order can get lost. Each member keeps on disk the closure it voted for, so:
 
-The size of a closure is limited by the frame of 16 MiB. Measured with `n = 4`, three reports holding the
-same events: 1330 bytes per event, so about 12 000 events per epoch. Beyond that the closure cannot be sent and
-the epoch cannot close, so an operator must close epochs earlier. The log says "message too large to send".
+- A member asked for another closure, or given the order again, answers `CLOSURE_LOCKED` with the one it voted for, and a
+  proposer works for that one in place of its own. Any quorum of reporters includes a member of any closure that could block
+  the others, so a retry finds it.
+- A proposer sends again what it asked every 10 seconds, until the closure is installed.
+- A member that voted and sees no closure for 10 seconds asks for the votes on that closure itself. Several doing this ask for
+  one closure, so this splits nothing.
+
+No member ever signs a second closure for an epoch, so `closure_unique` is not touched.
+
+What remains: **two proposers acting at once before any vote** can still split the votes so that no closure gets a quorum, and a
+faulty member can try the same. That epoch then never closes, and voting has stopped. Preventing it for good would take
+consensus, which this system does not have. So one proposer should act: this is an operating rule, since nothing enforces it.
+
+A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `CLOSURE_VOTE_REQUEST` and `EPOCH_CLOSURE`, and only
+those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB, next to each other on the connection, with
+the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between, a piece out of order or a wrong digest closes
+the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
+before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.
+
+## Assets
+
+An asset is `issuer.name.supply`, where `issuer` is an account id, `name` is 1 to 64 of `A-Za-z0-9_-`, and `supply` is 1 to
+2^256-1. An account of it is `owner/asset`. To the protocol this is one more account with its own balance and nonces, so the event
+format, the locks and the proofs do not change.
+
+- The account of the issuer starts with the whole supply, and all others with nothing. Nothing can make more: a supply of 1 is one
+  unique item, and moving it is a change of custody.
+- A validator votes only if the sender signed as the `owner`, and only if sender and receiver are of the same asset. The native unit
+  of the genesis is the same rule with no asset. So by `executed_authorized` nothing else executes, with at most `f` faulty members.
+- The owner of an asset account signs one event per nonce of **that account**, so equivocating on one asset locks only that account.
+- Anyone can name an asset with their own id as issuer. A name says who issued it and how much exists, and nothing about what it
+  is worth or whether it stands for anything real.
+
+Not included: objects with their own state, and any exchange between two owners. An atomic swap needs both parties in one
+step: it needs consensus or a different protocol, and this system has neither.

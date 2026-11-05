@@ -60,19 +60,12 @@ IN_ATTESTATION = {
         "",
     ),
     "report with events nobody signed": (
-        "            and all(_is_signed_by_its_sender(signed) for signed in self.votes)\n",
+        "            and all(is_good(signed) for signed in self.votes)\n",
         "",
     ),
     "signer of an event need not be its sender": (
-        "        and signed.identity_id == signed.transfer.sender\n"
-        "    )\n"
-        "\n"
-        "\n"
-        "def _votes_digest",
-        "    )\n"
-        "\n"
-        "\n"
-        "def _votes_digest",
+        "        and signed.identity_id == account_owner(signed.transfer.sender)\n",
+        "",
     ),
     "report signature not checked": (
         "            and verify_signature(\n"
@@ -100,7 +93,7 @@ IN_ATTESTATION = {
     ),
     "closure with reports not checked": (
         "            and all(\n"
-        "                report.verify(committee, self.change.change_id)\n"
+        "                report.verify(committee, self.change.change_id, checked)\n"
         "                for report in self.reports\n"
         "            )\n",
         "",
@@ -226,20 +219,17 @@ IN_QUORUM = {
         "        ):\n"
         "            return _NOTHING\n"
         "\n"
-        "        report = self.replica.report_epoch(change.change_id)\n"
-        "\n"
-        "        if report is None:\n",
+        "        replies = []\n",
         "            or self.halted\n"
         "        ):\n"
         "            return _NOTHING\n"
         "\n"
-        "        report = self.replica.report_epoch(change.change_id)\n"
-        "\n"
-        "        if report is None:\n",
+        "        replies = []\n",
     ),
     "candidate not checked": (
+        "            or self.halted\n"
         "            or not closure.is_valid_candidate(self.governance, self.committee)\n",
-        "",
+        "            or self.halted\n",
     ),
     "closure not checked": (
         "            or not closure.verify(self.governance, self.committee)\n",

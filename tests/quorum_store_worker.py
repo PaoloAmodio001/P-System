@@ -125,6 +125,8 @@ class _ReplyHolder:
     def send(self, message):
         self.sent.append(message)
 
+    enqueue = send
+
 
 def run_halt_mode(mode: str, path: Path) -> None:
     store_types = {

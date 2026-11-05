@@ -28,6 +28,11 @@ automatically prove that the Python implementation satisfies it.
 | Causal ordering is preserved | Every event runs after its declared parents in every valid execution, and so in the order computed by `derive` (`ValidSequence`, `derive_sound`) | `tests/test_derive.py`, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
 | Conflicting events are not jointly executable | In the derivation model two events of one sender with the same nonce cannot both run; covered by `derive_eq_none_iff` | `tests/test_conflict_closure.py`, `tests/test_lean_differential.py` and resolver tests | FORMAL for the derivation (model); EMPIRICAL (Python) |
 | Deterministic selection of the next event | `selectNext_spec` (smallest ready and executable id, the current Python rule) | Deterministic ordering tests, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| Stolen keys of ended committees cannot certify new spends | `accepted_complete`, `old_keys_no_double_spend` | `tests/test_quorum_old_keys.py` | FORMAL (model), EMPIRICAL (Python) |
+| A closure survives the death of its proposer | `blocking_closure_is_seen`, `retry_gets_every_vote`, given delivery | `tests/test_quorum_epoch_retry.py` | FORMAL (model), EMPIRICAL (Python) |
+| The supply of an asset does not grow | `asset_supply_conserved`, with `executed_authorized` | `tests/test_assets.py` | FORMAL (model), EMPIRICAL (Python) |
+| One validator across epochs follows the model | None | `tests/test_epoch_differential.py` | EMPIRICAL |
+| Safety under network faults between real processes | None | `tests/chaos.py`, `scripts/soak.py` | EMPIRICAL, on one machine |
 | Conflicting alternatives are preserved | None | `tests/test_conflict_rebuild_semantics.py` and reconciliation tests | EMPIRICAL |
 | Duplicate ingress is not fresh execution | None (precondition of the derivation theorems: distinct ids) | `tests/test_sync_idempotence.py`, canonical identity and lifecycle tests | EMPIRICAL |
 | Reconciliation preserves event knowledge | None | Network reconciliation and canonical-view tests | EMPIRICAL |

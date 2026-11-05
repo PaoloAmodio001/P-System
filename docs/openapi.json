@@ -1,0 +1,714 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "P-System node API",
+  "version": "1",
+  "description": "What a node says about state may be behind, or false if the node is faulty: only a certificate proves something. See docs/API.md. Not ready for production: docs/VALIDATION-PLAN.md."
+ },
+ "components": {
+  "securitySchemes": {
+   "bearer": {
+    "type": "http",
+    "scheme": "bearer"
+   }
+  },
+  "schemas": {
+   "Error": {
+    "type": "object",
+    "required": [
+     "error"
+    ],
+    "properties": {
+     "error": {
+      "type": "string"
+     }
+    }
+   },
+   "SignedTransfer": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "transfer",
+     "public_key",
+     "signature"
+    ],
+    "properties": {
+     "transfer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "sender",
+       "receiver",
+       "amount",
+       "nonce",
+       "parents"
+      ],
+      "properties": {
+       "sender": {
+        "type": "string"
+       },
+       "receiver": {
+        "type": "string"
+       },
+       "amount": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "nonce": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "parents": {
+        "type": "array",
+        "items": {
+         "type": "string",
+         "pattern": "^[0-9a-f]{64}$"
+        }
+       }
+      }
+     },
+     "public_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+     },
+     "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$"
+     }
+    }
+   },
+   "Status": {
+    "type": "object",
+    "required": [
+     "api_version",
+     "node_id",
+     "epoch",
+     "committee_id",
+     "genesis_hash",
+     "executed",
+     "state_root",
+     "halted",
+     "conflicted",
+     "is_member",
+     "peers",
+     "guilty_members"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "api_version": {
+      "type": "string"
+     },
+     "node_id": {
+      "type": "string"
+     },
+     "epoch": {
+      "type": "integer"
+     },
+     "committee_id": {
+      "type": "string"
+     },
+     "genesis_hash": {
+      "type": "string"
+     },
+     "executed": {
+      "type": "integer"
+     },
+     "state_root": {
+      "type": "string"
+     },
+     "halted": {
+      "type": "boolean"
+     },
+     "conflicted": {
+      "type": "boolean"
+     },
+     "is_member": {
+      "type": "boolean"
+     },
+     "peers": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "guilty_members": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   },
+   "Account": {
+    "type": "object",
+    "required": [
+     "account",
+     "balance",
+     "next_nonce"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "account": {
+      "type": "string"
+     },
+     "balance": {
+      "type": "integer"
+     },
+     "next_nonce": {
+      "type": "integer"
+     }
+    }
+   }
+  }
+ },
+ "security": [
+  {
+   "bearer": []
+  },
+  {}
+ ],
+ "paths": {
+  "/healthz": {
+   "get": {
+    "security": [
+     {}
+    ],
+    "summary": "Alive and not halted. Not limited, no token.",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "Halted",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/metrics": {
+   "get": {
+    "summary": "Metrics in the text format of Prometheus",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "text/plain": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/status": {
+   "get": {
+    "summary": "What this node says about itself",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Status"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/accounts/{account}": {
+   "get": {
+    "summary": "Balance and next nonce, as this node knows them",
+    "parameters": [
+     {
+      "name": "account",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Account"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/certificates/{event_id}": {
+   "get": {
+    "summary": "The certificate of an event this node executed",
+    "parameters": [
+     {
+      "name": "event_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "pattern": "^[0-9a-f]{64}$"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Not an event id",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "This node has not executed it",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/closures": {
+   "get": {
+    "summary": "The closures of the chain, in order",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/transfers": {
+   "post": {
+    "summary": "Ask for votes on a signed transfer. 202 says nothing about a certificate.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SignedTransfer"
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Taken",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Malformed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Refused by this node",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "411": {
+      "description": "No length",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "413": {
+      "description": "Over 1 MiB",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "The disk failed: nothing was signed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/transfers:batch": {
+   "post": {
+    "summary": "Up to 256 signed transfers, sharing one write. Costs its size in the rate limit.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 256,
+        "items": {
+         "$ref": "#/components/schemas/SignedTransfer"
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Taken",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Malformed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Refused by this node",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "411": {
+      "description": "No length",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "413": {
+      "description": "Over 1 MiB",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "The disk failed: nothing was signed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/epoch-changes": {
+   "post": {
+    "summary": "An order of governance to end this epoch. Send it to one node.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object"
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Taken",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Malformed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Not valid here",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "411": {
+      "description": "No length",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "413": {
+      "description": "Over 1 MiB",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

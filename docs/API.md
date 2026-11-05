@@ -1,8 +1,13 @@
 # HTTP API, version 1
 
 Served by `psystem node`, by default on `127.0.0.1:8080`. On any other address `token_file` is
-required, and the configuration is refused without it. There is no TLS on this interface: outside one
-machine, put it behind a reverse proxy that provides it.
+required, and the configuration is refused without it. Outside one machine set `tls_certificate` and
+`tls_key` in `[api]`, or put a proxy that provides TLS in front. A token in clear is logged as a warning at
+the start. The machine-readable description is `docs/openapi.json`, and a test keeps it equal to the code.
+
+Each client address has `requests_per_second` (default 1000) with a `burst` (default twice that). Beyond it
+the answer is `429` with `Retry-After: 1`. A batch costs its size. `/healthz` is not limited. At most 256
+connections at once: more are closed. Behind a proxy all clients are one address, so limit there.
 
 With a token, every path but `/healthz` needs `Authorization: Bearer <token>`. The token protects the
 operator from noise and from read access. It does not protect accounts: a transfer is valid because its
@@ -18,7 +23,7 @@ proves something: see "Proof" below.
 | `GET /healthz` | `200 {"status":"ok"}`, or `503 {"status":"halted"}` |
 | `GET /metrics` | Text format of Prometheus |
 | `GET /v1/status` | `node_id`, `epoch`, `committee_id`, `genesis_hash`, `executed`, `state_root`, `halted`, `conflicted`, `is_member`, `peers`, `guilty_members` |
-| `GET /v1/accounts/{account}` | `balance`, `next_nonce` |
+| `GET /v1/accounts/{account}` | `balance`, `next_nonce`. An account of an asset holds a slash: write it `%2F` |
 | `GET /v1/certificates/{event_id}` | The certificate, or `404` if this node has not executed it |
 | `GET /v1/closures` | The closures of the chain, in order |
 
@@ -48,6 +53,11 @@ proves something: see "Proof" below.
 
 Sending the same event again is always safe, and is what to do after an error or a timeout. Sending
 another event for the same nonce can lock the account for good: use `sdk.client.Wallet`.
+
+## Assets
+
+`psystem asset-id --issuer ACCOUNT --name N --supply S` says the name of an asset, and `Wallet(identity, journal, asset=...)` signs for
+that account, with one journal per account. See `docs/PROTOCOL.md`.
 
 ## Proof that an event happened
 

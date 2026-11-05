@@ -16,7 +16,9 @@ import json
 import os
 import sqlite3
 import time
+import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +26,7 @@ from pathlib import Path
 from core.attestation import Committee, Governance
 from core.event import Transfer
 from core.signed_event import SignedTransfer
+from core.state import asset_account, split_asset_account
 from crypto.identity import Identity
 from network.message import decode_certificate, decode_epoch_closure
 
@@ -33,8 +36,17 @@ class WalletError(Exception):
 
 
 class Wallet:
-    def __init__(self, identity: Identity, journal: Path) -> None:
+    """
+    The events one account signed. With `asset`, the account is `owner/asset`: it has its own nonces
+    and so its own journal, one file for each.
+    """
+
+    def __init__(self, identity: Identity, journal: Path, asset: str | None = None) -> None:
         self.identity = identity
+        self.asset = asset
+        self._account = (
+            identity.identity_id if asset is None else asset_account(identity.identity_id, asset)
+        )
         self._path = Path(journal)
         try:
             self._connection = sqlite3.connect(self._path, isolation_level=None)
@@ -60,12 +72,23 @@ class Wallet:
                 )
             elif row[0] != identity.public_key.hex():
                 raise WalletError("THIS JOURNAL BELONGS TO ANOTHER KEY")
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS journal_account (account TEXT NOT NULL)"
+            )
+            row = self._connection.execute("SELECT account FROM journal_account").fetchone()
+            if row is None:
+                self._connection.execute(
+                    "INSERT INTO journal_account (account) VALUES (?)",
+                    (self._account,),
+                )
+            elif row[0] != self._account:
+                raise WalletError("THIS JOURNAL BELONGS TO ANOTHER ACCOUNT")
         except sqlite3.Error as error:
             raise WalletError(f"CANNOT OPEN JOURNAL: {error}") from error
 
     @property
     def account(self) -> str:
-        return self.identity.identity_id
+        return self._account
 
     def next_nonce(self) -> int:
         rows = self._connection.execute("SELECT nonce FROM events").fetchall()
@@ -85,6 +108,11 @@ class Wallet:
         another transfer it is refused, and nothing is signed.
         """
         nonce = self.next_nonce() if nonce is None else nonce
+
+        # With an asset, `receiver` can be just who gets it.
+        if self.asset is not None and split_asset_account(receiver) is None:
+            receiver = asset_account(receiver, self.asset)
+
         event = Transfer(self.account, receiver, amount, nonce, tuple(parents))
         canonical = event.canonical().decode()
 
@@ -177,6 +205,7 @@ class ChainVerifier:
     def __post_init__(self) -> None:
         self.committees: dict[int, Committee] = {self.genesis.epoch: self.genesis}
         self.current = self.genesis
+        self._locks: set[bytes] = set()
 
     def add_closures(self, closures: list[dict]) -> None:
         """Follow the closures a node gave. Raises ValueError on one that does not verify."""
@@ -193,19 +222,39 @@ class ChainVerifier:
 
             self.current = closure.change.next_committee(self.current)
             self.committees[self.current.epoch] = self.current
+            self._locks.update(event.canonical() for event in closure.locks())
 
     def verify(self, certificate) -> bool:
+        """
+        As a node does: for a committee that has ended, the event must be in the locks, because
+        its keys may have been stolen since. This protects as far as the closures this verifier
+        has: a node can hold back the later ones, so ask more than one.
+        """
         committee = self.committees.get(certificate.epoch)
-        return committee is not None and certificate.verify(committee)
+        return (
+            committee is not None
+            and certificate.verify(committee)
+            and (
+                certificate.epoch >= self.current.epoch
+                or certificate.event.canonical() in self._locks
+            )
+        )
 
 
 class Client:
     """One node of the API. Nothing here retries: what to do after an error is the caller's."""
 
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None = None,
+        timeout: float = 10.0,
+        ca_file: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self._context = ssl.create_default_context(cafile=ca_file) if ca_file else None
 
     def _request(self, method: str, path: str, body=None) -> dict:
         data = None if body is None else json.dumps(body).encode()
@@ -222,7 +271,11 @@ class Client:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout,
+                context=self._context,
+            ) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:
             raise ApiError(error.code, json.loads(error.read() or b"{}")) from error
@@ -232,7 +285,7 @@ class Client:
 
     def account(self, account: str) -> dict:
         """What this node says. It may be behind, or false: see `verify_final`."""
-        return self._request("GET", f"/v1/accounts/{account}")
+        return self._request("GET", f"/v1/accounts/{urllib.parse.quote(account, safe='')}")
 
     def submit(self, signed: SignedTransfer) -> dict:
         """202 says the node took it, and nothing about a certificate."""

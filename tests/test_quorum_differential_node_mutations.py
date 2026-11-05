@@ -55,12 +55,12 @@ TESTS = [
 
 IN_QUORUM = {
     "signature of a request not checked": (
-        "            and signed.verify()\n",
-        "",
+        "        return is_authorized_transfer(signed)\n",
+        "        return is_well_formed_event(signed.transfer) and signed.identity_id == signed.transfer.sender\n",
     ),
     "sender not tied to the signer": (
-        "            and signed.identity_id == signed.transfer.sender\n",
-        "",
+        "        return is_authorized_transfer(signed)\n",
+        "        return is_well_formed_event(signed.transfer) and signed.verify()\n",
     ),
     "buffer tried only once": (
         "                    del self._buffer[event_id]\n"
@@ -203,9 +203,9 @@ IN_NODE = {
         "        self._send_quorum_output(output, None)\n",
     ),
     "public events drift from the log": (
-        "        self.events = list(executed)\n",
-        "        self.events = list(executed) + list(self.events[len(executed):])\n"
-        "        self.events = sorted(self.events, key=lambda e: e.event_id())\n",
+        "        self.events.extend(added)\n",
+        "        self.events.extend(added)\n"
+        "        self.events.sort(key=lambda e: e.event_id())\n",
     ),
     "halt does not reach the status": (
         "        known = list(self.events) + self._quorum_halt_events\n",
@@ -216,7 +216,7 @@ IN_NODE = {
         "                pass\n",
     ),
     "broadcasts not sent": (
-        "                    target.send(message)\n",
+        "                    target.enqueue(message)\n",
         "                    pass\n",
     ),
     "quorum messages take the old way": (

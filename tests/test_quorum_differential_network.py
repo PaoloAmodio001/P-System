@@ -21,6 +21,7 @@ import itertools
 import random
 import socket
 import threading
+import types
 import time
 
 import pytest
@@ -198,8 +199,13 @@ def assert_no_double_spend(nodes) -> None:
 
 def assert_state_is_derive(nodes) -> None:
     for node in nodes:
-        derived = StateDeriver.apply_events(GENESIS.copy(), list(node.local_events))
-        assert node.state.root() == derived.root()
+        # Under the lock, as the API reads them: the node publishes its events and then its state, so
+        # a reader without it can see one before the other. The CI saw that once, on a loaded machine.
+        with node._state_lock:
+            events = list(node.local_events)
+            root = node.state.root()
+
+        assert root == StateDeriver.apply_events(GENESIS.copy(), events).root()
 
 
 def same_state(nodes) -> bool:
@@ -374,8 +380,9 @@ def test_a_peer_that_does_not_read_does_not_hold_the_others(make_nodes, monkeypa
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch):
-    # The order of a broadcast is the order of the connections, so the faulty peer comes
-    # first here, and its deadline is what the others wait for.
+    # The order of a broadcast is the order of the connections, so the faulty peer comes first.
+    # Its queue is full, and the others must not notice. That a slow peer does not delay them
+    # is in tests/test_peer_queue_and_fragments.py.
     monkeypatch.setattr(DuplexTLSStream, "SEND_TIMEOUT", 0.5)
     nodes = make_nodes(sync_interval=None)
     link(nodes)
@@ -384,13 +391,10 @@ def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch
     stream = faulty.connections[victim.node_id]
     assert wait_until(lambda: len(victim.peer_connections) == 3)
     blocked = victim.peer_connections[f"faulty-{victim.node_id}"]
-    original = blocked.send
+    def queue_is_full(message):
+        raise ConnectionError("PEER IS TOO FAR BEHIND")
 
-    def blocking_send(message):
-        time.sleep(DuplexTLSStream.SEND_TIMEOUT)
-        raise TimeoutError("PEER IS NOT READING")
-
-    blocked.send = blocking_send
+    blocked.enqueue = queue_is_full
     with victim._peer_connections_lock:
         victim.peer_connections = {
             f"faulty-{victim.node_id}": blocked,
@@ -401,9 +405,65 @@ def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch
     assert victim.submit(event)
     assert wait_until(lambda: all(n.local_events == [event.transfer] for n in nodes))
     assert f"faulty-{victim.node_id}" not in victim.peer_connections
-    blocked.send = original
     stream.close()
     assert_the_theorems_hold([victim, other])
+
+
+def test_a_reader_without_the_lock_can_see_the_events_before_the_state(make_nodes, monkeypatch):
+    # Why the helper above takes the lock, shown with no timing: what a reader sees while the node
+    # is publishing, in the middle of it.
+    [node] = make_nodes(sync_interval=None, indexes=(0,))
+    event = transfer(SENDER, 0)
+    assert node.submit(event)
+    seen = []
+    real = State.copy
+
+    def spy(state):
+        seen.append((len(node.local_events), node.state.nonce(event.transfer.sender)))
+        return real(state)
+
+    monkeypatch.setattr(State, "copy", spy)
+    votes = tuple(Vote.create(COMMITTEE, member, event.transfer) for member in MEMBERS[:3])
+    node._handle_quorum_message(encode_certificate(QuorumCertificate(event.transfer, votes)), None)
+    assert (1, 0) in seen
+
+
+def test_a_queue_that_is_full_does_not_stop_a_broadcast_to_the_others():
+    # With no network. In the test above the faulty peer can drop out before the broadcast on a
+    # loaded machine, and then that test proves nothing about this rule.
+    sent = []
+    dropped = []
+
+    class Target:
+        def __init__(self, name, full=False):
+            self.name = name
+            self.full = full
+
+        def enqueue(self, message):
+            if self.full:
+                raise ConnectionError("PEER IS TOO FAR BEHIND")
+            sent.append((self.name, message))
+
+    node = types.SimpleNamespace(
+        _peer_connections_lock=threading.Lock(),
+        peer_connections={
+            "full": Target("full", full=True),
+            "first": Target("first"),
+            "second": Target("second"),
+        },
+        _disconnect_peer_connection=lambda node_id, target: dropped.append(node_id),
+    )
+    output = types.SimpleNamespace(replies=(), broadcasts=({"type": "A"}, {"type": "B"}))
+
+    Node._send_quorum_output(node, output, None)
+
+    assert sent == [
+        ("first", {"type": "A"}),
+        ("second", {"type": "A"}),
+        ("first", {"type": "B"}),
+        ("second", {"type": "B"}),
+    ]
+    assert dropped == ["full", "full"]
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")

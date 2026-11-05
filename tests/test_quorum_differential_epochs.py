@@ -93,8 +93,12 @@ def assert_safe(nodes) -> None:
         for event in node.local_events:
             first = seen.setdefault((event.sender, event.nonce), event)
             assert first.canonical() == event.canonical()
-        derived = StateDeriver.apply_events(GENESIS.copy(), list(node.local_events))
-        assert node.state.root() == derived.root()
+        # Under the lock: see tests/test_quorum_differential_network.py.
+        with node._state_lock:
+            events = list(node.local_events)
+            root = node.state.root()
+
+        assert root == StateDeriver.apply_events(GENESIS.copy(), events).root()
         assert node.status() != DecisionStatus.CONFLICTED
 
 

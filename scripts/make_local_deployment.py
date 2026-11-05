@@ -9,6 +9,7 @@ docs/OPERATIONS.md. It also writes a docker-compose.yml that starts the nodes.
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -81,10 +82,17 @@ genesis = "../genesis.json"
 store = "votes.sqlite"
 
 [api]
-host = "127.0.0.1"
+host = "0.0.0.0"
 port = {BASE_API_PORT}
+token_file = "api.token"
 {peers}'''
         )
+        # Inside a container an API on its own localhost could be reached by nobody. So it listens
+        # on all the interfaces of the container, with a token, and the port is published only on
+        # the localhost of this machine.
+        token = base / name / "api.token"
+        token.touch(mode=0o600)
+        token.write_text(secrets.token_hex(24) + "\n")
         services.append(
             f"""  {name}:
     build: {ROOT}
@@ -95,6 +103,8 @@ port = {BASE_API_PORT}
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:{BASE_API_PORT + index}:{BASE_API_PORT}"
     volumes:
       - {base / name}:/data
       - {base}/ca/ca.crt:/ca/ca.crt:ro
@@ -104,7 +114,21 @@ port = {BASE_API_PORT}
         psystem("init-store", "--config", str(base / name / "node.toml"))
 
     (base / "docker-compose.yml").write_text("\n".join(services) + "\n")
-    print(json.dumps({"sender": sender["account"], "directory": str(base)}))
+    print(
+        json.dumps(
+            {
+                "sender": sender["account"],
+                "directory": str(base),
+                "api": {
+                    name: {
+                        "url": f"http://127.0.0.1:{BASE_API_PORT + index}",
+                        "token_file": str(base / name / "api.token"),
+                    }
+                    for index, name in enumerate(names)
+                },
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

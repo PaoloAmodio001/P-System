@@ -1,0 +1,45 @@
+# Alerts on the metrics of a node, for Prometheus. Thresholds are starting points, not measurements
+# from a real deployment: adjust them to yours. docs/OPERATIONS.md says what to do for each.
+groups:
+  - name: psystem
+    rules:
+      - alert: PSystemHalted
+        expr: psystem_halted == 1
+        labels: {severity: critical}
+        annotations:
+          summary: "A node halted on two conflicting certificates: more than f members are faulty"
+      - alert: PSystemPeersMissing
+        expr: psystem_peers_connected < 2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "A node has too few peers to reach a quorum with n = 4"
+      - alert: PSystemEpochsDiffer
+        expr: max(psystem_epoch) != min(psystem_epoch)
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Nodes are in different epochs for too long: a closure may be stuck"
+      - alert: PSystemBehind
+        expr: max(psystem_executed_events) - min(psystem_executed_events) > 100
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "A node is far behind the others"
+      - alert: PSystemCertificatesWaiting
+        expr: psystem_certificates_waiting > 1000
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Many valid certificates cannot execute yet: an earlier nonce is missing"
+      - alert: PSystemEpochLarge
+        expr: psystem_epoch_votes > 50000
+        labels: {severity: warning}
+        annotations:
+          summary: "Close this epoch: closing takes time and memory in proportion to its votes"
+      - alert: PSystemSlowDisk
+        expr: rate(psystem_store_commit_seconds_total[5m]) / rate(psystem_store_commits_total[5m]) > 0.5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "A durable write takes more than half a second on average"
