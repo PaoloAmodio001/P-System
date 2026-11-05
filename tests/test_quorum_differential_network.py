@@ -199,8 +199,13 @@ def assert_no_double_spend(nodes) -> None:
 
 def assert_state_is_derive(nodes) -> None:
     for node in nodes:
-        derived = StateDeriver.apply_events(GENESIS.copy(), list(node.local_events))
-        assert node.state.root() == derived.root()
+        # Under the lock, as the API reads them: the node publishes its events and then its state, so
+        # a reader without it can see one before the other. The CI saw that once, on a loaded machine.
+        with node._state_lock:
+            events = list(node.local_events)
+            root = node.state.root()
+
+        assert root == StateDeriver.apply_events(GENESIS.copy(), events).root()
 
 
 def same_state(nodes) -> bool:
@@ -402,6 +407,25 @@ def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch
     assert f"faulty-{victim.node_id}" not in victim.peer_connections
     stream.close()
     assert_the_theorems_hold([victim, other])
+
+
+def test_a_reader_without_the_lock_can_see_the_events_before_the_state(make_nodes, monkeypatch):
+    # Why the helper above takes the lock, shown with no timing: what a reader sees while the node
+    # is publishing, in the middle of it.
+    [node] = make_nodes(sync_interval=None, indexes=(0,))
+    event = transfer(SENDER, 0)
+    assert node.submit(event)
+    seen = []
+    real = State.copy
+
+    def spy(state):
+        seen.append((len(node.local_events), node.state.nonce(event.transfer.sender)))
+        return real(state)
+
+    monkeypatch.setattr(State, "copy", spy)
+    votes = tuple(Vote.create(COMMITTEE, member, event.transfer) for member in MEMBERS[:3])
+    node._handle_quorum_message(encode_certificate(QuorumCertificate(event.transfer, votes)), None)
+    assert (1, 0) in seen
 
 
 def test_a_queue_that_is_full_does_not_stop_a_broadcast_to_the_others():
