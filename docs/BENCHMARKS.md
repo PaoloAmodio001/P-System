@@ -69,4 +69,15 @@ Tens to a few hundred events per second, on this kind of hardware, in this confi
 
 Time grows faster than the events, and no node votes in that epoch from the moment it reports. The hard bound of 256 MiB would be near 240 000 events, not run. **Close an epoch before about 50 000 events.** This is advice from these two runs, not a measured limit of the protocol.
 
+## Restarting
+
+A node replays its whole log at a restart, and checks every signature. Measured on ext4, one store and one replica, with no pruning or snapshot:
+
+| Certificates in the log | Restart | Store file | Peak memory |
+|---|---|---|---|
+| 10 000 | 3.8 s | 7 MiB | 64 MiB |
+| 50 000 | 20 s | 36 MiB | 181 MiB |
+
+So about 0.4 ms per certificate, and an always growing log. **There is no snapshot and no pruning.** A long-lived deployment would need them, and they are not designed yet: what to trust instead of the signatures is a protocol question.
+
 The system is in Python, and systems like FastPay in Rust report far more on far more hardware. No comparison has been run, and the guarantees of durability would have to be compared before the numbers. High-volume payments are not its use. Processes with a modest rate and a need for proofs may be, and that remains to be shown with a real user.

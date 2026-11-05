@@ -162,10 +162,12 @@ sender can leave its account blocked.
 | `QuorumEpochs` | a chain of committees, reports and locks |
 | `QuorumEpochsNonVacuity` | witnesses for thresholds and epochs |
 | `QuorumLiveness` | an honest sender gets a certificate, given delivery |
+| `QuorumOldKeys` | what keys of ended committees can still do |
+| `QuorumClosureRetry` | why a retry finishes a closure, and when it cannot |
+| `QuorumAssets` | the total of a set of accounts |
 
-- 19 modules, 143 theorem declarations (21 of them about the witnesses), about
-  3700 lines. `formal/lean/QuorumCheck.lean` is a test driver, not part of the
-  proofs.
+- 22 modules, 160 theorem declarations, about 3900 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
+  of the proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
@@ -200,6 +202,13 @@ Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacu
 
 | `honest_sender_certifies` | If `q` honest validators receive one version of an event and see no conflicting request that passes their check, each votes for it and their signatures form a valid certificate | FORMAL (model), with delivery as a hypothesis; not unconditional liveness |
 | `certificate_executes` | A valid certificate for an event that can run on the state of a node is executed | FORMAL (model) |
+
+| `old_certificate_outside_locks_refused`, `accepted_complete` | A node takes a certificate of an ended committee only for an event in its locks, and every real one is there | FORMAL (model) |
+| `old_keys_no_double_spend` | With all keys of ended committees stolen, two accepted events of a sender that signed one version are the same event | FORMAL (model) |
+| `two_versions_in_locks_both_accepted` | The limit of the above: a sender that signed two versions | FORMAL (model) |
+| `blocking_closure_is_seen`, `retry_gets_every_vote` | Any `q` reporters include a voter of a closure that could block others; with one closure voted, each of them can vote for what the proposer picks | FORMAL (model), given delivery |
+| `split_closures_block` | With `n = 4`, two votes for each of two closures leave none able to reach three | FORMAL (model), for that instance |
+| `asset_supply_conserved` | A run of executable events, each inside a set of accounts or outside it, leaves the sum of the set unchanged | FORMAL (model) |
 
 Hypotheses that remain, in `no_double_spend_across_epochs`:
 

@@ -28,6 +28,8 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 - `/v1/status` compared every pair of events, holding the lock of the node: 32 seconds with 2000 events, so asking for the
   status stopped the node. It is linear now. Found by a long campaign of faults.
 
+- The API of the local deployment could not be reached from outside its containers, so the example in the README could not work.
+
 ### Added
 
 - Assets, as accounts `owner/issuer.name.supply`, with a fixed supply and no change to the event format or to the model:

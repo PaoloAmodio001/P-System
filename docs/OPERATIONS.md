@@ -91,7 +91,8 @@ psystem node --config n0/node.toml
 there: `deploy/systemd/psystem.service` does not restart on it. A validator that starts again with no votes
 can sign both versions of a spend, and it counts as faulty.
 
-Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a `docker-compose.yml`.
+Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a `docker-compose.yml`. It publishes the API of node
+`i` on `127.0.0.1:(8080 + i)`, with a token in `node-i/api.token`, in clear: fit for one machine and nothing more.
 
 ## Monitoring
 

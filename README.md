@@ -14,6 +14,8 @@ pilot and no run on separate machines. See `docs/VALIDATION-PLAN.md` for what is
 | Two honest nodes never execute different events for one `(sender, nonce)`, also across epochs of different committees | `FORMAL (model)`: `no_double_spend`, `no_double_spend_across_epochs` |
 | The state is what `derive` computes from the executed events, whatever their order of arrival | `FORMAL (model)`: `state_is_derive`, `convergence_after_exchange` |
 | Two valid certificates in conflict name at least `f+1` guilty members | `FORMAL (model)`: `conflict_identifies_faulty` |
+| Keys of an ended committee, all stolen, give no double spend of a sender that signed once | `FORMAL (model)`: `old_keys_no_double_spend` |
+| The supply of an asset never grows | `FORMAL (model)`: `asset_supply_conserved` |
 | An honest sender gets a certificate, **if messages arrive** | `FORMAL (model)`: `honest_sender_certifies`. Delivery is a hypothesis |
 | The Python code behaves like the model | `EMPIRICAL`: differential tests. **Not a refinement proof** |
 
@@ -21,7 +23,7 @@ The theorems hold with at most `f` faulty validators in each committee and unfor
 governance can fork, and no theorem removes that assumption. Full list and limits: `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`.
 
 **It does not do:** shared state written by several parties (order books, auctions, shared counters: they need consensus, and this
-design cannot give them). More than one asset. Confidentiality between members. Guaranteed progress: votes split between two versions
+design cannot give them). Objects with their own state, and exchanges between two owners. Confidentiality between members. Guaranteed progress: votes split between two versions
 of a spend give no certificate at all, and that nonce stays locked for good.
 
 ## Quick start
@@ -41,9 +43,10 @@ from crypto.identity import Identity
 from network.deployment import read_genesis
 from sdk.client import ChainVerifier, Client, Wallet
 
+# In the directory of the demo. The API of node i is on port 8080 + i of this machine.
 genesis = read_genesis("genesis.json")
 wallet = Wallet(Identity.load("sender.key"), "wallet.sqlite")   # never signs two events for one nonce
-client = Client("http://127.0.0.1:8080")
+client = Client("http://127.0.0.1:8080", token=open("node-0/api.token").read().strip())
 
 signed = wallet.transfer("receiver-account", 8)
 client.submit(signed)                                           # "accepted" says nothing about a certificate
@@ -61,15 +64,18 @@ client.wait_final(signed.transfer, ChainVerifier(genesis.committee, genesis.gove
 | `docs/BENCHMARKS.md` | Measurements, and how to repeat them |
 | `docs/VALIDATION-PLAN.md` | Readiness, validation and certification, which are different things |
 | `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`, `docs/CLAIM-TRACEABILITY.md` | What is proved, tested or open |
+| `docs/openapi.json`, `deploy/prometheus/alerts.yml` | The API for machines, and alerts on its metrics |
+| `docs/paper/preprint-draft.md` | A draft, not submitted |
 | `ROADMAP.md`, `docs/piano-bizantino.md`, `CHANGELOG.md` | Where it is going, how it got here |
 
 ## Running the checks
 
 ```sh
 python -m pip install -r requirements-dev.txt
-pytest -q -m "not slow"                  # about 40 seconds with -n 4
-pytest -q                                # adds mutations and differentials, several minutes
-PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py
+pytest -q -m "not slow"                  # about 3 minutes on one core
+pytest -q                                # adds mutations, differentials, faults: about an hour on one core
+PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py tests/test_epoch_differential.py
+python scripts/soak.py --minutes 60 --out soak.jsonl   # campaigns of network faults on real processes
 cd formal/lean && lake build             # needs Lean: see formal/lean/lean-toolchain
 ```
 

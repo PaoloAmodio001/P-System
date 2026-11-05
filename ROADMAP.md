@@ -16,15 +16,15 @@ Valutazione del 2026-11-05, dopo il lavoro di A, B (senza consenso sullo sblocco
 
 | Ambito | Stato | Cosa manca | Fase |
 |---|---|---|---|
-| Core e motore di esecuzione | Modalità quorum con epoche; un solo tipo di evento (trasferimento) | Oggetti e asset multipli: serve prima un caso d'uso reale. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
-| Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, limiti sui voti, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS, limite di frequenza per connessione, revoca dei certificati | E |
-| Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, invii con scadenza, scrittura a gruppi | Broadcast sequenziali: un peer che non legge rallenta i successivi fino alla scadenza | E |
-| Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL` e su 4 container | Prove su macchine separate e guasti di rete iniettati. Liveness incondizionata | G |
-| Formal verification | 143 teoremi, nessun assioma oltre ai tre standard | Il legame con Python resta `EMPIRICAL`; per le epoche non c'è differenziale con Lean | B |
+| Core e motore di esecuzione | Modalità quorum con epoche; trasferimenti di più asset come conti distinti, con quantità fissa | Oggetti con stato proprio: serve un caso d'uso reale. Scambi tra due proprietari: serve il consenso. Istantanee e potatura del log. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
+| Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, firmatario separato con un proprio blocco, chiavi cifrate, revoca a elenco, regola sulle chiavi delle epoche finite, limiti di frequenza, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS integrati, CRL o OCSP | E |
+| Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, una coda e uno scrittore per peer, messaggi oltre il frame, scrittura a gruppi | Prove su reti vere | E |
+| Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL`, 4 container e campagne di guasti di rete iniettati | Prove su macchine separate. Liveness incondizionata | G |
+| Formal verification | 160 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
 | Prestazioni | Misure riproducibili su una macchina in `docs/BENCHMARKS.md` | Macchine separate; riproduzione esterna; confronto con FastPay | D |
-| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina | Misure con nodi separati e carichi lunghi. Un'epoca regge circa 12 000 eventi con `n = 4` | D |
-| Interoperabilità | API HTTP `/v1`, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
-| Osservabilità | Log JSON, metriche Prometheus, health | Allarmi pronti, tracciamento | G |
+| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000 | Misure con nodi separati e carichi lunghi. Chiudere un'epoca prima di circa 50 000 eventi. Log senza potatura | D |
+| Interoperabilità | API HTTP `/v1` con TLS opzionale, descrizione OpenAPI verificata da un test, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
+| Osservabilità | Log JSON, metriche Prometheus, allarmi pronti e validati con `promtool`, health, stack dei thread con `SIGUSR1` | Tracciamento. Soglie degli allarmi non tarate su un impiego reale | G |
 | Affidabilità operativa | Backup coerenti, ripristino che si astiene fino all'epoca dopo, manuali per ogni guasto noto | Prove lunghe settimane, esercitazioni con operatori veri | G |
 | Deployment | Pacchetto, container provato con `kill -9`, unità systemd, dipendenze bloccate con hash, SBOM | Immagini firmate, aggiornamenti a rotazione provati | G |
 | Documentazione tecnica | Architettura, protocollo, API, operazioni, minacce, validazione, dipendenze | Revisione di chi non l'ha scritta | H |
@@ -171,7 +171,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase C. Modello dati generale
 
-**Stato: non iniziata, di proposito.** Cambia gli id canonici e tutte le prove, e questa roadmap chiede prima un utente potenziale su un caso reale, «altrimenti si progetta nel vuoto». Questo richiede una persona esterna.
+**Stato: fatta la parte sugli asset, il resto no.** Il 2026-11-05 Paolo ha dato autonomia di decisione. Più asset con quantità fissa esistono come conti `titolare/emittente.nome.quantità`: non cambiano né il formato degli eventi né le prove (`asset_supply_conserved`, `docs/PROTOCOL.md`), quindi non serviva aspettare. Un asset con quantità 1 è un oggetto unico, e trasferirlo è un passaggio di custodia. **Non fatti:** oggetti con stato opaco e funzione di transizione, che cambierebbero gli id e tutte le prove, e operazioni atomiche su più oggetti. Per quelli vale ancora quanto scritto: serve un utente potenziale su un caso reale, «altrimenti si progetta nel vuoto».
 
 **Obiettivo.** Più asset e oggetti con stato e proprietario, restando a proprietario singolo.
 
