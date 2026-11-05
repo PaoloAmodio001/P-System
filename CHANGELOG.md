@@ -26,7 +26,7 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 ### EMPIRICAL
 
 - The Python code against the model: differentials on `QuorumReplica`, on a real `Node`, on epochs and on `--unlock`, with 15 seeds, and mutations inside `pytest` to show that the tests can fail. **Not a refinement proof.** The order in which a node runs what waits in its buffer is a rule of the node: the model takes any order, and only the differential checks this one.
-- Faults on the network between four real processes on one machine: `docs/BENCHMARKS.md`, with the commit of each run. Hours on one machine do not replace weeks on separate ones.
+- Faults on the network between four real processes on one machine: `docs/BENCHMARKS.md`, with the commit of each run. The last run, of 3 hours on `a9edb19`, had 55 campaigns with 0 unsafe, and comes before the correction of the SDK. Hours on one machine do not replace weeks on separate ones.
 - Attacks on saturation that won before the limits and lose after them: `tests/test_saturation.py`. The values of the limits are chosen by judgment.
 - Measures on one machine, and on containers with emulated latency on one machine: `docs/BENCHMARKS.md`.
 
@@ -52,6 +52,7 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 
 - Whoever reached the port, with no certificate, could keep every honest peer out with 70 silent connections. The one waiting longest now gives way.
 - A request for synchronization cost 28 ms under the lock of the node with 3000 certificates, at up to 5000 requests per second. A peer now pays for what it asks.
+- An answer cut in half gave the caller of the SDK an exception nobody expected. It is now a failed connection. Found by a soak.
 - Each new certificate tried every one in the buffer, with a read of the disk for each, and the buffer had no limit.
 - With 100 000 proofs in memory each message cost 1.75 ms, because they were copied each time.
 

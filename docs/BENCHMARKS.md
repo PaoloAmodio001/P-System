@@ -88,8 +88,9 @@ Without a snapshot a node replays its whole log and checks every signature, abou
 |---|---|---|---|---|---|---|---|---|
 | `d6c0ec2` | 3 hours | 50 | 0 | 53 592 | 13 491 | 260 | 25 | 88.0 s |
 | `c621828` | 90 minutes | 26 | 0 | 27 817 | 6905 | 145 | 13 | 86.2 s |
+| `a9edb19` | 3 hours 5 minutes | 55 | 0 | 58 553 | 14 880 | 326 | 27 | 81.0 s |
 
-These are before closures without votes, snapshots and the limits against saturation, and they say nothing about that code. A run of hours on one machine does not replace weeks on separate ones.
+The first two are before closures without votes, snapshots and the limits against saturation, and they say nothing about that code. `a9edb19` has all of them, and it comes **before the correction of the SDK in `9b97548`**: no run of this kind has gone through that correction. In that run an answer cut in half stopped the traffic of one campaign, which is what `9b97548` corrects, so that campaign had less traffic than the others. Seven threads of the proxy of the tests also ended with an exception on a closed socket, corrected in `ccdced0`. A run of hours on one machine does not replace weeks on separate ones.
 
 ## Containers on separate networks, one machine
 
