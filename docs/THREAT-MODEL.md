@@ -36,7 +36,7 @@ authors of the code, and it is what an audit should start from and attack.
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
 | Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
-| Crash | A proposer dies during a closure | Members keep the closure they voted for, and finish it | `tests/test_quorum_epoch_retry.py` EMPIRICAL |
+| Crash | A proposer dies during a closure | Any quorum of reports is a closure, and a member that reported collects them itself | `one_order_never_blocks` FORMAL (model), `tests/test_quorum_reports.py` EMPIRICAL |
 
 ## Known gaps
 
@@ -53,7 +53,7 @@ authors of the code, and it is what an audit should start from and attack.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
 - **Liveness.** `honest_sender_certifies` assumes delivery. Nothing promises progress against an adversarial network,
-  and proposers acting at once can still split the votes on a closure, which stops that epoch from closing for good.
+  and a governance that signs two orders for one epoch can split the reports, which stops that epoch from closing for good.
 - **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. A signer can add locks nobody signed to a snapshot: that can only stop the node that takes it from voting on those nonces. A node that pruned cannot prove a conflict under its floor.
 - **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.
 - **Power loss.** `kill -9` is tested. Power loss is not, and `fsync` calls were traced by hand once.

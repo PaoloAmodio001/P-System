@@ -153,9 +153,7 @@ from core.attestation import EpochChange
 change = EpochChange.create(current_committee, next_keys, next_f, governance, [signer_a, signer_b])
 ```
 
-Send it to **one** node with `POST /v1/epoch-changes`. Two proposers at once can split the votes on the
-closure, and then that epoch never closes. If the node you sent it to dies, or the epoch does not change, wait a minute and send
-the same order to another node: a retry finishes the closure already voted for, and does not start another. Reports hold every vote of the epoch, and a closure costs time and memory in
+Send it with `POST /v1/epoch-changes`, to one node or more: several proposers do no harm, and if the node you sent it to dies, a member that reported goes on by itself after 10 seconds. **Governance must sign one order per epoch and no more.** Two different orders can split the reports, and then that epoch never closes, with voting already stopped: there is no way out of that in the protocol. Reports hold every vote of the epoch, and a closure costs time and memory in
 proportion: close an epoch before it holds about 50 000 events, see `docs/BENCHMARKS.md`. Above about 240 000 with `n = 4` it can
 never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same
@@ -166,6 +164,8 @@ operation. Rotating the key of an **account** does not exist: the account is the
 A snapshot only shortens a restart: 50 000 certificates in 0.9 s instead of 20 s (`docs/BENCHMARKS.md`). It removes nothing. Set `every` on the members. `psystem_snapshot_events` and `snapshot` in `/v1/status` say how far the last one reaches.
 
 **Pruning takes away history.** With `prune = true`, `/v1/certificates/{event_id}` answers `404` for what the snapshot covers, and a client can no longer get the proof of an old event from this node. `executed` in `/v1/status` still counts everything, and `certificates_held` says what is left. Keep at least one node that does not prune, or an archive of your own, if anyone may ask. A node that prunes also cannot sign a snapshot older than its own. To give the disk back, stop the node and run `VACUUM` on a copy.
+
+A node that prunes keeps the last closure whole and only a header of older ones, so it cannot give the chain to a node more than one epoch behind, and `/v1/closures` from an older epoch answers an empty list, which leaves a `ChainVerifier` from genesis unable to go on. **A client that verifies from genesis, and a node that joins late, each need a peer that does not prune.**
 
 A node that was away takes a snapshot from a peer that pruned, signed by the committee in force. If that snapshot is older than a change of committee, it waits for new signatures: a member asks by itself at its next tick.
 

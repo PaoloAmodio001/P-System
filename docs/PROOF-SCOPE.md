@@ -30,7 +30,7 @@ O7 and the theorems of phase B cover safety in the Lean model, for a chain of co
 
 Keys of ended committees: `QuorumOldKeys.lean` (`accepted_complete`, `old_keys_no_double_spend`) is `FORMAL (model)` for the rule that a node takes an old certificate only for an event in its locks, and it needs that the sender signed one version. `tests/test_quorum_old_keys.py` is `EMPIRICAL` for the rule in Python. A later chain shown to a node that joins from the genesis, with stolen keys of governance too, is not covered.
 
-Retries of a closure: `QuorumClosureRetry.lean` (`blocking_closure_is_seen`, `retry_gets_every_vote`) is `FORMAL (model)` about counting and picking, with delivery as a hypothesis. `split_closures_block` shows the limit: two closures with votes can block each other for good.
+Closures: `QuorumReports.lean` is `FORMAL (model)`. `order_unique` says two orders cannot both get a quorum of reports, and `no_double_spend_any_closures` that validators can install different closures of one epoch. `one_order_never_blocks` is about counting, with delivery as a hypothesis. `two_orders_can_block` is one instance: a governance that signs two orders can stop an epoch, and nothing here removes that.
 
 Snapshots and pruning: `QuorumSnapshot.lean` is `FORMAL (model)` for restarting from a snapshot and for floors, with `ViewChain` as a hypothesis about the run. The link with Python is `EMPIRICAL`: differentials A and D take snapshots, prune and apply floors at random points. Nothing is proved about SQLite, or about what a false snapshot does beyond the bound of faulty members.
 

@@ -94,3 +94,8 @@ theorem one_order_never_blocks
 - Un governo che equivoca blocca l'epoca per sempre, e il comitato ha già smesso di votare.
 - La consegna resta un'ipotesi: nulla promette che i rapporti arrivino.
 - Il legame con Python resta `EMPIRICAL`.
+
+## Differenze tra la proposta e il codice
+
+- `ClosureHeader`: il passo 2 aveva promesso qui le intestazioni delle chiusure vecchie. Un nodo che pota tiene intera l'ultima, e delle altre solo ordine e firme dei rapporti. **Un'intestazione non lascia mai il nodo:** chi la prendesse da un peer non avrebbe i blocchi di quell'epoca e potrebbe votare un conflitto. Il prezzo: un nodo in ritardo di più di un'epoca, e un client che verifica da genesi, hanno bisogno di un peer che non pota. Mandare intestazioni e prendere i blocchi solo dall'unione di un'istantanea è possibile (`union_locks_cover`), ma è più rischioso e resta aperto.
+- `closure_unique` è stato tolto, con `QuorumClosureRetry.lean`: descrivevano un meccanismo che non esiste più.

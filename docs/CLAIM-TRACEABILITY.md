@@ -29,7 +29,8 @@ automatically prove that the Python implementation satisfies it.
 | Conflicting events are not jointly executable | In the derivation model two events of one sender with the same nonce cannot both run; covered by `derive_eq_none_iff` | `tests/test_conflict_closure.py`, `tests/test_lean_differential.py` and resolver tests | FORMAL for the derivation (model); EMPIRICAL (Python) |
 | Deterministic selection of the next event | `selectNext_spec` (smallest ready and executable id, the current Python rule) | Deterministic ordering tests, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
 | Stolen keys of ended committees cannot certify new spends | `accepted_complete`, `old_keys_no_double_spend` | `tests/test_quorum_old_keys.py` | FORMAL (model), EMPIRICAL (Python) |
-| A closure survives the death of its proposer | `blocking_closure_is_seen`, `retry_gets_every_vote`, given delivery | `tests/test_quorum_epoch_retry.py` | FORMAL (model), EMPIRICAL (Python) |
+| A closure survives the death of its proposer, and two proposers at once | `one_order_never_blocks`, `no_double_spend_any_closures`, given delivery | `tests/test_quorum_reports.py` | FORMAL (model), EMPIRICAL (Python) |
+| One next committee for each epoch | `order_unique`, with the bound on faulty members | `tests/test_quorum_reports.py` | FORMAL (model), EMPIRICAL (Python) |
 | The supply of an asset does not grow | `asset_supply_conserved`, with `executed_authorized` | `tests/test_assets.py` | FORMAL (model), EMPIRICAL (Python) |
 | A restart from a snapshot gives what replaying gives | `resume_equals_replay`, `resume_is_derive` | `tests/test_snapshots.py`, `tests/test_quorum_differential.py` | FORMAL (model), EMPIRICAL (Python) |
 | Pruning locks under a floor keeps safety | `no_double_spend_views`, `prune_without_floor_lets_conflict_through` | `tests/test_snapshots.py`, `tests/test_epoch_differential.py` | FORMAL (model), EMPIRICAL (Python) |
