@@ -7,7 +7,7 @@ namespace PSystem
 
 An asset here is a set of accounts: `owner/issuer.name.supply`. Each such account is one more account
 of the model, with its own nonce, so `no_double_spend`, `state_is_derive`, `convergence_after_exchange`
-and the chain of epochs apply to it as they stand, since accounts are opaque there. Nothing about
+and the chain of epochs apply to it as they stand, since those models never look inside an account. Nothing about
 assets enters the proofs, and the event format does not change.
 
 What assets add is a question about a set of accounts: `asset_supply_conserved` says that a run in
