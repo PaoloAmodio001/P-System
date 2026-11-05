@@ -157,10 +157,10 @@ class StateDeriver:
 
     @staticmethod
     def _apply_one(state: State, event: Transfer) -> None:
-        state.balances[event.sender] -= event.amount
+        state.balances[event.sender] = state.balance(event.sender) - event.amount
 
         state.balances[event.receiver] = (
-            state.balances.get(event.receiver, 0)
+            state.balance(event.receiver)
             + event.amount
         )
 

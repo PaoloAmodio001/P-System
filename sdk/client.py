@@ -18,6 +18,7 @@ import sqlite3
 import time
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ from pathlib import Path
 from core.attestation import Committee, Governance
 from core.event import Transfer
 from core.signed_event import SignedTransfer
+from core.state import asset_account, split_asset_account
 from crypto.identity import Identity
 from network.message import decode_certificate, decode_epoch_closure
 
@@ -34,8 +36,17 @@ class WalletError(Exception):
 
 
 class Wallet:
-    def __init__(self, identity: Identity, journal: Path) -> None:
+    """
+    The events one account signed. With `asset`, the account is `owner/asset`: it has its own nonces
+    and so its own journal, one file for each.
+    """
+
+    def __init__(self, identity: Identity, journal: Path, asset: str | None = None) -> None:
         self.identity = identity
+        self.asset = asset
+        self._account = (
+            identity.identity_id if asset is None else asset_account(identity.identity_id, asset)
+        )
         self._path = Path(journal)
         try:
             self._connection = sqlite3.connect(self._path, isolation_level=None)
@@ -61,12 +72,23 @@ class Wallet:
                 )
             elif row[0] != identity.public_key.hex():
                 raise WalletError("THIS JOURNAL BELONGS TO ANOTHER KEY")
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS journal_account (account TEXT NOT NULL)"
+            )
+            row = self._connection.execute("SELECT account FROM journal_account").fetchone()
+            if row is None:
+                self._connection.execute(
+                    "INSERT INTO journal_account (account) VALUES (?)",
+                    (self._account,),
+                )
+            elif row[0] != self._account:
+                raise WalletError("THIS JOURNAL BELONGS TO ANOTHER ACCOUNT")
         except sqlite3.Error as error:
             raise WalletError(f"CANNOT OPEN JOURNAL: {error}") from error
 
     @property
     def account(self) -> str:
-        return self.identity.identity_id
+        return self._account
 
     def next_nonce(self) -> int:
         rows = self._connection.execute("SELECT nonce FROM events").fetchall()
@@ -86,6 +108,11 @@ class Wallet:
         another transfer it is refused, and nothing is signed.
         """
         nonce = self.next_nonce() if nonce is None else nonce
+
+        # With an asset, `receiver` can be just who gets it.
+        if self.asset is not None and split_asset_account(receiver) is None:
+            receiver = asset_account(receiver, self.asset)
+
         event = Transfer(self.account, receiver, amount, nonce, tuple(parents))
         canonical = event.canonical().decode()
 
@@ -258,7 +285,7 @@ class Client:
 
     def account(self, account: str) -> dict:
         """What this node says. It may be behind, or false: see `verify_final`."""
-        return self._request("GET", f"/v1/accounts/{account}")
+        return self._request("GET", f"/v1/accounts/{urllib.parse.quote(account, safe='')}")
 
     def submit(self, signed: SignedTransfer) -> dict:
         """202 says the node took it, and nothing about a certificate."""

@@ -30,6 +30,8 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 
 ### Added
 
+- Assets, as accounts `owner/issuer.name.supply`, with a fixed supply and no change to the event format or to the model:
+  `asset_supply_conserved` in Lean.
 - Keys encrypted at rest, and a signer in another process with its own vote lock (`psystem signer`).
 - TLS, rate limit and a bound on connections on the API. Connections between nodes are paced.
 - A list of revoked certificates, read at each connection, which also closes live ones.

@@ -5,7 +5,7 @@ import re
 
 from core.event import Transfer
 from core.signed_event import SignedTransfer
-from core.state import State
+from core.state import State, account_asset, account_owner
 from crypto.identity import Identity, verify_signature
 
 
@@ -500,8 +500,17 @@ def _is_signed_by_its_sender(signed: SignedTransfer) -> bool:
     return (
         is_well_formed_event(signed.transfer)
         and signed.verify()
-        and signed.identity_id == signed.transfer.sender
+        and signed.identity_id == account_owner(signed.transfer.sender)
+        and account_asset(signed.transfer.sender) == account_asset(signed.transfer.receiver)
     )
+
+
+def is_authorized_transfer(signed: SignedTransfer) -> bool:
+    """
+    `auth` in the model: signed by whoever owns the sender, and staying inside one asset. An honest
+    validator votes for nothing else, so by `executed_authorized` nothing else executes.
+    """
+    return _is_signed_by_its_sender(signed)
 
 
 def _votes_digest(votes: tuple[SignedTransfer, ...]) -> bytes:

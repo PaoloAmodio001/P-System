@@ -15,6 +15,7 @@ import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
 
 from core.attestation import EpochChange
 from core.decision_status import DecisionStatus
@@ -255,7 +256,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._text(200, metrics_text(self.node))
             return
 
-        parts = path.strip("/").split("/")
+        # An account of an asset holds a slash, which arrives as %2F.
+        parts = [unquote(part) for part in path.strip("/").split("/")]
 
         if parts[0] != API_VERSION:
             self._reply(404, {"error": "UNKNOWN PATH"})

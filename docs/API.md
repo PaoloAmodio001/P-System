@@ -23,7 +23,7 @@ proves something: see "Proof" below.
 | `GET /healthz` | `200 {"status":"ok"}`, or `503 {"status":"halted"}` |
 | `GET /metrics` | Text format of Prometheus |
 | `GET /v1/status` | `node_id`, `epoch`, `committee_id`, `genesis_hash`, `executed`, `state_root`, `halted`, `conflicted`, `is_member`, `peers`, `guilty_members` |
-| `GET /v1/accounts/{account}` | `balance`, `next_nonce` |
+| `GET /v1/accounts/{account}` | `balance`, `next_nonce`. An account of an asset holds a slash: write it `%2F` |
 | `GET /v1/certificates/{event_id}` | The certificate, or `404` if this node has not executed it |
 | `GET /v1/closures` | The closures of the chain, in order |
 
@@ -53,6 +53,11 @@ proves something: see "Proof" below.
 
 Sending the same event again is always safe, and is what to do after an error or a timeout. Sending
 another event for the same nonce can lock the account for good: use `sdk.client.Wallet`.
+
+## Assets
+
+`psystem asset-id --issuer ACCOUNT --name N --supply S` says the name of an asset, and `Wallet(identity, journal, asset=...)` signs for
+that account, with one journal per account. See `docs/PROTOCOL.md`.
 
 ## Proof that an event happened
 

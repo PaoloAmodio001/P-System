@@ -104,3 +104,20 @@ those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB
 the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between, a piece out of order or a wrong digest closes
 the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
 before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.
+
+## Assets
+
+An asset is `issuer.name.supply`, where `issuer` is an account id, `name` is 1 to 64 of `A-Za-z0-9_-`, and `supply` is 1 to
+2^256-1. An account of it is `owner/asset`. To the protocol this is one more account with its own balance and nonces, so the event
+format, the locks and the proofs do not change.
+
+- The account of the issuer starts with the whole supply, and all others with nothing. Nothing can make more: a supply of 1 is one
+  unique item, and moving it is a change of custody.
+- A validator votes only if the sender signed as the `owner`, and only if sender and receiver are of the same asset. The native unit
+  of the genesis is the same rule with no asset. So by `executed_authorized` nothing else executes, with at most `f` faulty members.
+- The owner of an asset account signs one event per nonce of **that account**, so equivocating on one asset locks only that account.
+- Anyone can name an asset with their own id as issuer. A name says who issued it and how much exists, and nothing about what it
+  is worth or whether it stands for anything real.
+
+Not included: objects with their own state, and any exchange between two owners. An atomic swap needs both parties in one
+step: it needs consensus or a different protocol, and this system has neither.

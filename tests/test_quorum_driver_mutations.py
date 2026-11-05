@@ -15,17 +15,16 @@ TESTS = [
 
 MUTATIONS = {
     "event not checked before its signature": (
-        "            is_well_formed_event(signed.transfer)\n"
-        "            and signed.verify()\n",
-        "            signed.verify()\n",
+        "        return is_authorized_transfer(signed)\n",
+        "        return signed.verify() and signed.identity_id == signed.transfer.sender\n",
     ),
     "signature of the sender not checked": (
-        "            and signed.verify()\n",
-        "",
+        "        return is_authorized_transfer(signed)\n",
+        "        return is_well_formed_event(signed.transfer) and signed.identity_id == signed.transfer.sender\n",
     ),
     "sender not tied to the signer": (
-        "            and signed.identity_id == signed.transfer.sender\n",
-        "",
+        "        return is_authorized_transfer(signed)\n",
+        "        return is_well_formed_event(signed.transfer) and signed.verify()\n",
     ),
     "vote request not authorized": (
         "    def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:\n"

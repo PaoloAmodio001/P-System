@@ -11,7 +11,8 @@ The `psystem` command: create a deployment, run a node, talk to one.
     psystem init-store --config n0/node.toml
     psystem node --config n0/node.toml
     psystem status --api http://127.0.0.1:8080
-    psystem transfer --api URL --key K --journal J --to ACCOUNT --amount N
+    psystem transfer --api URL --key K --journal J --to ACCOUNT --amount N [--asset A]
+    psystem asset-id --issuer ACCOUNT --name N --supply S
     psystem epoch sign change.json --key GOVERNANCE_KEY
     psystem backup n0/votes.sqlite --out backup.sqlite
     psystem restore backup.sqlite --to n0/votes.sqlite --genesis genesis.json --key n0/identity.key
@@ -200,7 +201,7 @@ def _status(args) -> int:
 def _transfer(args) -> int:
     from sdk.client import Wallet
 
-    wallet = Wallet(Identity.load(Path(args.key)), Path(args.journal))
+    wallet = Wallet(Identity.load(Path(args.key)), Path(args.journal), args.asset)
     client = _client(args)
     nonce = args.nonce
 
@@ -210,6 +211,13 @@ def _transfer(args) -> int:
     signed = wallet.transfer(args.to, args.amount, nonce)
     wallet.close()
     print(json.dumps(client.submit(signed), sort_keys=True))
+    return 0
+
+
+def _asset_id(args) -> int:
+    from core.state import asset_id
+
+    print(asset_id(args.issuer, args.name, args.supply))
     return 0
 
 
@@ -322,6 +330,13 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_argument("--to", required=True)
             sub.add_argument("--amount", type=int, required=True)
             sub.add_argument("--nonce", type=int)
+            sub.add_argument("--asset")
+
+    asset = commands.add_parser("asset-id")
+    asset.add_argument("--issuer", required=True)
+    asset.add_argument("--name", required=True)
+    asset.add_argument("--supply", type=int, required=True)
+    asset.set_defaults(run=_asset_id)
 
     backup = commands.add_parser("backup")
     backup.add_argument("store")

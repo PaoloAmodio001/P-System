@@ -27,6 +27,7 @@ from core.attestation import (
     is_well_formed_event,
 )
 from core.derive import StateDeriver
+from core.attestation import is_authorized_transfer
 from core.event import Transfer
 from core.equivocation import EquivocationProof
 from core.signed_event import SignedTransfer
@@ -1884,11 +1885,7 @@ class QuorumDriver:
 
     @staticmethod
     def _is_authorized(signed: SignedTransfer) -> bool:
-        return (
-            is_well_formed_event(signed.transfer)
-            and signed.verify()
-            and signed.identity_id == signed.transfer.sender
-        )
+        return is_authorized_transfer(signed)
 
     def _is_admitted(self, event: Transfer) -> bool:
         state = self.replica.state

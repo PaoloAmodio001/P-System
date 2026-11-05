@@ -64,15 +64,8 @@ IN_ATTESTATION = {
         "",
     ),
     "signer of an event need not be its sender": (
-        "        and signed.identity_id == signed.transfer.sender\n"
-        "    )\n"
-        "\n"
-        "\n"
-        "def _votes_digest",
-        "    )\n"
-        "\n"
-        "\n"
-        "def _votes_digest",
+        "        and signed.identity_id == account_owner(signed.transfer.sender)\n",
+        "",
     ),
     "report signature not checked": (
         "            and verify_signature(\n"
