@@ -2,7 +2,29 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Fase A chiusa nel codice il 2026-11-05: 5.6 e 5.7 fatte. Paolo ha dato il via su tutto il 2026-11-05 («via libera su tutto, non ti fermare»): vale come via per le soste del programma. Prossimo: fase B.**
+**Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Non iniziata di proposito: C, che richiede prima un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05.
+
+### Passo del 2026-11-05: modifiche
+
+- **Difetti gravi trovati e corretti.** (1) Due processi non potevano collegarsi: ogni processo creava la propria CA temporanea, quindi il sistema aveva sempre girato in un solo processo. (2) Un peer poteva dichiarare il `node_id` di un altro. (3) Lettura e scrittura simultanee corrompevano TLS. (4) Un nodo su `0.0.0.0` annunciava quell'indirizzo, rompendo le riconnessioni. (5) Un `epoch` enorme in una richiesta dava `OverflowError` da SQLite, trovato dal fuzzing nel codice appena scritto. (6) Un messaggio oltre il frame uccideva il thread di lettura.
+- **Lean.** 39 teoremi in più, 143 in tutto, solo i tre assiomi standard: vedi `docs/PROOF-OBLIGATIONS.md`.
+- **Epoche.** Governo a soglia, rapporti, una chiusura certificata, blocchi portati avanti. Un `(sender, nonce)` riportato si rivota solo per l'unica alternativa riportata: è questa la forma del riporto dei blocchi, e la decide il teorema.
+- **Servizio.** `psystem`, API `/v1`, metriche, log JSON, `Wallet`, `ChainVerifier`, container, systemd, backup, ripristino che si astiene.
+- **Prestazioni.** Il limite misurato è `fsync`. Scrittura a gruppi: circa dieci volte su ext4 con lotti da 50. `docs/BENCHMARKS.md`.
+
+### Problemi del passo
+
+- **Un commit (`48a1d72`) è stato fatto con un test veloce fallito**, perché il comando non si fermava sull'errore. Non è stato pushato, e il test è corretto nel commit dopo.
+- **Le prime due esecuzioni dell'integrazione continua sono fallite** su test legati all'ambiente: una profondità di JSON insufficiente per lo stack di quel runner, e una mutazione probabilistica sui 2 core. Corretti entrambi, il secondo con test deterministici.
+- La prima ipotesi sulla latenza, Nagle, era sbagliata: `TCP_NODELAY` è giusto ma non cambiava la misura. Il limite era `fsync`.
+
+### Cosa resta aperto
+
+Vedi la tabella in `ROADMAP.md`. Soprattutto:
+
+- **Serve qualcuno di esterno:** audit di codice e crittografico, test di penetrazione, revisione del protocollo, Jepsen, operatori indipendenti, pilota, consulenza legale. Il preprint va scritto e deciso da Paolo.
+- **Fase C:** un utente potenziale deve dire se il modello a proprietario singolo gli basta, prima di cambiare il formato degli eventi.
+- **Tecnico:** nessun differenziale tra le epoche in Python e Lean; prove su macchine separate; prove lunghe; HSM o KMS; un'epoca regge circa 12 000 eventi con `n = 4`.
 
 ### Riepilogo dell'ultimo passo
 
@@ -35,8 +57,8 @@
 
 ### Regole di lavoro in vigore
 
-- Lavorare su `byzantine-quorum`. **Non pushare su `main` finché la fase 5 non è completa e verificata.** Unica eccezione, decisa da Paolo il 2026-11-04: solo correzioni di rete, senza codice della modalità quorum. Vale per quelle già portate, elencate qui sotto, e ogni altra va chiesta.
-- Le regole generali sono in `CLAUDE.md`, sezione "Regole di lavoro permanenti". Il programma ha tre soste con il via di Paolo: prima del codice della 5.6, prima del merge su `main`, prima del codice della fase B.
+- Lavorare su `byzantine-quorum`. Su `main` si porta solo con il via di Paolo: vedi `CLAUDE.md`.
+- Le regole generali sono in `CLAUDE.md`, sezione "Regole di lavoro permanenti".
 - Se un differenziale trova una divergenza tra Python e `runNode`, **non correggerla**: fermarsi e mostrare il caso minimo e la diagnosi. L'errore può stare nel Python, nel driver, nel modello o nel generatore.
 - **Prima di unire `byzantine-quorum` a `main`:** `PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py`.
 
@@ -44,7 +66,7 @@
 
 | Riferimento | Commit | Contenuto |
 |---|---|---|
-| `origin/byzantine-quorum`, `byzantine-quorum` locale | 5.5 completa e questa nota | Tutte le fasi fatte |
+| `origin/byzantine-quorum`, `byzantine-quorum` locale | vedi `git log` | Tutte le fasi fatte |
 | `origin/main` | `9a0aed3` | Fasi 0-4 più le correzioni di rete. Nessun codice della modalità quorum |
 | `main` locale | `1139303` | Fermo e indietro rispetto a `origin/main`. È normale: nessuno lo ha aggiornato |
 
@@ -71,7 +93,7 @@
 | 5.7 | Fatta | Mutazioni di 5.1, 5.2 e 5.4 in `pytest`, documenti ed etichette | vedi `git log` |
 | 6 | Fatta | Differenziali A e B avversari sul modello, C su TLS reale | vedi sopra |
 
-**Ultima verifica:** `pytest -q` 1537 passati, `lake build` passa. Dopo quel giro è cambiata una sola mutazione in `tests/test_quorum_byzantine_mutations.py`, e quel file è stato rieseguito da solo: 10 passati. Differenziale A con 15 seed su `d7292db`, prima del punto 4: 45000 casi, nessuna differenza. Differenziale B con 15 seed: 7500 casi, nessuna differenza. Entrambi vanno ripetuti prima del merge. Con `quorum=None` il nodo ammette ancora il fork; con `quorum=` il fork è escluso nei test, che passano senza socket, tranne due scenari su TLS reale senza nodo malevolo.
+**Ultima verifica:** vedi il riepilogo in fondo all'ultimo commit e l'esecuzione dell'integrazione continua su quel commit. I conteggi cambiano a ogni test nuovo, e qui diventerebbero falsi.
 
 ### Cosa resta da fare
 
