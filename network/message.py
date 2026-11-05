@@ -444,58 +444,13 @@ def _encode_closure(closure: EpochClosure) -> dict:
     return {
         "change": _encode_change(closure.change),
         "reports": [_encode_report(report) for report in closure.reports],
-        "votes": [
-            {"validator": vote.validator, "signature": vote.signature.hex()}
-            for vote in closure.votes
-        ],
     }
 
 
 def _decode_closure(value) -> EpochClosure:
-    data = _object_with_fields(value, "change", "reports", "votes")
-    votes = []
-
-    for item in _list_of(data["votes"]):
-        entry = _object_with_fields(item, "validator", "signature")
-        votes.append(_decode_vote_fields(entry["validator"], entry["signature"]))
-
+    data = _object_with_fields(value, "change", "reports")
     reports = tuple(_decode_report(item) for item in _list_of(data["reports"]))
-    return EpochClosure(_decode_change(data["change"]), reports, tuple(votes))
-
-
-def encode_closure_vote_request(closure: EpochClosure) -> dict:
-    return {"type": "CLOSURE_VOTE_REQUEST", "closure": _encode_closure(closure)}
-
-
-def decode_closure_vote_request(message) -> EpochClosure:
-    return _decode_closure(
-        _message_of_type(message, "CLOSURE_VOTE_REQUEST", "closure")["closure"]
-    )
-
-
-def encode_closure_locked(closure: EpochClosure) -> dict:
-    return {"type": "CLOSURE_LOCKED", "closure": _encode_closure(closure)}
-
-
-def decode_closure_locked(message) -> EpochClosure:
-    return _decode_closure(_message_of_type(message, "CLOSURE_LOCKED", "closure")["closure"])
-
-
-def encode_closure_vote(digest: str, vote: Vote) -> dict:
-    return {
-        "type": "CLOSURE_VOTE",
-        "digest": digest,
-        "validator": vote.validator,
-        "signature": vote.signature.hex(),
-    }
-
-
-def decode_closure_vote(message) -> tuple[str, Vote]:
-    data = _message_of_type(message, "CLOSURE_VOTE", "digest", "validator", "signature")
-    return (
-        _hex_bytes(data["digest"], _ID_PATTERN).hex(),
-        _decode_vote_fields(data["validator"], data["signature"]),
-    )
+    return EpochClosure(_decode_change(data["change"]), reports)
 
 
 def encode_epoch_closure(closure: EpochClosure) -> dict:

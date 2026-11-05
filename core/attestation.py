@@ -359,9 +359,9 @@ def guilty_members(
     return tuple(committee.members[validator] for validator in sorted(common))
 
 
-# A chain of committees: formal/lean/PSystem/QuorumEpochs.lean. An epoch ends in three steps,
+# A chain of committees: formal/lean/PSystem/QuorumEpochs.lean. An epoch ends in two steps,
 # all of them signed: governance orders it, a quorum of the committee reports its votes and
-# stops voting, and the committee certifies one closure. Governance can only order: what the
+# stops voting, and those reports are the closure. Governance can only order: what the
 # next committee must respect comes from the reports, and nobody chooses it.
 
 EPOCH_CHANGE_DOMAIN = b"P-SYSTEM/EPOCH-CHANGE/v1\0"
@@ -534,16 +534,21 @@ class EpochReport:
     signature: bytes
 
     @staticmethod
+    def _payload_of_digest(committee: Committee, change_id: str, digest: bytes) -> bytes:
+        return (
+            EPOCH_REPORT_DOMAIN + bytes.fromhex(committee.committee_id)
+            + bytes.fromhex(change_id)
+            + digest
+        )
+
+    @classmethod
     def _payload(
+        cls,
         committee: Committee,
         change_id: str,
         votes: tuple[SignedTransfer, ...],
     ) -> bytes:
-        return (
-            EPOCH_REPORT_DOMAIN + bytes.fromhex(committee.committee_id)
-            + bytes.fromhex(change_id)
-            + _votes_digest(votes)
-        )
+        return cls._payload_of_digest(committee, change_id, _votes_digest(votes))
 
     @classmethod
     def create(
@@ -610,15 +615,14 @@ class EpochReport:
 @dataclass(frozen=True)
 class EpochClosure:
     """
-    An order of governance, the reports of a quorum, and the votes of the committee on
-    this closure. Without the votes it is only a candidate. The votes make it unique for
-    the epoch, as `closure_unique` says: different quorums of reports would otherwise give
-    different locks to different nodes.
+    An order of governance and the reports of a quorum. Nothing else: two nodes can hold different
+    closures of one epoch, with different locks and the same next committee. `order_unique` says
+    one order can have a quorum of reports, and `no_double_spend_any_closures` that the locks need
+    not agree: formal/lean/PSystem/QuorumReports.lean.
     """
 
     change: EpochChange
     reports: tuple[EpochReport, ...]
-    votes: tuple[Vote, ...] = ()
 
     @property
     def digest(self) -> str:
@@ -631,14 +635,7 @@ class EpochClosure:
 
         return data.hexdigest()
 
-    def event(self, governance: Governance, committee: Committee) -> Transfer:
-        """
-        The closure as an event of governance, with the epoch as nonce. Its amount is 0,
-        so no state can ever execute it: it exists to be voted on.
-        """
-        return Transfer(governance.account, self.digest, 0, committee.epoch)
-
-    def is_valid_candidate(self, governance: Governance, committee: Committee) -> bool:
+    def verify(self, governance: Governance, committee: Committee) -> bool:
         validators = [report.validator for report in self.reports]
         checked: set[SignedTransfer] = set()
         return (
@@ -651,16 +648,6 @@ class EpochClosure:
             )
         )
 
-    def verify(self, governance: Governance, committee: Committee) -> bool:
-        return (
-            self.is_valid_candidate(governance, committee)
-            and QuorumCertificate(
-                self.event(governance, committee),
-                self.votes,
-                committee.epoch,
-            ).verify(committee)
-        )
-
     def locks(self) -> tuple[Transfer, ...]:
         """The events of all the reports, each once, in a fixed order."""
         events = {
@@ -669,6 +656,46 @@ class EpochClosure:
             for signed in report.votes
         }
         return tuple(events[canonical] for canonical in sorted(events))
+
+
+@dataclass(frozen=True)
+class ClosureHeader:
+    """
+    A closure without the votes in its reports: what a node that has pruned keeps of an old epoch, to
+    know its own chain when it restarts. Its locks are already in the file. It proves the order and
+    that a quorum reported for it, and it says nothing of what they voted for, so it is never
+    sent to anyone: a node that took one from a peer would hold no locks for that epoch.
+    """
+
+    change: EpochChange
+    reports: tuple[tuple[int, bytes, bytes], ...]
+
+    @classmethod
+    def of(cls, closure: EpochClosure) -> "ClosureHeader":
+        return cls(
+            closure.change,
+            tuple(
+                (report.validator, _votes_digest(report.votes), report.signature)
+                for report in closure.reports
+            ),
+        )
+
+    def verify(self, governance: Governance, committee: Committee) -> bool:
+        validators = [validator for validator, _, _ in self.reports]
+        return (
+            self.change.verify(governance, committee)
+            and validators == sorted(set(validators))
+            and len(validators) >= committee.quorum
+            and all(
+                committee.has_validator(validator)
+                and verify_signature(
+                    committee.members[validator],
+                    signature,
+                    EpochReport._payload_of_digest(committee, self.change.change_id, digest),
+                )
+                for validator, digest, signature in self.reports
+            )
+        )
 
 
 # Snapshots: formal/lean/PSystem/QuorumSnapshot.lean. A snapshot says that with these events the state

@@ -16,8 +16,6 @@ FRAGMENT_DATA_SIZE = 8 * 1024 * 1024
 FRAGMENTABLE_TYPES = frozenset(
     {
         "EPOCH_REPORT",
-        "CLOSURE_VOTE_REQUEST",
-        "CLOSURE_LOCKED",
         "EPOCH_CLOSURE",
         "SNAPSHOT_REQUEST",
         "SNAPSHOT",

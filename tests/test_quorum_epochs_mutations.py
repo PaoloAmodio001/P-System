@@ -83,10 +83,6 @@ IN_ATTESTATION = {
         "            + _votes_digest(votes)\n",
         "",
     ),
-    "closure with repeated reports": (
-        "            and validators == sorted(set(validators))\n",
-        "",
-    ),
     "closure with too few reports": (
         "            and len(validators) >= committee.quorum\n",
         "",
@@ -96,14 +92,6 @@ IN_ATTESTATION = {
         "                report.verify(committee, self.change.change_id, checked)\n"
         "                for report in self.reports\n"
         "            )\n",
-        "",
-    ),
-    "closure without its votes": (
-        "            and QuorumCertificate(\n"
-        "                self.event(governance, committee),\n"
-        "                self.votes,\n"
-        "                committee.epoch,\n"
-        "            ).verify(committee)\n",
         "",
     ),
     "certificate of any epoch": (
@@ -145,24 +133,20 @@ IN_QUORUM = {
         "            True\n",
     ),
     "closing not durable": (
-        "                    \"INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)\",\n"
-        "                    (epoch,),\n"
+        "                    (epoch, change.change_id, _change_text(change)),\n"
         "                )\n"
-        "                self._commit()\n",
-        "                    \"INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)\",\n"
-        "                    (epoch,),\n"
-        "                )\n",
+        "                self._commit()\n"
+        "            except sqlite3.Error as error:\n"
+        "                raise VoteStoreError(f\"EPOCH NOT CLOSED: {error}\") from error\n",
+        "                    (epoch, change.change_id, _change_text(change)),\n"
+        "                )\n"
+        "            except sqlite3.Error as error:\n"
+        "                raise VoteStoreError(f\"EPOCH NOT CLOSED: {error}\") from error\n",
     ),
     "votes with no proof reported anyway": (
         "                if any(row[1] is None for row in rows):\n"
         "                    raise VoteStoreError(\"A VOTE HAS NO PROOF OF ITS SENDER: CANNOT REPORT\")\n",
         "                rows = [row for row in rows if row[1] is not None]\n",
-    ),
-    "any number of closures": (
-        "                if row is not None:\n"
-        "                    return row[0] == digest\n",
-        "                if row is not None:\n"
-        "                    return True\n",
     ),
     "locks not installed": (
         "                self._connection.executemany(\n"
@@ -212,24 +196,6 @@ IN_QUORUM = {
         "            return _NOTHING\n"
         "\n"
         "        self._change = change\n",
-    ),
-    "order of an epoch change not checked": (
-        "            or self.halted\n"
-        "            or not change.verify(self.governance, self.committee)\n"
-        "        ):\n"
-        "            return _NOTHING\n"
-        "\n"
-        "        replies = []\n",
-        "            or self.halted\n"
-        "        ):\n"
-        "            return _NOTHING\n"
-        "\n"
-        "        replies = []\n",
-    ),
-    "candidate not checked": (
-        "            or self.halted\n"
-        "            or not closure.is_valid_candidate(self.governance, self.committee)\n",
-        "            or self.halted\n",
     ),
     "closure not checked": (
         "            or not closure.verify(self.governance, self.committee)\n",

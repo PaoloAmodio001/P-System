@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.attestation import (
+    ClosureHeader,
     Committee,
     EpochChange,
     EpochClosure,
@@ -42,9 +43,6 @@ from network.message import (
     decode_certificate,
     decode_certificate_sync,
     decode_certificate_sync_request,
-    decode_closure_locked,
-    decode_closure_vote,
-    decode_closure_vote_request,
     decode_epoch_change,
     decode_epoch_closure,
     decode_epoch_report,
@@ -57,9 +55,6 @@ from network.message import (
     encode_certificate,
     encode_certificate_sync,
     encode_certificate_sync_request,
-    encode_closure_locked,
-    encode_closure_vote,
-    encode_closure_vote_request,
     encode_epoch_change,
     encode_epoch_closure,
     encode_epoch_report,
@@ -128,14 +123,6 @@ _EPOCH_TABLES = (
     "CREATE TABLE closed_epochs (epoch INTEGER PRIMARY KEY)",
     # This file came from a backup during this epoch: see `mark_restored`.
     "CREATE TABLE restored_epochs (epoch INTEGER PRIMARY KEY)",
-    # The closure this validator voted for in an epoch: one, for good.
-    """
-    CREATE TABLE closure_votes (
-        epoch INTEGER PRIMARY KEY,
-        digest TEXT NOT NULL,
-        closure TEXT
-    )
-    """,
     # The closure of `epoch`, which started `epoch + 1`.
     """
     CREATE TABLE closures (
@@ -155,10 +142,28 @@ _EPOCH_TABLES = (
 
 # What schema 5 adds. One snapshot, the last. The floors are what this validator no longer votes under,
 # and are written only when it has pruned locks: `no_double_spend_views` needs the two together.
+#
+# The order this validator reported for in an epoch: one, for good. It is what `order_unique` is about.
 _SNAPSHOT_TABLES = (
+    """
+    CREATE TABLE report_locks (
+        epoch INTEGER PRIMARY KEY,
+        change_id TEXT NOT NULL,
+        change TEXT NOT NULL
+    )
+    """,
     "CREATE TABLE snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL)",
     "CREATE TABLE floors (sender TEXT PRIMARY KEY, nonce TEXT NOT NULL)",
 )
+
+# In a file before schema 5. A closure no longer takes votes.
+_OLD_CLOSURE_VOTES = """
+    CREATE TABLE closure_votes (
+        epoch INTEGER PRIMARY KEY,
+        digest TEXT NOT NULL,
+        closure TEXT
+    )
+"""
 
 _SCHEMA = (
     """
@@ -226,6 +231,38 @@ def _certificate_from_row(
         ),
         epoch,
     )
+
+
+def _change_text(change: EpochChange) -> str:
+    return json.dumps(encode_epoch_change(change)["change"], separators=(",", ":"))
+
+
+def _header_text(header: ClosureHeader) -> str:
+    return json.dumps(
+        {
+            "change": encode_epoch_change(header.change)["change"],
+            "header": [
+                [validator, digest.hex(), signature.hex()]
+                for validator, digest, signature in header.reports
+            ],
+        },
+        separators=(",", ":"),
+    )
+
+
+def _closure_from_text(text: str) -> EpochClosure | ClosureHeader:
+    data = json.loads(text)
+
+    if type(data) is dict and "header" in data:
+        return ClosureHeader(
+            decode_epoch_change({"type": "EPOCH_CHANGE", "change": data["change"]}),
+            tuple(
+                (validator, bytes.fromhex(digest), bytes.fromhex(signature))
+                for validator, digest, signature in data["header"]
+            ),
+        )
+
+    return decode_epoch_closure({"type": "EPOCH_CLOSURE", "closure": data})
 
 
 def _is_halt_proof(
@@ -385,7 +422,7 @@ class SqliteVoteStore:
             if version == _SCHEMA_VERSION_2:
                 self._migrate_to_epochs()
             elif version == _SCHEMA_VERSION_3:
-                # A closure voted under schema 3 has only its digest: nobody can take it over.
+                # A closure voted under schema 3 has only its digest.
                 self._connection.execute("ALTER TABLE closure_votes ADD COLUMN closure TEXT")
             elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):
                 raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
@@ -394,6 +431,7 @@ class SqliteVoteStore:
                 for statement in _SNAPSHOT_TABLES:
                     self._connection.execute(statement)
 
+                self._drop_closure_votes()
                 self._connection.execute(
                     "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                     (_SCHEMA_VERSION,),
@@ -432,6 +470,37 @@ class SqliteVoteStore:
         for statement in _EPOCH_TABLES:
             self._connection.execute(statement)
 
+        self._connection.execute(_OLD_CLOSURE_VOTES)
+
+    def _drop_closure_votes(self) -> None:
+        """
+        To schema 5. A closure voted for names the order this validator reported for, so that is
+        its lock. An epoch closed with only a digest left says nothing of the order, and
+        `close_epoch` then gives no more reports. Closures on file lose their votes.
+        """
+        for epoch, text in self._connection.execute(
+            "SELECT epoch, closure FROM closure_votes WHERE closure IS NOT NULL"
+        ).fetchall():
+            change = decode_epoch_change(
+                {"type": "EPOCH_CHANGE", "change": json.loads(text)["change"]}
+            )
+            self._connection.execute(
+                "INSERT INTO report_locks (epoch, change_id, change) VALUES (?, ?, ?)",
+                (epoch, change.change_id, _change_text(change)),
+            )
+
+        self._connection.execute("DROP TABLE closure_votes")
+
+        for epoch, text in self._connection.execute(
+            "SELECT epoch, closure FROM closures"
+        ).fetchall():
+            body = json.loads(text)
+            body.pop("votes", None)
+            self._connection.execute(
+                "UPDATE closures SET closure = ? WHERE epoch = ?",
+                (json.dumps(body, separators=(",", ":")), epoch),
+            )
+
     def _load_chain(self) -> None:
         # Each closure is checked again, from the committee before it. Whatever in the file
         # does not verify is an altered file, and the store does not open.
@@ -442,10 +511,8 @@ class SqliteVoteStore:
                 raise VoteStoreError("THIS STORE HAS EPOCHS: GOVERNANCE IS REQUIRED")
 
             try:
-                closure = decode_epoch_closure(
-                    {"type": "EPOCH_CLOSURE", "closure": json.loads(closure_text)}
-                )
-            except (ValueError, TypeError, RecursionError) as error:
+                closure = _closure_from_text(closure_text)
+            except (ValueError, KeyError, TypeError, RecursionError) as error:
                 raise VoteStoreError("CLOSURE IS UNREADABLE") from error
 
             if not closure.verify(self.governance, self.committee):
@@ -914,7 +981,7 @@ class SqliteVoteStore:
         From now on no vote under this floor, and the locks under it go, in one transaction. Only at
         the start of an epoch, where the model has it, and never one without the other:
         `prune_without_floor_lets_conflict_through`. A floor that is too high only refuses more
-        votes. Votes and closure votes of ended epochs go too: nothing reads them.
+        votes. Votes and report locks of ended epochs go too: nothing reads them.
         """
         epoch = self.committee.epoch
 
@@ -939,8 +1006,22 @@ class SqliteVoteStore:
                     stale,
                 )
 
-                for table in ("votes", "vote_evidence", "closure_votes"):
+                for table in ("votes", "vote_evidence", "report_locks"):
                     self._connection.execute(f"DELETE FROM {table} WHERE epoch < ?", (epoch,))
+
+                # The last closure stays whole, for a peer one epoch behind. The older ones keep only
+                # what proves the chain: what they locked is in the table above.
+                for old_epoch, text in self._connection.execute(
+                    "SELECT epoch, closure FROM closures WHERE epoch < ?",
+                    (epoch - 1,),
+                ).fetchall():
+                    old = _closure_from_text(text)
+
+                    if isinstance(old, EpochClosure):
+                        self._connection.execute(
+                            "UPDATE closures SET closure = ? WHERE epoch = ?",
+                            (_header_text(ClosureHeader.of(old)), old_epoch),
+                        )
 
                 self._commit()
             except sqlite3.Error as error:
@@ -948,11 +1029,15 @@ class SqliteVoteStore:
             finally:
                 self._rollback_if_open()
 
-    def close_epoch(self) -> list[SignedTransfer]:
+    def close_epoch(self, change: EpochChange) -> list[SignedTransfer] | None:
         """
         Stop voting in this epoch, durably, and return all its votes. The two are one
         transaction, and after it no vote can be added: this is `report_holds_every_vote`.
         Calling it again returns the same votes, so a report can be sent again.
+
+        None for an order other than the first: one order for each epoch, for good, which is what
+        `order_unique` needs. Also for an epoch already closed with no order on file, from a file
+        older than this rule: that validator may have reported for any.
         """
         with self._lock:
             self._require_open()
@@ -966,6 +1051,17 @@ class SqliteVoteStore:
                     (epoch,),
                 ).fetchone():
                     raise VoteStoreError("THIS FILE WAS RESTORED: IT REPORTS NOTHING IN THIS EPOCH")
+
+                lock = self._connection.execute(
+                    "SELECT change_id FROM report_locks WHERE epoch = ?",
+                    (epoch,),
+                ).fetchone()
+
+                if lock is None and self._is_closed(epoch):
+                    return None
+
+                if lock is not None and lock[0] != change.change_id:
+                    return None
 
                 rows = self._connection.execute(
                     """
@@ -985,6 +1081,10 @@ class SqliteVoteStore:
                 self._connection.execute(
                     "INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)",
                     (epoch,),
+                )
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO report_locks (epoch, change_id, change) VALUES (?, ?, ?)",
+                    (epoch, change.change_id, _change_text(change)),
                 )
                 self._commit()
             except sqlite3.Error as error:
@@ -1021,10 +1121,6 @@ class SqliteVoteStore:
                     "INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)",
                     (self.committee.epoch,),
                 )
-                self._connection.execute(
-                    "INSERT OR IGNORE INTO closure_votes (epoch, digest) VALUES (?, '')",
-                    (self.committee.epoch,),
-                )
                 self._commit()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"NOT MARKED AS RESTORED: {error}") from error
@@ -1055,63 +1151,23 @@ class SqliteVoteStore:
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ EPOCH: {error}") from error
 
-    def voted_closure(self) -> EpochClosure | None:
-        """The candidate this validator voted for in this epoch, if it has it."""
+    def reported_change(self) -> EpochChange | None:
+        """The order this validator reported for in this epoch, if any."""
         with self._lock:
             self._require_open()
 
             try:
                 row = self._connection.execute(
-                    "SELECT closure FROM closure_votes WHERE epoch = ?",
+                    "SELECT change FROM report_locks WHERE epoch = ?",
                     (self.committee.epoch,),
                 ).fetchone()
             except sqlite3.Error as error:
-                raise VoteStoreError(f"CANNOT READ CLOSURE VOTE: {error}") from error
+                raise VoteStoreError(f"CANNOT READ REPORT LOCK: {error}") from error
 
-        if row is None or row[0] is None:
+        if row is None:
             return None
 
-        return decode_epoch_closure({"type": "EPOCH_CLOSURE", "closure": json.loads(row[0])})
-
-    def record_closure_vote(self, closure: EpochClosure) -> bool:
-        """
-        The vote lock of the closure: one closure for each epoch, for good, or two nodes
-        could hold different locks. True when this closure is durably the one, so a
-        signature may follow. A closure that is refused here is not retried in this epoch.
-        The whole closure goes on disk with the vote: it is what lets another node finish it.
-        """
-        digest = closure.digest
-        text = json.dumps(encode_epoch_closure(closure)["closure"], separators=(",", ":"))
-
-        with self._lock:
-            self._require_open()
-
-            try:
-                self._begin()
-
-                if self._is_halted():
-                    # Halted, this node signs no closure.
-                    return False
-
-                epoch = self.committee.epoch
-                row = self._connection.execute(
-                    "SELECT digest FROM closure_votes WHERE epoch = ?",
-                    (epoch,),
-                ).fetchone()
-
-                if row is not None:
-                    return row[0] == digest
-
-                self._connection.execute(
-                    "INSERT INTO closure_votes (epoch, digest, closure) VALUES (?, ?, ?)",
-                    (epoch, digest, text),
-                )
-                self._commit()
-                return True
-            except sqlite3.Error as error:
-                raise VoteStoreError(f"CLOSURE VOTE NOT RECORDED: {error}") from error
-            finally:
-                self._rollback_if_open()
+        return decode_epoch_change({"type": "EPOCH_CHANGE", "change": json.loads(row[0])})
 
     def install_closure(self, closure: EpochClosure) -> None:
         """
@@ -1156,7 +1212,10 @@ class SqliteVoteStore:
             self._chain[following.epoch] = following
 
     def closures(self, after_epoch: int = 0) -> list[EpochClosure]:
-        """The closures from `after_epoch` on, in order."""
+        """
+        The closures from `after_epoch` on, in order, as far as they are whole. A node that has pruned
+        has only headers of old ones, which it never sends, so a peer that far behind needs another.
+        """
         with self._lock:
             self._require_open()
 
@@ -1168,10 +1227,12 @@ class SqliteVoteStore:
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ CLOSURES: {error}") from error
 
-        return [
-            decode_epoch_closure({"type": "EPOCH_CLOSURE", "closure": json.loads(row[0])})
-            for row in rows
-        ]
+        closures = [_closure_from_text(row[0]) for row in rows]
+
+        if any(isinstance(closure, ClosureHeader) for closure in closures):
+            return []
+
+        return closures
 
     def close(self) -> None:
         with self._lock:
@@ -1488,35 +1549,27 @@ class QuorumReplica:
             LOG.error("signer gave no signature", extra={"reason": str(error)})
             return None
 
-    def report_epoch(self, change_id: str) -> EpochReport | None:
+    def report_epoch(self, change: EpochChange) -> EpochReport | None:
         """
-        Stop voting and report, durably in that order. None if this node has no vote in
-        this epoch, because it is not a member of the committee.
+        Stop voting and report, durably in that order. None if this node has no vote in this epoch,
+        because it is not a member of the committee, or if it already reported for another order.
         """
         if not self.is_member or self._store.halted() or self._store.is_restored():
             return None
 
-        votes = self._store.close_epoch()
+        votes = self._store.close_epoch(change)
+
+        if votes is None:
+            return None
 
         try:
-            return EpochReport.create(self.committee, self._identity, change_id, votes)
+            return EpochReport.create(self.committee, self._identity, change.change_id, votes)
         except SignerUnavailable as error:
             LOG.error("signer gave no signature", extra={"reason": str(error)})
             return None
 
-    def vote_for_closure(
-        self,
-        closure: EpochClosure,
-        governance: Governance,
-    ) -> Vote | None:
-        """Sign one closure for this epoch, after the lock is on disk."""
-        if not self.is_member or not self._store.record_closure_vote(closure):
-            return None
-
-        return self._signed_vote(closure.event(governance, self.committee))
-
-    def voted_closure(self) -> EpochClosure | None:
-        return self._store.voted_closure()
+    def reported_change(self) -> EpochChange | None:
+        return self._store.reported_change()
 
     def install_closure(self, closure: EpochClosure) -> None:
         self._store.install_closure(closure)
@@ -1599,9 +1652,6 @@ QUORUM_MESSAGE_TYPES = frozenset(
         "CERTIFICATE_SYNC_REQUEST",
         "EPOCH_CHANGE",
         "EPOCH_REPORT",
-        "CLOSURE_VOTE_REQUEST",
-        "CLOSURE_LOCKED",
-        "CLOSURE_VOTE",
         "EPOCH_CLOSURE",
         "SNAPSHOT_REQUEST",
         "SNAPSHOT_VOTE",
@@ -1691,11 +1741,9 @@ class QuorumDriver:
         self._snapshot: Snapshot | None = None
         self._snapshot_votes: dict[int, SnapshotAttestation] = {}
         self._snapshot_started = 0.0
-        # What this node proposed: the reports, then the votes on the closure.
+        # The order this node is collecting reports for.
         self._change: EpochChange | None = None
         self._reports: dict[int, EpochReport] = {}
-        self._candidate: EpochClosure | None = None
-        self._closure_votes: dict[int, Vote] = {}
         self.equivocations: dict[tuple[str, int], EquivocationProof] = {}
         self.signed_events: dict[str, SignedTransfer] = {}
         self._first_signed: dict[tuple[str, int], SignedTransfer] = {}
@@ -1750,17 +1798,6 @@ class QuorumDriver:
 
         if message_type == "EPOCH_REPORT":
             return self._handle_epoch_report(*decode_epoch_report(message))
-
-        if message_type == "CLOSURE_VOTE_REQUEST":
-            return self._handle_closure_vote_request(
-                decode_closure_vote_request(message)
-            )
-
-        if message_type == "CLOSURE_LOCKED":
-            return self._handle_closure_locked(decode_closure_locked(message))
-
-        if message_type == "CLOSURE_VOTE":
-            return self._handle_closure_vote(*decode_closure_vote(message))
 
         if message_type == "EPOCH_CLOSURE":
             return self._handle_epoch_closure(decode_epoch_closure(message))
@@ -1917,10 +1954,9 @@ class QuorumDriver:
 
     def propose_epoch_change(self, change: EpochChange) -> DriverOutput:
         """
-        Order the end of this epoch, as a proposer. This node collects the reports and the
-        votes on the closure. Only one proposer should act for an epoch: a closure that
-        splits the votes of the committee ends with no closure at all, as an equivocating
-        sender ends with no certificate.
+        Order the end of this epoch, as a proposer. This node collects the reports. Others can do the
+        same at the same time, and it costs only messages: any quorum of reports is a closure, and
+        `one_order_never_blocks` says no proposer can stand in the way of another.
         """
         if (
             self.governance is None
@@ -1931,44 +1967,14 @@ class QuorumDriver:
 
         self._change = change
         self._reports = {}
-        self._candidate = None
-        self._closure_votes = {}
         self._epoch_activity = self._clock()
-        broadcasts = [encode_epoch_change(change)]
-        report = self.replica.report_epoch(change.change_id)
+        report = self.replica.report_epoch(change)
 
         if report is not None:
             self._reports[report.validator] = report
 
-        # A closure this node already voted for can only be finished, not replaced.
-        voted = self._voted_closure_for(change)
-
-        if voted is not None:
-            broadcasts.extend(self._adopt(voted).broadcasts)
-        else:
-            broadcasts.extend(self._closure_if_reported().broadcasts)
-
-        return DriverOutput(broadcasts=tuple(broadcasts))
-
-    def _voted_closure_for(self, change: EpochChange) -> EpochClosure | None:
-        voted = self.replica.voted_closure()
-
-        if voted is None or voted.change.change_id != change.change_id:
-            return None
-
-        return voted
-
-    def _adopt(self, closure: EpochClosure) -> DriverOutput:
-        """Work for a closure that members already voted for, in place of any other."""
-        self._candidate = closure
-        self._closure_votes = {}
-        self._epoch_activity = self._clock()
-        vote = self.replica.vote_for_closure(closure, self.governance)
-
-        if vote is not None:
-            self._closure_votes[vote.validator] = vote
-
-        return DriverOutput(broadcasts=(encode_closure_vote_request(closure),))
+        closed = self._closure_if_reported()
+        return DriverOutput(broadcasts=(encode_epoch_change(change), *closed.broadcasts))
 
     def retry(self) -> DriverOutput:
         """Call it now and then: what is in progress goes on."""
@@ -1978,10 +1984,8 @@ class QuorumDriver:
 
     def _retry_epoch(self) -> DriverOutput:
         """
-        A closure in progress sends again what may have been lost, and
-        a member that voted for a closure and never saw it finish works for it itself, since
-        whoever proposed it may be dead. Several nodes doing this for one closure is harmless:
-        they ask for the same votes. So this adds no way to split the votes.
+        Whoever reported and sees no closure asks for the reports itself, since whoever proposed may
+        be dead. Several nodes doing this cost messages and nothing else.
         """
         if (
             self.governance is None
@@ -1990,21 +1994,21 @@ class QuorumDriver:
         ):
             return _NOTHING
 
-        if self._candidate is None and self._change is None:
-            voted = self.replica.voted_closure()
+        if self._change is None:
+            reported = self.replica.reported_change()
 
-            if voted is None or not voted.is_valid_candidate(self.governance, self.committee):
+            if reported is None or not reported.verify(self.governance, self.committee):
                 return _NOTHING
 
-            self._change = voted.change
-            return self._adopt(voted)
+            self._change = reported
+            report = self.replica.report_epoch(reported)
+
+            if report is not None:
+                self._reports[report.validator] = report
 
         self._epoch_activity = self._clock()
-
-        if self._candidate is not None:
-            return DriverOutput(broadcasts=(encode_closure_vote_request(self._candidate),))
-
-        return DriverOutput(broadcasts=(encode_epoch_change(self._change),))
+        closed = self._closure_if_reported()
+        return DriverOutput(broadcasts=(encode_epoch_change(self._change), *closed.broadcasts))
 
     def _snapshot_is_due(self) -> bool:
         replica = self.replica
@@ -2147,24 +2151,17 @@ class QuorumDriver:
         ):
             return _NOTHING
 
-        replies = []
-        voted = self._voted_closure_for(change)
+        report = self.replica.report_epoch(change)
 
-        # First, so that a proposer knows of it before it has enough reports to make another.
-        if voted is not None:
-            replies.append(encode_closure_locked(voted))
+        if report is None:
+            return _NOTHING
 
-        report = self.replica.report_epoch(change.change_id)
-
-        if report is not None:
-            replies.append(encode_epoch_report(change.change_id, report))
-
-        return DriverOutput(replies=tuple(replies))
+        self._epoch_activity = self._clock()
+        return DriverOutput(replies=(encode_epoch_report(change.change_id, report),))
 
     def _handle_epoch_report(self, change_id: str, report: EpochReport) -> DriverOutput:
         if (
             self._change is None
-            or self._candidate is not None
             or change_id != self._change.change_id
             or not report.verify(self.committee, change_id)
         ):
@@ -2175,81 +2172,12 @@ class QuorumDriver:
         return self._closure_if_reported()
 
     def _closure_if_reported(self) -> DriverOutput:
-        if self._candidate is not None or len(self._reports) < self.committee.quorum:
-            return _NOTHING
-
-        self._candidate = EpochClosure(
-            self._change,
-            tuple(self._reports[validator] for validator in sorted(self._reports)),
-        )
-        vote = self.replica.vote_for_closure(self._candidate, self.governance)
-
-        if vote is not None:
-            self._closure_votes[vote.validator] = vote
-
-        return DriverOutput(broadcasts=(encode_closure_vote_request(self._candidate),))
-
-    def _handle_closure_vote_request(self, closure: EpochClosure) -> DriverOutput:
-        if (
-            self.governance is None
-            or self.halted
-            or not closure.is_valid_candidate(self.governance, self.committee)
-        ):
-            return _NOTHING
-
-        vote = self.replica.vote_for_closure(closure, self.governance)
-
-        if vote is None:
-            voted = self.replica.voted_closure()
-
-            if voted is None:
-                return _NOTHING
-
-            return DriverOutput(replies=(encode_closure_locked(voted),))
-
-        self._epoch_activity = self._clock()
-        return DriverOutput(replies=(encode_closure_vote(closure.digest, vote),))
-
-    def _handle_closure_locked(self, closure: EpochClosure) -> DriverOutput:
-        """
-        A member already voted for this closure, and cannot vote for another. Only who is
-        working on that order of governance cares. A faulty member can send any valid
-        candidate here, and that can only waste the votes, as a second proposer can.
-        """
-        if (
-            self.governance is None
-            or self.halted
-            or self._change is None
-            or closure.change.change_id != self._change.change_id
-            or (self._candidate is not None and self._candidate.digest == closure.digest)
-            or not closure.is_valid_candidate(self.governance, self.committee)
-        ):
-            return _NOTHING
-
-        return self._adopt(closure)
-
-    def _handle_closure_vote(self, digest: str, vote: Vote) -> DriverOutput:
-        candidate = self._candidate
-
-        if (
-            candidate is None
-            or digest != candidate.digest
-            or not vote.verify(
-                self.committee,
-                candidate.event(self.governance, self.committee),
-            )
-        ):
-            return _NOTHING
-
-        self._closure_votes[vote.validator] = vote
-
-        if len(self._closure_votes) < self.committee.quorum:
+        if len(self._reports) < self.committee.quorum:
             return _NOTHING
 
         closure = EpochClosure(
-            candidate.change,
-            candidate.reports,
-            tuple(self._closure_votes[v] for v in sorted(self._closure_votes)),
+            self._change,
+            tuple(self._reports[validator] for validator in sorted(self._reports)),
         )
         self._install(closure)
         return DriverOutput(broadcasts=(encode_epoch_closure(closure),))
@@ -2284,8 +2212,6 @@ class QuorumDriver:
         self._aggregating.clear()
         self._change = None
         self._reports = {}
-        self._candidate = None
-        self._closure_votes = {}
         self._epoch_activity = self._clock()
         self._snapshot = None
         self._snapshot_votes = {}

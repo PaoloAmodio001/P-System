@@ -511,13 +511,7 @@ def test_failed_commit_of_a_closure_leaves_the_epoch_as_it_was(tmp_path):
     reports = tuple(
         EpochReport.create(COMMITTEE, MEMBERS[i], change.change_id, ()) for i in range(3)
     )
-    candidate = EpochClosure(change, reports)
-    event = candidate.event(governance, COMMITTEE)
-    closure = EpochClosure(
-        change,
-        reports,
-        tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in range(3)),
-    )
+    closure = EpochClosure(change, reports)
     connection = run._store._connection
     real_execute = connection.execute
 

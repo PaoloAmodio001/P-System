@@ -188,9 +188,10 @@ def test_a_report_is_one_per_order(guard):
     assert not guard.permit(report_bytes(digest=b"\x55" * 32))
 
 
-def test_a_report_of_another_order_or_committee_is_separate(guard):
+def test_one_order_for_each_committee(guard):
     assert guard.permit(report_bytes())
-    assert guard.permit(report_bytes(digest=b"\x55" * 32, change=b"\x66" * 32))
+    # Another order of one committee: two orders with a quorum could mean two next committees.
+    assert not guard.permit(report_bytes(digest=b"\x55" * 32, change=b"\x66" * 32))
     assert guard.permit(report_bytes(digest=b"\x55" * 32, committee=OTHER_COMMITTEE))
 
 
