@@ -31,6 +31,8 @@ authors of the code, and it is what an audit should start from and attack.
 | Holder of any node certificate | Fill a node with signed events | Nonce window, funds check, bound on evidence. **Reduced, not removed** | `tests/test_service.py` |
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
+| Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
+| Crash | A proposer dies during a closure | Members keep the closure they voted for, and finish it | `tests/test_quorum_epoch_retry.py` EMPIRICAL |
 
 ## Known gaps
 
@@ -47,7 +49,7 @@ authors of the code, and it is what an audit should start from and attack.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
 - **Liveness.** `honest_sender_certifies` assumes delivery. Nothing promises progress against an adversarial network,
-  and a proposer that splits the votes on a closure can stop an epoch from closing for good.
+  and proposers acting at once can still split the votes on a closure, which stops that epoch from closing for good.
 - **API.** No TLS on the HTTP interface. No rate limit.
 - **Power loss.** `kill -9` is tested. Power loss is not, and `fsync` calls were traced by hand once.
 

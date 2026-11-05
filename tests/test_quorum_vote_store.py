@@ -804,7 +804,7 @@ def v1_path(path, halt_store):
 def test_schema_v1_store_migrates_and_keeps_votes_and_log(v1_path):
     store = reopen_halt(v1_path)
 
-    assert _schema_version(v1_path) == "3"
+    assert _schema_version(v1_path) == "4"
     assert not store.halted()
     assert canonical_set(store.votes()) == {A.canonical()}
     assert not store.record_vote(B)
@@ -829,7 +829,7 @@ def test_schema_v1_of_another_validator_is_refused_and_left_as_it_is(v1_path):
     "mode,version,marker",
     [
         ("crash-before-commit", "1", "BEFORE_COMMIT"),
-        ("crash-after-commit", "3", "AFTER_COMMIT"),
+        ("crash-after-commit", "4", "AFTER_COMMIT"),
     ],
 )
 def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
@@ -840,7 +840,7 @@ def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
     assert _schema_version(v1_path) == version
 
     store = reopen_halt(v1_path)
-    assert _schema_version(v1_path) == "3"
+    assert _schema_version(v1_path) == "4"
     assert canonical_set(store.votes()) == {A.canonical()}
     store.close()
 
@@ -860,7 +860,7 @@ def test_schema_v2_store_migrates_and_keeps_votes_and_log(v2_path):
     assert _schema_version(v2_path) == "2"
     store = reopen_halt(v2_path)
 
-    assert _schema_version(v2_path) == "3"
+    assert _schema_version(v2_path) == "4"
     assert canonical_set(store.votes()) == {A.canonical()}
     assert not store.record_vote(B)
     assert [c.event.canonical() for c in store.certificates()] == [A.canonical()]
@@ -878,7 +878,22 @@ def test_a_vote_without_proof_of_its_sender_cannot_be_reported(v2_path):
     store.close()
 
 
-@pytest.mark.parametrize("version", ["0", "4", "two"])
+def test_schema_v3_store_migrates_and_keeps_its_closure_vote(path, halt_store):
+    halt_store.close()
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE closure_votes DROP COLUMN closure")
+    connection.execute("INSERT INTO closure_votes (epoch, digest) VALUES (0, 'abc')")
+    connection.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+    connection.commit()
+    connection.close()
+    store = reopen_halt(path)
+    assert _schema_version(path) == "4"
+    # The vote still holds, and with only its digest nobody can finish that closure.
+    assert store.voted_closure() is None
+    store.close()
+
+
+@pytest.mark.parametrize("version", ["0", "5", "two"])
 def test_schema_of_an_unknown_version_is_refused(path, halt_store, version):
     halt_store.close()
     _tamper_halt(

@@ -31,8 +31,16 @@ def free_port() -> int:
 
 
 class Deployment:
-    def __init__(self, base: Path, nodes: int = 4, f: int = 1, balance: int = 1000) -> None:
+    def __init__(
+        self,
+        base: Path,
+        nodes: int = 4,
+        f: int = 1,
+        balance: int = 1000,
+        extra_senders: int = 0,
+    ) -> None:
         self.base = base
+        self.balance_per_sender = balance
         self.count = nodes
         self.processes: dict[int, subprocess.Popen] = {}
         self.ports = [free_port() for _ in range(nodes)]
@@ -66,6 +74,11 @@ class Deployment:
             arguments += ["--member", member["public_key"]]
 
         arguments += ["--balance", f"{self.sender['account']}={balance}"]
+        self.extra_sender_keys = [base / f"sender{i}.key" for i in range(extra_senders)]
+
+        for path in self.extra_sender_keys:
+            account = json.loads(psystem("key", "generate", str(path)))["account"]
+            arguments += ["--balance", f"{account}={balance}"]
 
         for key in governance:
             arguments += ["--governance", key]
@@ -88,11 +101,15 @@ class Deployment:
     def store(self, index: int) -> Path:
         return self.directory(index) / "votes.sqlite"
 
+    def peer_port(self, index: int, other: int) -> int:
+        """The port where node `index` reaches node `other`."""
+        return self.ports[other]
+
     def write_config(self, index: int, extra: str = "") -> None:
         node_id = self.node_id(index)
         peers = "".join(
             f'\n[[peers]]\nnode_id = "{self.node_id(other)}"\n'
-            f'host = "127.0.0.1"\nport = {self.ports[other]}\n'
+            f'host = "127.0.0.1"\nport = {self.peer_port(index, other)}\n'
             for other in range(self.count)
             if other != index
         )

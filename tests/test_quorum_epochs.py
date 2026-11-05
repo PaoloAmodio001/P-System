@@ -469,7 +469,9 @@ def test_a_validator_votes_for_one_closure_per_epoch(cluster):
     driver = cluster.drivers[3]
 
     assert driver.handle_message(wire(encode_closure_vote_request(first))).replies
-    assert driver.handle_message(wire(encode_closure_vote_request(second))).replies == ()
+    # No vote for the second: it tells which one it voted for, so that a retry can finish it.
+    answer = driver.handle_message(wire(encode_closure_vote_request(second))).replies
+    assert [message["type"] for message in answer] == ["CLOSURE_LOCKED"]
     # The same one again is the same answer.
     assert driver.handle_message(wire(encode_closure_vote_request(first))).replies
 

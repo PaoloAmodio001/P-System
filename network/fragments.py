@@ -13,7 +13,9 @@ import re
 
 MAX_ASSEMBLED_SIZE = 256 * 1024 * 1024
 FRAGMENT_DATA_SIZE = 8 * 1024 * 1024
-FRAGMENTABLE_TYPES = frozenset({"EPOCH_REPORT", "CLOSURE_VOTE_REQUEST", "EPOCH_CLOSURE"})
+FRAGMENTABLE_TYPES = frozenset(
+    {"EPOCH_REPORT", "CLOSURE_VOTE_REQUEST", "CLOSURE_LOCKED", "EPOCH_CLOSURE"}
+)
 
 _FRAGMENT_FIELDS = {"type", "carries", "id", "index", "total", "data"}
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")

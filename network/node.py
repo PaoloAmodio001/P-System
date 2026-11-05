@@ -1356,6 +1356,19 @@ class Node:
             for connection in targets:
                 self._request_certificates(connection)
 
+            self._retry_closure()
+
+    def _retry_closure(self) -> None:
+        if self._quorum is None:
+            return
+
+        def call():
+            if self._quorum.closed:
+                return _NOTHING_SENT
+            return self._quorum.driver.retry()
+
+        self._send_quorum_output(self._driver_call(call), None)
+
     def _request_certificates(self, connection) -> None:
         """Ask a peer for what this node lacks. In quorum mode only."""
         if self._quorum is None:

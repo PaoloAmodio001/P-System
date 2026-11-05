@@ -127,7 +127,8 @@ change = EpochChange.create(current_committee, next_keys, next_f, governance, [s
 ```
 
 Send it to **one** node with `POST /v1/epoch-changes`. Two proposers at once can split the votes on the
-closure, and then that epoch never closes. Reports hold every vote of the epoch, and a closure costs time and memory in
+closure, and then that epoch never closes. If the node you sent it to dies, or the epoch does not change, wait a minute and send
+the same order to another node: a retry finishes the closure already voted for, and does not start another. Reports hold every vote of the epoch, and a closure costs time and memory in
 proportion: close an epoch before it holds about 50 000 events, see `docs/BENCHMARKS.md`. Above about 240 000 with `n = 4` it can
 never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same

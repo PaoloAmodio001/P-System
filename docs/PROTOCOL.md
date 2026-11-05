@@ -79,8 +79,20 @@ So an event with no certificate and one alternative finishes when sent again in 
 equivocated one stays locked for good. `split_lock_ambiguous` shows no rule on the reports can avoid
 that with `n = 3f+1`.
 
-Two proposers at once can split the votes on the closure, and then that epoch never closes. Only one
-should act: this is an operating rule, since nothing enforces it.
+A proposer can die, and an order can get lost. Each member keeps on disk the closure it voted for, so:
+
+- A member asked for another closure, or given the order again, answers `CLOSURE_LOCKED` with the one it voted for, and a
+  proposer works for that one in place of its own. Any quorum of reporters includes a member of any closure that could block
+  the others, so a retry finds it.
+- A proposer sends again what it asked every 10 seconds, until the closure is installed.
+- A member that voted and sees no closure for 10 seconds asks for the votes on that closure itself. Several doing this ask for
+  one closure, so this splits nothing.
+
+No member ever signs a second closure for an epoch, so `closure_unique` is not touched.
+
+What remains: **two proposers acting at once before any vote** can still split the votes so that no closure gets a quorum, and a
+faulty member can try the same. That epoch then never closes, and voting has stopped. Preventing it for good would take
+consensus, which this system does not have. So one proposer should act: this is an operating rule, since nothing enforces it.
 
 A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `CLOSURE_VOTE_REQUEST` and `EPOCH_CLOSURE`, and only
 those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB, next to each other on the connection, with

@@ -470,6 +470,14 @@ def decode_closure_vote_request(message) -> EpochClosure:
     )
 
 
+def encode_closure_locked(closure: EpochClosure) -> dict:
+    return {"type": "CLOSURE_LOCKED", "closure": _encode_closure(closure)}
+
+
+def decode_closure_locked(message) -> EpochClosure:
+    return _decode_closure(_message_of_type(message, "CLOSURE_LOCKED", "closure")["closure"])
+
+
 def encode_closure_vote(digest: str, vote: Vote) -> dict:
     return {
         "type": "CLOSURE_VOTE",

@@ -14,7 +14,15 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 - A node on all interfaces announced `0.0.0.0`, and peers took it as its address, which broke reconnection.
 - A peer that does not read could hold every broadcast behind it for good.
 
+- One proposer that died at the wrong moment and one retry stopped the whole committee for good: every member refused the
+  second closure and had already stopped voting on events. Members now keep and offer the closure they voted for.
+- A peer that did not read delayed every other peer. Each peer now has its own queue and writer.
+- An epoch of more than about 12 000 events could never close, because a closure had to fit in one frame.
+
 ### Added
+
+- Differential D, one validator across epochs against `runEpoch`, `reportOf` and `lockAllows` in Lean.
+- `tests/chaos.py` and `scripts/soak.py`: network faults between real processes.
 
 - Synchronization of certificates, so a node that was away catches up.
 - Epochs: governance of `k` of `m`, reports, one certified closure, locks carried from epoch to epoch. Members can change and
@@ -30,6 +38,7 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 
 ### Changed
 
+- Store schema 4: a vote on a closure keeps the closure. Older stores migrate on opening.
 - Store schema 3: votes by epoch, with the proof that the sender signed each. Older stores migrate on opening, and a vote from
   before has no such proof, so that node cannot report until the next epoch.
 
