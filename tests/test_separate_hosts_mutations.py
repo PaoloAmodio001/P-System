@@ -79,6 +79,10 @@ MUTATIONS = {
             '            if all(len(client.status()["peers"]) >= len(clients) - 1 for client in clients):\n',
             '            if True:\n',
         ),
+        "a measure runs past the window": (
+            "        if allowed > 0:\n            wait_for(clients, account, allowed, 600.0)\n",
+            "",
+        ),
         "a sender that does not move": (
             "        self.next_nonce += 1\n",
             "",

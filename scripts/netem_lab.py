@@ -200,7 +200,11 @@ def measure(options) -> int:
                 f"http://127.0.0.1:{BASE_API_PORT + index}={base / f'node-{index}' / 'api.token'}",
             ]
 
-        output = subprocess.run(arguments, check=True, capture_output=True, text=True, timeout=3600)
+        output = subprocess.run(arguments, capture_output=True, text=True, timeout=3600)
+
+        if output.returncode != 0:
+            raise RuntimeError(f"THE MEASURE FAILED: {output.stderr[-2000:]}")
+
         result = {
             "delay_ms_each_way": options.delay,
             "jitter_ms": options.jitter,
@@ -216,6 +220,15 @@ def measure(options) -> int:
 
         return 0 if result["same_state_on_all"] else 1
     finally:
+        if options.keep_logs:
+            for index in range(COUNT):
+                done = subprocess.run(
+                    ["docker", "logs", f"{PROJECT}-node-{index}-1"],
+                    capture_output=True,
+                    text=True,
+                )
+                (base / f"node-{index}.container.log").write_text(done.stdout + done.stderr)
+
         compose(base, "down", "-v", "--timeout", "5")
 
 
@@ -230,6 +243,7 @@ def main() -> int:
     parser.add_argument("--throughput-events", type=int, default=2000)
     parser.add_argument("--recovery-events", type=int, default=1000)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--keep-logs", action="store_true")
     return measure(parser.parse_args())
 
 

@@ -140,7 +140,7 @@ def running(tmp_path):
         else Client(made.api_url(index))
         for index in range(made.count)
     ]
-    assert wait_until(lambda: all(client.status()["peers"] for client in clients))
+    measure_module.wait_connected(clients)
     yield made, clients
     made.stop_all()
 
@@ -207,6 +207,29 @@ class Answering:
 def test_waiting_is_for_every_node_and_not_only_the_first():
     with pytest.raises(measure_module.TimedOut, match="1 NODES"):
         measure_module.wait_for([Answering(5), Answering(0)], "x", 5, 0.05)
+
+
+def test_a_measure_keeps_under_the_window_of_a_node():
+    identity = Identity.create()
+    sender = measure_module.Sender(identity)
+    events = [sender.next() for _ in range(measure_module.MAX_ON_THEIR_WAY + measure_module.BATCH)]
+    sent = []
+
+    class Stuck(Answering):
+        def submit_many(self, batch):
+            sent.extend(batch)
+
+    with pytest.raises(measure_module.TimedOut):
+        import unittest.mock
+
+        with unittest.mock.patch.object(
+            measure_module,
+            "wait_for",
+            side_effect=measure_module.TimedOut("STOPPED"),
+        ):
+            measure_module.send_paced([Stuck(0)], identity.identity_id, events)
+
+    assert 0 < len(sent) <= measure_module.MAX_ON_THEIR_WAY
 
 
 def test_a_measure_waits_for_the_nodes_to_see_each_other():

@@ -30,6 +30,9 @@ from sdk.client import ApiError, Client  # noqa: E402
 POLL_SECONDS = 0.01
 BATCH = 64
 ISOLATION_CHECK_SECONDS = 2.0
+# A node refuses a vote further than `max_nonce_ahead` ahead of what it has run, 1024 by default. One sender
+# can only have that many on their way, so this is part of what limits it, and a measure keeps under it.
+MAX_ON_THEIR_WAY = 512
 
 
 class TimedOut(Exception):
@@ -103,6 +106,18 @@ def wait_connected(clients: list[Client], seconds: float = 60.0) -> None:
         time.sleep(0.1)
 
 
+def send_paced(clients: list[Client], account: str, events: list[SignedTransfer]) -> None:
+    """In batches, with at most `MAX_ON_THEIR_WAY` not yet run on the slowest of `clients`."""
+    for start in range(0, len(events), BATCH):
+        batch = events[start:start + BATCH]
+        allowed = batch[-1].transfer.nonce + 1 - MAX_ON_THEIR_WAY
+
+        if allowed > 0:
+            wait_for(clients, account, allowed, 600.0)
+
+        clients[0].submit_many(batch)
+
+
 def percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
@@ -131,9 +146,7 @@ def measure_throughput(clients: list[Client], sender: Sender, count: int) -> dic
     events = [sender.next() for _ in range(count)]
     started = time.monotonic()
 
-    for start in range(0, count, BATCH):
-        clients[0].submit_many(events[start:start + BATCH])
-
+    send_paced(clients, sender.identity.identity_id, events)
     wait_for(clients, sender.identity.identity_id, sender.next_nonce, 600.0)
     seconds = time.monotonic() - started
     return {
@@ -165,9 +178,7 @@ def measure_recovery(
     try:
         events = [sender.next() for _ in range(count)]
 
-        for start in range(0, count, BATCH):
-            majority[0].submit_many(events[start:start + BATCH])
-
+        send_paced(majority, account, events)
         wait_for(majority, account, sender.next_nonce, 600.0)
 
         # If it gets them all the same, nothing was cut off, and a number here would be a lie. It may
