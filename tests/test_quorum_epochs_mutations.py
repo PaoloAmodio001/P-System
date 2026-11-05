@@ -80,19 +80,8 @@ IN_ATTESTATION = {
         "",
     ),
     "report not bound to the votes": (
-        "            + _votes_digest(votes)\n",
-        "",
-    ),
-    "closure with too few reports": (
-        "            and len(validators) >= committee.quorum\n",
-        "",
-    ),
-    "closure with reports not checked": (
-        "            and all(\n"
-        "                report.verify(committee, self.change.change_id, checked)\n"
-        "                for report in self.reports\n"
-        "            )\n",
-        "",
+        "        return cls._payload_of_digest(committee, change_id, _votes_digest(votes))\n",
+        "        return cls._payload_of_digest(committee, change_id, b\"\")\n",
     ),
     "certificate of any epoch": (
         "        if type(self.epoch) is not int or self.epoch != committee.epoch:\n"
@@ -198,7 +187,9 @@ IN_QUORUM = {
         "        self._change = change\n",
     ),
     "closure not checked": (
-        "            or not closure.verify(self.governance, self.committee)\n",
+        "        if not closure.verify(self.governance, self.committee):\n"
+        "            self._cost += BAD_SIGNATURE_COST\n"
+        "            return _NOTHING\n",
         "",
     ),
     "no closure in an answer": (

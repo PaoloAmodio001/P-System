@@ -216,12 +216,12 @@ QUORUM = {
         "        if False:\n            for certificate in replica.prune_covered():\n",
     ),
     "the buffer keeps what the snapshot covers": (
-        "            if replica.is_covered(certificate.event):\n                del self._buffer[event_id]\n",
+        "            if replica.is_covered(certificate.event):\n                self._no_longer_waiting(event_id)\n",
         "            pass\n",
     ),
     "the buffer is not tried": (
-        "                del self._buffer[event_id]\n\n        self._retry_buffer()\n        return True\n",
-        "                del self._buffer[event_id]\n\n        return True\n",
+        "                self._no_longer_waiting(event_id)\n\n        self._retry_buffer()\n        return True\n",
+        "                self._no_longer_waiting(event_id)\n\n        return True\n",
     ),
     "the index of the log stays": (
         "        self._log_by_sender = {}\n        self._indexed = 0\n\n        # What was waiting",
@@ -253,7 +253,7 @@ QUORUM = {
         "                    if True\n",
     ),
     "old votes stay": (
-        '                for table in ("votes", "vote_evidence", "closure_votes"):\n                    self._connection.execute(f"DELETE FROM {table} WHERE epoch < ?", (epoch,))\n',
+        '                for table in ("votes", "vote_evidence", "report_locks"):\n                    self._connection.execute(f"DELETE FROM {table} WHERE epoch < ?", (epoch,))\n',
         "",
     ),
     "votes of this epoch go": (
@@ -294,7 +294,7 @@ QUORUM = {
         "            or candidate.epoch != self.committee.epoch\n",
     ),
     "vote not verified": (
-        "            or not attestation.verify(self.committee, digest)\n",
+        "        if not attestation.verify(self.committee, digest):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n",
         "",
     ),
     "a quorum of one": (
