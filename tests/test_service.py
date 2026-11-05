@@ -489,7 +489,8 @@ def test_evidence_kept_in_memory_has_a_limit(tmp_path):
 
 
 def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
-    # A certified event must run on every node, whatever each one would have voted.
+    # A certified event must run on every node, whatever each one would have voted. A certificate
+    # beyond the window is left out for now, and it runs when it comes back: as synchronization does.
     from core.attestation import QuorumCertificate, Vote
     from network.message import encode_certificate
     from network.quorum import QuorumRuntime
@@ -512,7 +513,7 @@ def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
         ),
         genesis,
     )
-    for nonce in (1, 0):
+    for nonce in (1, 0, 1):
         event = spend(sender, nonce).transfer
         run.driver.handle_message(
             encode_certificate(
@@ -523,6 +524,7 @@ def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
             )
         )
     assert [event.nonce for event in run.replica.executed] == [0, 1]
+    assert run.driver.certificates_left_out == 1
     run.close()
 
 

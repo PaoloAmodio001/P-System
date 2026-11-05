@@ -468,7 +468,16 @@ class FakeConnection:
         # What a real connection does to a message.
         self.sent.append(json.loads(json.dumps(message)))
 
-    enqueue = send
+    def enqueue(self, message):
+
+        self.send(message)
+
+        return 0
+
+
+    def charge(self, tokens):
+
+        pass
 
     def close(self) -> None:
         self.closed = True
@@ -953,7 +962,16 @@ class Link:
         reply = self.destination.peer_connections[self.source.node_id]
         self.network.queue.append((self.destination, json.dumps(message), reply))
 
-    enqueue = send
+    def enqueue(self, message):
+
+        self.send(message)
+
+        return 0
+
+
+    def charge(self, tokens):
+
+        pass
 
     def close(self) -> None:
         pass

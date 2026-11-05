@@ -11,15 +11,16 @@ class NodeServer:
     """
     Gestisce esclusivamente il lifecycle TCP di un Node.
 
-    Each handshake has its own thread, a deadline and a place among a limited
-    number, so a connection that stays silent does not stop the others. This
-    reduces the problem and does not remove it: whoever keeps all the places taken,
-    reopening connections as they expire, needs no certificate and still keeps
-    honest peers out.
+    Each handshake has its own thread, a deadline and a place among a limited number.
+    With no place left the one waiting longest goes, not the one arriving: an honest handshake
+    takes milliseconds and a silent connection waits, so the silent one goes first. Each
+    address has a limit of its own, so that it cannot push out the others. To push out an honest
+    peer, whoever needs no certificate has to open all the places within its handshake.
     """
 
     HANDSHAKE_TIMEOUT = 5.0
     MAX_PENDING_HANDSHAKES = 64
+    MAX_PENDING_PER_ADDRESS = 16
 
     def __init__(self, node, tls_config: TLSConfig | None = None):
         self.node = node
@@ -27,7 +28,9 @@ class NodeServer:
         self.server = None
         self.thread = None
         self.running = False
+        # Oldest first, and each with the address it came from.
         self._pending = {}
+        self._addresses = {}
         self._pending_lock = threading.Lock()
 
     def start(self):
@@ -74,7 +77,7 @@ class NodeServer:
     def _serve(self):
         while self.running:
             try:
-                connection, _ = self.server.accept()
+                connection, source = self.server.accept()
             except socket.timeout:
                 continue
             except OSError:
@@ -85,13 +88,26 @@ class NodeServer:
                     "P14 TLS CONFIGURATION REQUIRED"
                 )
 
-            self._start_handshake(connection)
+            self._start_handshake(connection, source[0])
 
-    def _start_handshake(self, connection) -> None:
+    def _make_room(self, address: str) -> None:
+        """With the lock held. The next arrival from `address` takes the place of who waited longest."""
+        same = [guard for guard, source in self._addresses.items() if source == address]
+
+        if len(same) >= self.MAX_PENDING_PER_ADDRESS:
+            oldest = same[0]
+        elif len(self._pending) >= self.MAX_PENDING_HANDSHAKES:
+            oldest = next(iter(self._pending))
+        else:
+            return
+
+        self._pending.pop(oldest, None)
+        self._addresses.pop(oldest, None)
+        self._shut_down(oldest)
+
+    def _start_handshake(self, connection, address: str = "") -> None:
         with self._pending_lock:
-            if len(self._pending) >= self.MAX_PENDING_HANDSHAKES:
-                connection.close()
-                return
+            self._make_room(address)
 
             try:
                 guard = connection.dup()
@@ -105,6 +121,7 @@ class NodeServer:
                 daemon=True,
             )
             self._pending[guard] = thread
+            self._addresses[guard] = address
 
             # Under the lock, so that stop never finds a thread not yet started.
             thread.start()
@@ -224,6 +241,7 @@ class NodeServer:
 
             with self._pending_lock:
                 self._pending.pop(guard, None)
+                self._addresses.pop(guard, None)
 
             guard.close()
 

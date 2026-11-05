@@ -328,7 +328,16 @@ class Connection:
                 self.unsigned.append(transfer["sender"])
         self.sent.append(wire)
 
-    enqueue = send
+    def enqueue(self, message):
+
+        self.send(message)
+
+        return 0
+
+
+    def charge(self, tokens):
+
+        pass
 
     def close(self) -> None:
         self.connected = False

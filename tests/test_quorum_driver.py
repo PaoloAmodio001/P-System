@@ -487,6 +487,20 @@ def test_certificates_ready_together_run_in_order_of_id(cluster):
     ]
 
 
+def test_one_that_could_not_run_runs_when_something_else_brings_it_funds(cluster):
+    # The one with the lower id is tried first and has no funds yet, so it must be tried again.
+    for attempt in range(1000):
+        needs_funds = Transfer(f"poor-{attempt}", "bob", 1, 0)
+        brings_funds = Transfer(PAYER, f"poor-{attempt}", 1, 0)
+        if needs_funds.event_id() < brings_funds.event_id():
+            break
+
+    cluster.driver.handle_message(cluster.certificate_message(needs_funds))
+    cluster.driver.handle_message(cluster.certificate_message(brings_funds))
+
+    assert cluster.executed() == [brings_funds.canonical(), needs_funds.canonical()]
+
+
 def test_certificate_stays_waiting_after_a_failed_write(cluster):
     cluster.driver.handle_message(cluster.certificate_message(NEXT))
     cluster.store._connection.execute("PRAGMA query_only = ON")
