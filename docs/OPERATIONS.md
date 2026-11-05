@@ -160,6 +160,37 @@ never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same
 operation. Rotating the key of an **account** does not exist: the account is the key.
 
+## Four machines
+
+To measure on real hosts. **Nobody has done this yet.** This puts all keys on one machine first, which is fine for a measurement and wrong for a real deployment.
+
+```sh
+# On any machine, with the addresses of the four.
+python scripts/make_host_deployment.py out \
+    --host node-0=10.0.0.1 --host node-1=10.0.0.2 --host node-2=10.0.0.3 --host node-3=10.0.0.4
+
+# Copy to each machine, keeping the layout: out/node-i, out/ca/ca.crt, out/genesis.json.
+# Open port 7000 between them, and 8080 from where you will measure. Then on each:
+pip install --require-hashes -r requirements.lock && pip install --no-deps .
+cd out/node-i && psystem node --config node.toml
+
+# From where you measure. The last --api is the node that gets isolated.
+cat > block.sh <<'SH'
+#!/bin/sh
+ssh node-3 "sudo iptables -A INPUT -p tcp --dport 7000 -j DROP; sudo iptables -A OUTPUT -p tcp --dport 7000 -j DROP"
+SH
+cat > unblock.sh <<'SH'
+#!/bin/sh
+ssh node-3 "sudo iptables -D INPUT -p tcp --dport 7000 -j DROP; sudo iptables -D OUTPUT -p tcp --dport 7000 -j DROP"
+SH
+python scripts/measure_network.py --sender-key out/sender.key \
+    --api http://10.0.0.1:8080=out/node-0/api.token --api http://10.0.0.2:8080=out/node-1/api.token \
+    --api http://10.0.0.3:8080=out/node-2/api.token --api http://10.0.0.4:8080=out/node-3/api.token \
+    --isolate "sh block.sh" --heal "sh unblock.sh"
+```
+
+The API is on all interfaces with a token and no TLS: on a network you do not control, set `tls_certificate`. A result goes in `docs/BENCHMARKS.md` under "Separate machines", with the machines, the network and the commit.
+
 ## Choosing unlocking
 
 `psystem genesis --unlock` gives 5 signatures out of 6 with `f = 1`, against 3 out of 4. With one member down and one faulty, nothing certifies. What you get is that an account that equivocated gets its nonce back at the next change of committee, instead of staying stuck on it for good. It cannot be changed later: it is in the identity of the chain.

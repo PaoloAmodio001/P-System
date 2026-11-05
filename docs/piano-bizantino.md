@@ -2,7 +2,27 @@
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.
+**Vedi anche il riepilogo del programma verso la 1.0, qui sotto. Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.
+
+### Programma verso la 1.0, branch `verso-1.0`: riepilogo per passo
+
+Le soste del programma sono diventate proposte in `docs/proposte/`, ciascuna in un commit prima del codice, su richiesta di Paolo. **Il branch è partito da `hardening-2` prima del merge della PR #2, contro quanto chiedeva il programma**: va ribasato su `main` dopo quel merge.
+
+- **Passo 1, fatto.** Hook di pre-commit. `test_a_long_frame_gets_more_time` non dipende più dai buffer della macchina. Corrette tre incoerenze di `CLAUDE.md`, con il testo vecchio e nuovo nel commit. Il piano diceva che `48a1d72` non era stato pushato: è nella storia di `main`, e ora lo dice.
+- **Passo 2, fatto.** Istantanee firmate da un quorum e potatura opzionale. Riavvio di 50 000 certificati da 20 s a 0,9 s, 0,1 s con potatura. `QuorumSnapshot.lean`. Gli id degli eventi eseguiti crescono ancora.
+- **Passo 3, fatto, con una scelta che il programma non elencava.** Nessun voto sulle chiusure: un blocco sull'ordine del governo e qualsiasi quorum di rapporti. Toglie il blocco tra due proponenti. Resta quello di un governo che firma due ordini. `QuorumReports.lean`. **È la parte più nuova e meno esaminata.**
+- **Passo 4, fatto.** Connessioni mute, inondazioni di firme e di richieste, buffer senza limite, prove ricopiate: ognuna con un attaccante che prima vinceva. I valori dei limiti sono scelti a giudizio.
+- **Passo 5, in parte.** Script per macchine separate e laboratorio con `tc netem`. Misurato su container su **una** macchina. Le macchine separate restano **non misurate**.
+- **Passo 6, fatto.** `n = 5f+1` con sblocco, dimostrato per ogni `f`, con il controesempio per `3f+1` per ogni `f`. Implementato, spento per impostazione predefinita, con il differenziale E.
+- **Passi 7, 8, 9.** Il pacchetto per l'audit è scritto. Preprint e verifica finale restano da fare.
+
+**Problemi.**
+
+- La CI della PR #2 è stata rossa tre volte, e ogni giro completo ha trovato un test diverso: due mutazioni che dipendevano dal carico, una porta occupata all'avvio, un thread che moriva sotto carico (questo era un difetto del prodotto, corretto con un test), una mutazione sulle note dell'elenco di revoca. Il primo giro era una parola vietata in un commento Lean, che il mio controllo locale non vedeva.
+- Le mutazioni si sono disallineate di nuovo dopo i refactor dei passi 2-4: 11 fallimenti alla prima suite su `04a8cc7`. Corrette, ma non ancora rieseguite tutte insieme.
+- Una prima versione del buffer rendeva casuale l'ordine del log: un test esistente l'ha mostrato, fallendo a volte.
+- Uno script di misura è fallito perché zsh non divide i parametri come pensavo, e una misura si è fermata perché superava la finestra di `max_nonce_ahead`: era un limite reale del sistema, ora scritto nei documenti.
+- Il riferimento "Guerraoui DISC 2021" del programma non esiste con quel primo autore. Il lavoro di DISC 2021 sul tema è di Kuznetsov, Pignolet, Ponomarev e Tonkikh (Pastro), e il preprint citerà quello. Va confermato che fosse quello inteso.
 
 ### Secondo passo del 2026-11-05, branch `hardening-2`: modifiche
 

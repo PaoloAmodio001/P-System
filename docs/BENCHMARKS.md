@@ -1,6 +1,6 @@
 # Benchmarks
 
-Measured on 2026-11-05 with `benchmarks/quorum_benchmark.py`. **These numbers belong to this machine and this moment.** They come from one laptop, with all the nodes on it, and nobody else has repeated them. Nothing here is compared with another system.
+Measured on 2026-11-05 with `benchmarks/quorum_benchmark.py`. **These numbers belong to this machine and this moment.** Measures on one machine and on containers come first. Measures on separate machines do not exist yet, and have a section of their own to say so. They come from one laptop, with all the nodes on it, and nobody else has repeated them. Nothing here is compared with another system.
 
     python benchmarks/quorum_benchmark.py --dir /a/directory/on/the/disk/to/measure --out results.json
 
@@ -79,5 +79,26 @@ Time grows faster than the events, and no node votes in that epoch from the mome
 | 50 000 | 20.3 s | 0.91 s | 0.10 s | 36.7 MiB, 39.9 with a snapshot |
 
 Without a snapshot a node replays its whole log and checks every signature, about 0.4 ms per certificate. With one, it checks the signatures of the snapshot and of what came after it. What is left of 0.91 s is reading the rows into memory. Pruning does not shrink the file by itself: SQLite reuses the pages, and `VACUUM`, with the node stopped, gives them back. What keeps growing is the ids of executed events: 32 bytes each in the snapshot, against about 700 for a certificate.
+
+## Containers on separate networks, one machine
+
+`python scripts/netem_lab.py measure lab --delay 25 --jitter 5 --loss 0.1`: four containers, each on a Docker network of its own, with every packet through a router that adds delay and loss with `tc netem`. The delay is each way. The round trip is measured for each run, by the time of a TCP connection, to show that the emulation took. Raw lines: `benchmarks/results/netem-2026-11-05.jsonl`.
+
+| Delay each way | Jitter | Loss each way | Round trip measured | Latency, median | Latency, p95 | Throughput | Catching up on 1000 events |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0.0 ms | 32.9 ms | 37.0 ms | 329 per second | 3.76 s |
+| 5 ms | 0 | 0 | 10.3 ms | 48.6 ms | 53.3 ms | 323 per second | 3.10 s |
+| 25 ms | 5 ms | 0.1% | 50.2 ms | 103.8 ms | 116.3 ms | 374 per second | 3.29 s |
+| 50 ms | 10 ms | 1% | 102.4 ms | 183.0 ms | 271.2 ms | 91 per second | 3.85 s |
+
+Latency is from a submit to the event having run on **all four** nodes, polled every 10 ms. Throughput is 2000 events from one sender, in batches of 64, with at most 512 on their way. Catching up is after a node is cut off by taking its interface down at the router, and the measure refuses to report if that node got the events all the same.
+
+How to read these. A round of votes and the certificate after it cross the network about twice, so a latency near two round trips plus what the disks take is what to expect, and these fit. **A sender can have only `max_nonce_ahead` events on their way**, 1024 by default, so its throughput cannot exceed that many per round. With loss, TCP retransmits, and a stream of certificates waits for each lost packet: that is the drop to 91 per second. The differences among the first three throughput rows are noise: other tests were running on the machine, and an earlier run with less load gave 447, 414 and 385. One run each, so no confidence intervals.
+
+**What this is not.** All four share one CPU and one disk, so `fsync` contention is shared, and this is not a measure of separate hosts. The scripts for those exist, and no run on them does.
+
+## Separate machines
+
+**Not measured.** `scripts/make_host_deployment.py` and `scripts/measure_network.py` are ready, and `docs/OPERATIONS.md` says how to use them on four machines. Also not measured: real networks over time, several senders from several clients, committees larger than 4 on separate hosts, epochs and pruning under a long load, power loss.
 
 The system is in Python, and systems like FastPay in Rust report far more on far more hardware. No comparison has been run, and the guarantees of durability would have to be compared before the numbers. High-volume payments are not its use. Processes with a modest rate and a need for proofs may be, and that remains to be shown with a real user.

@@ -78,6 +78,7 @@ pytest -q -m "not slow"                  # about 3 minutes on one core
 pytest -q                                # adds mutations, differentials, faults: about an hour on one core
 PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py tests/test_epoch_differential.py
 python scripts/soak.py --minutes 60 --out soak.jsonl   # campaigns of network faults on real processes
+python scripts/netem_lab.py measure lab --delay 25 --jitter 5 --loss 0.1   # containers with a real delay: needs Docker
 cd formal/lean && lake build             # needs Lean: see formal/lean/lean-toolchain
 ```
 
