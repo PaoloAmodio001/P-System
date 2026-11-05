@@ -374,8 +374,9 @@ def test_a_peer_that_does_not_read_does_not_hold_the_others(make_nodes, monkeypa
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch):
-    # The order of a broadcast is the order of the connections, so the faulty peer comes
-    # first here, and its deadline is what the others wait for.
+    # The order of a broadcast is the order of the connections, so the faulty peer comes first.
+    # Its queue is full, and the others must not notice. That a slow peer does not delay them
+    # is in tests/test_peer_queue_and_fragments.py.
     monkeypatch.setattr(DuplexTLSStream, "SEND_TIMEOUT", 0.5)
     nodes = make_nodes(sync_interval=None)
     link(nodes)
@@ -384,13 +385,10 @@ def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch
     stream = faulty.connections[victim.node_id]
     assert wait_until(lambda: len(victim.peer_connections) == 3)
     blocked = victim.peer_connections[f"faulty-{victim.node_id}"]
-    original = blocked.send
+    def queue_is_full(message):
+        raise ConnectionError("PEER IS TOO FAR BEHIND")
 
-    def blocking_send(message):
-        time.sleep(DuplexTLSStream.SEND_TIMEOUT)
-        raise TimeoutError("PEER IS NOT READING")
-
-    blocked.send = blocking_send
+    blocked.enqueue = queue_is_full
     with victim._peer_connections_lock:
         victim.peer_connections = {
             f"faulty-{victim.node_id}": blocked,
@@ -401,7 +399,6 @@ def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch
     assert victim.submit(event)
     assert wait_until(lambda: all(n.local_events == [event.transfer] for n in nodes))
     assert f"faulty-{victim.node_id}" not in victim.peer_connections
-    blocked.send = original
     stream.close()
     assert_the_theorems_hold([victim, other])
 
