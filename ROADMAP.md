@@ -7,7 +7,7 @@ Niente di questo documento è un risultato. I teoremi elencati sono **da dimostr
 ## Dove siamo
 
 - **Dimostrato sul modello:** `no_double_spend` e la sua forma per soglie qualsiasi, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, `conflict_identifies_faulty`, `no_double_spend_across_epochs` su una catena di comitati, `honest_sender_certifies` con la consegna come ipotesi. Crittografia idealizzata.
-- **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche non c'è un differenziale con Lean. Non è un refinement.
+- **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche, il differenziale D confronta un validatore con `runEpoch`, `reportOf` e `lockAllows`; la verifica delle chiusure resta fuori, perché nel modello è l'ipotesi `ChainValid`. Non è un refinement.
 - **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti e asset multipli.
 
 ## Stato rispetto agli ambiti di `CLAUDE.md`, sezione 3.1
