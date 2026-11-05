@@ -304,9 +304,8 @@ class PeerConnection:
         `batch_handler(messages, self)`, with the messages that are already here. That is
         what lets several of them share one write to disk.
         """
-        if not self.connected:
-            raise ConnectionError("PEER NOT CONNECTED")
-
+        # A connection can close between its handshake and this thread: nothing to read, and no
+        # error. Raising here only killed the thread with noise.
         while self.connected:
             try:
                 message = self.receive()

@@ -479,3 +479,11 @@ def test_an_epoch_larger_than_a_frame_can_close(tmp_path):
     finally:
         for node in nodes:
             node.stop()
+
+
+def test_a_connection_closed_before_its_reader_starts_ends_it_quietly():
+    # Seen once in a long run under load, as an exception that killed the thread.
+    connection = PeerConnection("closed-before-reading", "127.0.0.1", 1)
+    calls = []
+    connection.receive_loop(lambda message, peer: calls.append(message))
+    assert calls == []
