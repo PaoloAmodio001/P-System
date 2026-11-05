@@ -12,6 +12,7 @@ a certificate against the chain of committees from the genesis file, and needs t
 `account` is only what one node says.
 """
 
+import http.client
 import json
 import os
 import sqlite3
@@ -270,15 +271,20 @@ class Client:
             headers=headers,
         )
 
+        # A node that dies halfway through an answer is a failed connection like any other, and
+        # http.client does not say so: what it raises here is not an OSError.
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout,
-                context=self._context,
-            ) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            raise ApiError(error.code, json.loads(error.read() or b"{}")) from error
+            try:
+                with urllib.request.urlopen(
+                    request,
+                    timeout=self.timeout,
+                    context=self._context,
+                ) as response:
+                    return json.loads(response.read())
+            except urllib.error.HTTPError as error:
+                raise ApiError(error.code, json.loads(error.read() or b"{}")) from error
+        except http.client.HTTPException as error:
+            raise ConnectionError(f"NODE STOPPED ANSWERING: {error!r}") from error
 
     def status(self) -> dict:
         return self._request("GET", "/v1/status")

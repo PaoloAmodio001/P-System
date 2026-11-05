@@ -924,3 +924,33 @@ def test_the_fingerprint_of_the_command_is_what_a_connection_sees(tmp_path):
     finally:
         left.stop()
         right.stop()
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        b"HTTP/1.1 200 OK\r\nContent-Length: 101\r\n\r\n",
+        b"HTTP/1.1 500 Error\r\nContent-Length: 101\r\n\r\n",
+        b"not http at all\r\n\r\n",
+    ],
+)
+def test_a_node_that_dies_halfway_through_an_answer_is_a_failed_connection(start):
+    # A long campaign of faults lost its traffic to this: what http.client raises is no OSError.
+    listener = socket.create_server(("127.0.0.1", 0))
+
+    def answer():
+        connection, _ = listener.accept()
+        connection.recv(65536)
+        connection.sendall(start)
+        connection.close()
+
+    thread = threading.Thread(target=answer, daemon=True)
+    thread.start()
+
+    try:
+        client = Client(f"http://127.0.0.1:{listener.getsockname()[1]}", timeout=5)
+        with pytest.raises(OSError):
+            client.status()
+    finally:
+        thread.join(5)
+        listener.close()
