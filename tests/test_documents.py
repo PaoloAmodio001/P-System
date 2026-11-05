@@ -128,3 +128,43 @@ def test_a_file_that_is_gone_is_noticed():
 
 def test_text_with_no_code_names_nothing():
     assert names_in("some_word outside of code") == set()
+
+
+def numbers_of_the_preprint() -> set[str]:
+    text = (ROOT / "docs/paper/preprint.md").read_text().split("## References")[0]
+    # Without code spans, where a number is a part of a formula or a name, and without decision names.
+    text = CODE.sub(" ", text)
+    return {
+        match.replace(" ", "")
+        for match in re.findall(r"(?<![\w.])\d[\d ]*(?:\.\d+)?(?![\w])", text)
+        if len(match.replace(" ", "")) >= 2 and not match.startswith("20")
+        or "." in match
+    }
+
+
+def corpus_of_numbers() -> str:
+    text = " ".join(
+        (ROOT / name).read_text()
+        for name in ("docs/BENCHMARKS.md", "docs/PROOF-OBLIGATIONS.md", "ROADMAP.md")
+    )
+    return re.sub(r"(?<=\d) (?=\d{3})", "", text)
+
+
+def test_every_number_in_the_preprint_is_in_a_file_of_the_repository():
+    corpus = corpus_of_numbers()
+    missing = sorted(n for n in numbers_of_the_preprint() if not re.search(rf"(?<![\d.]){re.escape(n)}(?![\d])", corpus))
+    assert not missing, f"not in the repository: {missing}"
+
+
+def test_the_count_of_theorems_in_the_preprint_is_the_real_one():
+    theorems = sum(
+        len(re.findall(r"^theorem ", path.read_text(), re.M))
+        for path in (ROOT / "formal/lean/PSystem").glob("*.lean")
+    )
+    modules = len(list((ROOT / "formal/lean/PSystem").glob("*.lean")))
+    text = (ROOT / "docs/paper/preprint.md").read_text()
+    assert f"{theorems} theorems in {modules} modules" in text
+
+
+def test_a_number_that_is_in_no_file_would_be_noticed():
+    assert not re.search(r"(?<![\d.])987654(?![\d])", corpus_of_numbers())

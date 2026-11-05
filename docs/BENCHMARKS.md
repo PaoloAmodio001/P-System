@@ -80,6 +80,17 @@ Time grows faster than the events, and no node votes in that epoch from the mome
 
 Without a snapshot a node replays its whole log and checks every signature, about 0.4 ms per certificate. With one, it checks the signatures of the snapshot and of what came after it. What is left of 0.91 s is reading the rows into memory. Pruning does not shrink the file by itself: SQLite reuses the pages, and `VACUUM`, with the node stopped, gives them back. What keeps growing is the ids of executed events: 32 bytes each in the snapshot, against about 700 for a certificate.
 
+## Faults between real processes
+
+`python scripts/soak.py`: campaigns of two minutes with four processes and network faults injected, each from a new deployment, on one machine, with other work on it. An unsafe campaign would be two nodes in conflict, or a final state that differs.
+
+| Commit | Length | Campaigns | Unsafe | Events submitted | Equivocations | Restarts | Epoch changes | Longest convergence |
+|---|---|---|---|---|---|---|---|---|
+| `d6c0ec2` | 3 hours | 50 | 0 | 53 592 | 13 491 | 260 | 25 | 88.0 s |
+| `c621828` | 90 minutes | 26 | 0 | 27 817 | 6905 | 145 | 13 | 86.2 s |
+
+These are before closures without votes, snapshots and the limits against saturation, and they say nothing about that code. A run of hours on one machine does not replace weeks on separate ones.
+
 ## Containers on separate networks, one machine
 
 `python scripts/netem_lab.py measure lab --delay 25 --jitter 5 --loss 0.1`: four containers, each on a Docker network of its own, with every packet through a router that adds delay and loss with `tc netem`. The delay is each way. The round trip is measured for each run, by the time of a TCP connection, to show that the emulation took. Raw lines: `benchmarks/results/netem-2026-11-05.jsonl`.
