@@ -1,18 +1,20 @@
-import PSystem.QuorumEpochs
+import PSystem.QuorumSnapshot
 
 /-!
 Command-line driver for the differential test against the Python vote store across epochs
 (tests/test_epoch_differential.py). Not part of the proofs. It runs `runEpoch`, `reportOf` and
-`lockAllows` from `PSystem.QuorumEpochs`, with no logic of its own apart from parsing and printing.
+`lockAllows` from `PSystem.QuorumEpochs`, and `pruneLocks` and `flooredAuth` from
+`PSystem.QuorumSnapshot`, with no logic of its own apart from parsing and printing.
 
 Input file: cases separated by a line `---`. Each case is one epoch of one validator:
 
     L <id> <sender> <receiver> <amount> <nonce> <parents>   a lock from earlier epochs
     U <id>                                                  the check `auth` refuses this id
+    F <sender> <nonce>                                      the floor of this validator for a sender
     V <id> <sender> <receiver> <amount> <nonce> <parents>   a vote request
     X                                                       close
 
-`<parents>` is `p,p,...` or `-`. Lock and refused lines come before the inputs.
+`<parents>` is `p,p,...` or `-`. Lock, refused and floor lines come before the inputs.
 
 Output, for each case: one line for the state before any input and one after each input,
 computed by `runEpoch` on that prefix of the inputs, then `---`:
@@ -27,6 +29,7 @@ open PSystem PSystem.Quorum
 structure RawEpochCase where
   locks : List Event := []
   refused : List EventId := []
+  floors : List (Identity × Nat) := []
   inputs : List EpochInput := []
 
 def parseNat (s : String) : Except String Nat :=
@@ -55,6 +58,9 @@ def parseLine (c : RawEpochCase) (line : String) : Except String RawEpochCase :=
   | ["U", id] => do
       if !c.inputs.isEmpty then .error "a refused id after the inputs" else
       return { c with refused := c.refused ++ [← parseNat id] }
+  | ["F", sender, nonce] => do
+      if !c.inputs.isEmpty then .error "a floor after the inputs" else
+      return { c with floors := c.floors ++ [(sender, ← parseNat nonce)] }
   | ["V", id, s, r, a, k, p] => do
       return { c with inputs := c.inputs ++ [.voteRequest (← parseEvent id s r a k p)] }
   | ["X"] => return { c with inputs := c.inputs ++ [.close] }
@@ -66,12 +72,14 @@ def idList (events : List Event) : String :=
 
 def runCase (lines : List String) : Except String (List String) := do
   let c ← lines.foldlM parseLine {}
-  let auth : Event → Bool := fun e => !c.refused.contains e.id
+  let floor : Identity → Nat := fun sender => (c.floors.lookup sender).getD 0
+  let auth : Event → Bool := flooredAuth (fun e => !c.refused.contains e.id) floor
+  let locks := pruneLocks floor c.locks
   return (List.range (c.inputs.length + 1)).map fun k =>
     let seen := c.inputs.take k
-    let st := runEpoch c.locks auth seen
+    let st := runEpoch locks auth seen
     let closed := if st.closed then "1" else "0"
-    s!"votes={idList st.votes};closed={closed};report={idList (reportOf c.locks auth seen)}"
+    s!"votes={idList st.votes};closed={closed};report={idList (reportOf locks auth seen)}"
 
 def splitCases (lines : List String) : List (List String) :=
   let (done, current) := lines.foldl

@@ -131,3 +131,14 @@ Più la non vacuità: un'esecuzione concreta in cui istantanea e ripresa accadon
 - Un certificato valido di un comitato con più di `f` difettosi per un nonce potato non è più confrontabile con l'originale: viene rifiutato e segnalato, ma non può dare la prova di arresto a due certificati.
 - Gli id crescono ancora in modo lineare.
 - Un mittente che ha firmato due versioni, con chiavi rubate di comitati finiti: resta il limite di `SingleVersion`.
+
+## Differenze tra la proposta e il codice
+
+Aggiunte dopo aver scritto il codice, senza cambiare il testo sopra.
+
+- `attested_snapshot_is_true` è diventato `attested_snapshot_matches_node`, più forte: dice anche che lo stato è quello di ogni nodo onesto con quegli eventi.
+- `no_double_spend_with_floors` e `FloorChainValid` sono diventati `no_double_spend_views` e `ViewChain`, più generali: ogni validatore ha anche il proprio insieme di blocchi. Serve al passo 3, e `viewChain_of_chainValid` mostra che la catena uniforme ne è un caso.
+- `resume_needs_a_valid_set` è diventato `invalid_set_has_no_derivation`.
+- Una proposta ripetuta dal proponente non si ferma alla prima risposta: resta chiesta per 60 secondi, perché un membro sotto carico è quasi sempre un po' indietro.
+- Tolti due controlli che la proposta lasciava intendere, sul membro che ha potato oltre la frontiera e sulla propria base: le mutazioni hanno mostrato che il confronto dei digest decide già da solo.
+- I blocchi dei firmatari vengono già aggiunti all'installazione, ma finché le chiusure restano intere (fino al passo 3) un nodo li ha comunque dalla catena.
