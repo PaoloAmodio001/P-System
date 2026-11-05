@@ -40,7 +40,6 @@ from core.attestation import (
     EpochReport,
     Governance,
     Snapshot,
-    Vote,
 )
 from core.event import Transfer
 from core.signed_event import SignedTransfer
@@ -149,7 +148,7 @@ def open_replica(path: Path, committee: Committee, refused: set, create: bool, i
 
 def closure_for(committee: Committee, replica_report, pool, rng) -> EpochClosure:
     change = EpochChange.create(committee, MEMBER_KEYS, 1, GOVERNANCE, SIGNERS[:2])
-    reports = [replica_report(change.change_id)]
+    reports = [replica_report(change)]
 
     # Faulty or honest, others report whatever signed events they like, each event once a nonce
     # or not: the union is what counts.
@@ -165,10 +164,7 @@ def closure_for(committee: Committee, replica_report, pool, rng) -> EpochClosure
         )
 
     reports.sort(key=lambda report: report.validator)
-    candidate = EpochClosure(change, tuple(reports))
-    event = candidate.event(GOVERNANCE, committee)
-    votes = tuple(Vote.create(committee, MEMBERS[v], event) for v in range(3))
-    closure = EpochClosure(change, tuple(reports), votes)
+    closure = EpochClosure(change, tuple(reports))
     assert closure.verify(GOVERNANCE, committee)
     return closure
 
@@ -216,7 +212,7 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
                 action = rng.random()
 
                 if action < 0.10:
-                    report = replica.report_epoch(change.change_id)
+                    report = replica.report_epoch(change)
                     assert report.verify(committee, change.change_id)
                     if closed_with is None:
                         closed_with = [signed.transfer for signed in report.votes]
@@ -254,8 +250,8 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
 
                 python.append(snapshot())
 
-            def report_now(change_id: str) -> EpochReport:
-                return replica.report_epoch(change_id)
+            def report_now(order: EpochChange) -> EpochReport:
+                return replica.report_epoch(order)
 
             closure = closure_for(committee, report_now, [*pool], rng)
             lean_input.extend(lines)

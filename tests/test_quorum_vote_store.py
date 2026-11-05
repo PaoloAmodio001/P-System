@@ -20,7 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from core.attestation import Committee, QuorumCertificate, Vote
+from core.attestation import Committee, EpochChange, Governance, QuorumCertificate, Vote
+from crypto.identity import Identity
 from core.event import Transfer
 from core.state import State
 from network.quorum import SqliteVoteStore, VoteStoreError
@@ -745,11 +746,11 @@ def _downgrade_to_v2(path: Path) -> None:
         "vote_evidence",
         "closed_epochs",
         "restored_epochs",
-        "closure_votes",
         "closures",
         "locks",
         "snapshot",
         "floors",
+        "report_locks",
     ):
         connection.execute(f"DROP TABLE {table}")
     connection.execute("ALTER TABLE votes RENAME TO votes_v3")
@@ -783,6 +784,16 @@ def _downgrade_to_v1(path: Path) -> None:
     connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
     connection.commit()
     connection.close()
+
+
+_GOVERNOR = [Identity.create() for _ in range(2)]
+CHANGE_OF_HALT = EpochChange.create(
+    HALT_COMMITTEE,
+    HALT_COMMITTEE.members,
+    HALT_COMMITTEE.f,
+    Governance(tuple(sorted(g.public_key for g in _GOVERNOR)), 2),
+    _GOVERNOR,
+)
 
 
 def _schema_version(path: Path) -> str:
@@ -874,26 +885,27 @@ def test_a_vote_without_proof_of_its_sender_cannot_be_reported(v2_path):
     store = reopen_halt(v2_path)
 
     with pytest.raises(VoteStoreError):
-        store.close_epoch()
+        store.close_epoch(CHANGE_OF_HALT)
 
     assert not store.epoch_is_closed()
     store.close()
 
 
-def test_schema_v3_store_migrates_and_keeps_its_closure_vote(path, halt_store):
+def test_schema_v3_store_migrates_to_no_closure_votes(path, halt_store):
     halt_store.close()
     connection = sqlite3.connect(path)
-    connection.execute("ALTER TABLE closure_votes DROP COLUMN closure")
-    connection.execute("INSERT INTO closure_votes (epoch, digest) VALUES (0, 'abc')")
     connection.execute("DROP TABLE snapshot")
     connection.execute("DROP TABLE floors")
+    connection.execute("DROP TABLE report_locks")
+    connection.execute("CREATE TABLE closure_votes (epoch INTEGER PRIMARY KEY, digest TEXT NOT NULL)")
+    connection.execute("INSERT INTO closure_votes (epoch, digest) VALUES (0, 'abc')")
     connection.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
     connection.commit()
     connection.close()
     store = reopen_halt(path)
     assert _schema_version(path) == "5"
-    # The vote still holds, and with only its digest nobody can finish that closure.
-    assert store.voted_closure() is None
+    # With only a digest, it says nothing of the order it reported for.
+    assert store.reported_change() is None
     store.close()
 
 
@@ -903,6 +915,8 @@ def test_schema_v4_store_migrates_with_no_snapshot_and_no_floor(path, halt_store
     connection = sqlite3.connect(path)
     connection.execute("DROP TABLE snapshot")
     connection.execute("DROP TABLE floors")
+    connection.execute("DROP TABLE report_locks")
+    connection.execute("CREATE TABLE closure_votes (epoch INTEGER PRIMARY KEY, digest TEXT NOT NULL, closure TEXT)")
     connection.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
     connection.commit()
     connection.close()
@@ -920,7 +934,7 @@ def test_schema_of_an_unknown_version_is_refused(path, halt_store, version):
         path, "UPDATE meta SET value = ? WHERE key = 'schema_version'", version
     )
 
-    with pytest.raises(VoteStoreError):
+    with pytest.raises(VoteStoreError, match="UNSUPPORTED"):
         reopen_halt(path)
 
 

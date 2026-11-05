@@ -69,11 +69,10 @@ class SignerGuard:
         )
         self._connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS reports (
-                committee TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS report_locks (
+                committee TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
-                digest BLOB NOT NULL,
-                PRIMARY KEY (committee, change_id)
+                digest BLOB NOT NULL
             )
             """
         )
@@ -126,15 +125,17 @@ class SignerGuard:
             return False
 
         committee, change_id, digest = body[:ID_SIZE], body[ID_SIZE:2 * ID_SIZE], body[2 * ID_SIZE:]
-        return self._first_or_same(
-            """
-            INSERT OR IGNORE INTO reports (committee, change_id, digest)
-            VALUES (?, ?, ?)
-            """,
-            "SELECT digest FROM reports WHERE committee = ? AND change_id = ?",
-            (committee.hex(), change_id.hex()),
-            digest,
+        # One order for each committee: two orders with a quorum of reports could mean two next
+        # committees, and only this lock stands against that. Once on the record, the same again.
+        self._connection.execute(
+            "INSERT OR IGNORE INTO report_locks (committee, change_id, digest) VALUES (?, ?, ?)",
+            (committee.hex(), change_id.hex(), digest),
         )
+        row = self._connection.execute(
+            "SELECT change_id, digest FROM report_locks WHERE committee = ?",
+            (committee.hex(),),
+        ).fetchone()
+        return row == (change_id.hex(), digest)
 
     def close(self) -> None:
         self._connection.close()

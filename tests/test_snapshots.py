@@ -690,13 +690,7 @@ def next_epoch(replica) -> Committee:
 
         reports.append(EpochReport.create(current, member, change.change_id, ()))
 
-    bare = EpochClosure(change, tuple(sorted(reports, key=lambda r: r.validator)))
-    event = bare.event(GOVERNANCE, current)
-    closure = EpochClosure(
-        change,
-        bare.reports,
-        tuple(Vote.create(current, member, event) for member in MEMBERS[:3]),
-    )
+    closure = EpochClosure(change, tuple(sorted(reports, key=lambda r: r.validator)))
     assert closure.verify(GOVERNANCE, current)
     replica.install_closure(closure)
     return replica.committee
@@ -949,15 +943,7 @@ def test_an_epoch_applies_the_floor_when_pruning_and_only_then(tmp_path):
                 key=lambda r: r.validator,
             )
         )
-        bare = EpochClosure(change, reports)
-        event = bare.event(GOVERNANCE, current)
-        driver._install(
-            EpochClosure(
-                change,
-                reports,
-                tuple(Vote.create(current, m, event) for m in MEMBERS[:3]),
-            )
-        )
+        driver._install(EpochClosure(change, reports))
         assert table_rows(path, "floors") == floors
         replica._store.close()
 
@@ -1163,11 +1149,7 @@ def test_an_ended_committee_gets_a_new_signature_when_pruning(tmp_path):
             key=lambda r: r.validator,
         )
     )
-    bare = EpochClosure(change, reports)
-    event = bare.event(GOVERNANCE, current)
-    other.replica.install_closure(
-        EpochClosure(change, reports, tuple(Vote.create(current, m, event) for m in MEMBERS[:3]))
-    )
+    other.replica.install_closure(EpochClosure(change, reports))
     assert other._snapshot_is_due()
 
 
