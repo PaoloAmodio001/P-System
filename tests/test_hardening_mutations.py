@@ -16,10 +16,10 @@ CHANGES = {
             "        return True\n",
         ),
         "unknown payload signed": (
-            "            return self._permit_report(payload[len(EPOCH_REPORT_DOMAIN):])\n"
+            "            return len(payload) == len(SNAPSHOT_DOMAIN) + 3 * ID_SIZE\n"
             "\n"
             "        return False\n",
-            "            return self._permit_report(payload[len(EPOCH_REPORT_DOMAIN):])\n"
+            "            return len(payload) == len(SNAPSHOT_DOMAIN) + 3 * ID_SIZE\n"
             "\n"
             "        return True\n",
         ),
@@ -41,9 +41,13 @@ CHANGES = {
             "            return False\n",
             "",
         ),
-        "report lock shared by all orders": (
-            "            (committee.hex(), change_id.hex()),\n",
-            "            (committee.hex(), \"\"),\n",
+        "report lock shared by all committees": (
+            "            (committee.hex(), change_id.hex(), digest),\n",
+            "            (\"\", change_id.hex(), digest),\n",
+        ),
+        "a second order passes the guard": (
+            "        return row == (change_id.hex(), digest)\n",
+            "        return row[1] == digest or row[0] != change_id.hex()\n",
         ),
         "guard not asked": (
             "            if not self._guard.permit(payload):\n",
@@ -230,7 +234,7 @@ CHANGES = {
     ("network.peer_connection", "network/peer_connection.py"): {
         "pacer never waits": (
             "        if self._tokens < 0:\n"
-            "            self._sleep(-self._tokens / self.rate)\n",
+            "            self._sleep(min(self.MAX_WAIT, -self._tokens / self.rate))\n",
             "",
         ),
         "pacer fills beyond its burst": (

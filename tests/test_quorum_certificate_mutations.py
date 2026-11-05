@@ -173,8 +173,9 @@ MUTATIONS = {
         "        bytes.fromhex(committee.committee_id)\n",
     ),
     "no committee id": (
+        "        VOTE_DOMAIN\n"
         "        + bytes.fromhex(committee.committee_id)\n",
-        "",
+        "        VOTE_DOMAIN\n",
     ),
     "the id is signed instead of the canonical form": (
         "        + event.canonical()\n",
