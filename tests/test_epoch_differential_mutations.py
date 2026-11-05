@@ -73,14 +73,10 @@ QUORUM = {
 
 ATTESTATION = {
     "locks only of the first report": (
-        "            for report in self.reports\n"
-        "            for signed in report.votes\n"
-        "        }\n"
-        "        return tuple(events[canonical] for canonical in sorted(events))\n",
-        "            for report in self.reports[:1]\n"
-        "            for signed in report.votes\n"
-        "        }\n"
-        "        return tuple(events[canonical] for canonical in sorted(events))\n",
+        "        for report in self.reports:\n"
+        "            for canonical in {signed.transfer.canonical() for signed in report.votes}:\n",
+        "        for report in self.reports[:1]:\n"
+        "            for canonical in {signed.transfer.canonical() for signed in report.votes}:\n",
     ),
 }
 

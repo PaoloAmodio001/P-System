@@ -47,7 +47,7 @@ TESTS = [
 
 IN_ATTESTATION = {
     "quorum of f + 1": (
-        "        return 2 * self.f + 1\n",
+        "        return (4 if self.unlock else 2) * self.f + 1\n",
         "        return self.f + 1\n",
     ),
     "signatures of a certificate not checked": (

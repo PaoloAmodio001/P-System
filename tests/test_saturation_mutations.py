@@ -123,12 +123,22 @@ MUTATIONS = {
             "            self._accept(certificate)\n            learned = True\n",
         ),
         "every certificate is tried": (
-            "            ready = [\n                nonces[state.nonce(sender)]\n                for sender, nonces in self._waiting.items()\n                if state.nonce(sender) in nonces\n            ]\n",
-            "            ready = list(self._buffer)\n",
+            "        ready = [\n"
+            "            nonces[state.nonce(sender)]\n"
+            "            for sender, nonces in self._waiting.items()\n"
+            "            if state.nonce(sender) in nonces\n"
+            "        ]\n",
+            "        ready = list(self._buffer)\n",
         ),
         "tried only once": (
-            "                    self._no_longer_waiting(event_id)\n                    progress = True\n",
-            "                    self._no_longer_waiting(event_id)\n",
+            "            if following is not None:\n"
+            "                heapq.heappush(ready, following)\n"
+            "\n"
+            "            for waiting in blocked:\n"
+            "                heapq.heappush(ready, waiting)\n"
+            "\n"
+            "            blocked = []\n",
+            "",
         ),
         "a halt leaves what waits": (
             "            self._buffer.clear()\n            self._waiting.clear()\n",

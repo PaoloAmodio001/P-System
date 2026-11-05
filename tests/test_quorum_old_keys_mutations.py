@@ -45,7 +45,7 @@ CHANGES = {
             "                    \"conflicting certificate of an ended committee ignored\",\n"
             "                    extra={\"sender\": event.sender, \"nonce\": event.nonce, \"epoch\": certificate.epoch},\n"
             "                )\n"
-            "                return\n",
+            "                return False\n",
             "",
         ),
         "no conflict halts": (

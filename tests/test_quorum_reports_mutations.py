@@ -32,8 +32,19 @@ QUORUM = {
         "        votes = votes or []\n\n        try:\n            return EpochReport.create(self.committee, self._identity, change.change_id, votes)\n",
     ),
     "a report for an order that does not verify": (
-        "        if (\n            self.governance is None\n            or self.halted\n            or not change.verify(self.governance, self.committee)\n        ):\n            return _NOTHING\n\n        report = self.replica.report_epoch(change)\n\n        if report is None:\n",
-        "        if self.governance is None or self.halted:\n            return _NOTHING\n\n        report = self.replica.report_epoch(change)\n\n        if report is None:\n",
+        "        if (\n"
+        "            self.governance is None\n"
+        "            or self.halted\n"
+        "            or not change.verify(self.governance, self.committee)\n"
+        "        ):\n"
+        "            self._cost += BAD_SIGNATURE_COST\n"
+        "            return _NOTHING\n"
+        "\n"
+        "        report = self.replica.report_epoch(change)\n",
+        "        if self.governance is None or self.halted:\n"
+        "            return _NOTHING\n"
+        "\n"
+        "        report = self.replica.report_epoch(change)\n",
     ),
     "a proposer does not report": (
         "        report = self.replica.report_epoch(change)\n\n        if report is not None:\n            self._reports[report.validator] = report\n\n        closed = self._closure_if_reported()\n        return DriverOutput(broadcasts=(encode_epoch_change(change), *closed.broadcasts))\n",
@@ -44,7 +55,10 @@ QUORUM = {
         "",
     ),
     "a report not verified": (
-        "            or not report.verify(self.committee, change_id)\n",
+        "        if not report.verify(self.committee, change_id):\n"
+        "            self._cost += BAD_SIGNATURE_COST\n"
+        "            return _NOTHING\n"
+        "\n",
         "",
     ),
     "reports with nothing proposed": (
