@@ -143,6 +143,21 @@ MUTATIONS = {
         ),
     },
     ("network.node", "network/node.py", "tls"): {
+        "no wait for a connection on its way": (
+            "        deadline = time.monotonic() + self.SIMULTANEOUS_DIAL_SECONDS\n",
+            "        deadline = time.monotonic()\n",
+        ),
+        "the lower id waits too": (
+            "        if self.node_id < peer.node_id:\n"
+            "            return False\n"
+            "\n"
+            "        deadline = time.monotonic() + self.SIMULTANEOUS_DIAL_SECONDS\n",
+            "        deadline = time.monotonic() + self.SIMULTANEOUS_DIAL_SECONDS\n",
+        ),
+        "any connection counts as the one on its way": (
+            "            if current is not None and current.connected and not current.initiated_locally:\n",
+            "            if current is not None and current.connected:\n",
+        ),
         "the configuration is ignored": (
             "        self.tls_config = tls_config or get_node_tls_config(node_id)\n",
             "        self.tls_config = get_node_tls_config(node_id)\n",

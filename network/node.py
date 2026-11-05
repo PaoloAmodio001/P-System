@@ -52,6 +52,7 @@ _NOTHING_SENT = DriverOutput()
 
 
 class Node:
+    SIMULTANEOUS_DIAL_SECONDS = 3.0
     RECONNECT_BASE_DELAY = 2.0
     RECONNECT_MAX_DELAY = 60.0
 
@@ -559,7 +560,13 @@ class Node:
         )
 
         if connection is None or not connection.connected:
-            return False
+            if not self._wait_for_connection_from(peer):
+                return False
+
+            connection = self.peer_connections.get(peer.node_id)
+
+            if connection is None:
+                return False
 
         try:
             self._send_identity_claims(connection)
@@ -569,7 +576,9 @@ class Node:
             TimeoutError,
         ):
             self._disconnect_peer_connection(peer.node_id, connection)
-            return False
+
+            # The same moment, seen while sending.
+            return self._wait_for_connection_from(peer)
 
         return True
 
@@ -671,10 +680,34 @@ class Node:
         # serializza questo controllo con la callback di disconnessione:
         # segnala False se la connessione è già stata rimossa o chiusa.
         with self._peer_connections_lock:
-            return (
+            if (
                 self.peer_connections.get(handshake.node_id) is connection
                 and connection.connected
-            )
+            ):
+                return True
+
+        return self._wait_for_connection_from(peer)
+
+    def _wait_for_connection_from(self, peer: Peer) -> bool:
+        """
+        This connection worked and then went. When both sides dial at once only the one started
+        by the lower id stays, so the other side closes this one, and its own may still be on
+        the way. A moment of that is not a failure. Only the higher id can be in this position.
+        """
+        if self.node_id < peer.node_id:
+            return False
+
+        deadline = time.monotonic() + self.SIMULTANEOUS_DIAL_SECONDS
+
+        while time.monotonic() < deadline:
+            current = self.peer_connections.get(peer.node_id)
+
+            if current is not None and current.connected and not current.initiated_locally:
+                return True
+
+            time.sleep(0.01)
+
+        return False
 
     def _register_peer_connection(
         self,

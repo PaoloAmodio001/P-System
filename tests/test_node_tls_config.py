@@ -181,3 +181,50 @@ def test_a_reconnection_works_after_a_peer_on_all_interfaces_goes_away(authority
     assert wait_until(lambda: "b-node" not in first.peer_connections)
     assert first.peers["b-node"].host == "127.0.0.1"
     first.stop()
+
+
+def test_a_connection_on_its_way_counts_as_connected():
+    # The rule for dialing at once keeps the connection of the lower id. Seen from the higher id,
+    # its own works, then goes, and the other is on its way. Timing made this rare, and
+    # tests/test_peer_connection_race_real.py found it under load, so the moment is staged here.
+    import threading
+
+    higher = Node("z-node", State())
+
+    class Incoming:
+        connected = True
+        initiated_locally = False
+
+        def close(self):
+            pass
+
+    timer = threading.Timer(0.1, lambda: higher.peer_connections.update({"a-node": Incoming()}))
+    timer.start()
+    assert higher._wait_for_connection_from(Peer(node_id="a-node", host="x", port=1))
+    higher.peer_connections.clear()
+    higher.stop()
+
+
+def test_the_lower_id_does_not_wait_for_a_connection_that_will_not_come():
+    lower = Node("a-node", State())
+    started = time.monotonic()
+    assert not lower._wait_for_connection_from(Peer(node_id="z-node", host="x", port=1))
+    assert time.monotonic() - started < 0.5
+    lower.stop()
+
+
+def test_a_connection_this_node_started_is_not_the_one_it_waits_for(monkeypatch):
+    monkeypatch.setattr(Node, "SIMULTANEOUS_DIAL_SECONDS", 0.1)
+    higher = Node("z-node", State())
+
+    class Outgoing:
+        connected = True
+        initiated_locally = True
+
+        def close(self):
+            pass
+
+    higher.peer_connections["a-node"] = Outgoing()
+    assert not higher._wait_for_connection_from(Peer(node_id="a-node", host="x", port=1))
+    higher.peer_connections.clear()
+    higher.stop()
