@@ -10,6 +10,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -258,6 +259,8 @@ class SqliteVoteStore:
         self.validator = validator
         self._lock = threading.RLock()
         self._closed = False
+        # True while a group holds the transaction: see `group`.
+        self._grouped = False
         mode = "rwc" if create else "rw"
 
         try:
@@ -407,6 +410,17 @@ class SqliteVoteStore:
             self.committee = closure.change.next_committee(self.committee)
             self._chain[self.committee.epoch] = self.committee
 
+    def reload_chain(self) -> None:
+        """Back to what the file says, after a group that did not commit."""
+        with self._lock:
+            self.committee = self.genesis_committee
+            self._chain = {self.committee.epoch: self.committee}
+
+            try:
+                self._load_chain()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ CLOSURES: {error}") from error
+
     def committee_of(self, certificate: QuorumCertificate) -> Committee:
         """
         The committee that a certificate says it comes from. For an epoch this node does
@@ -450,14 +464,43 @@ class SqliteVoteStore:
     def _begin(self) -> None:
         # IMMEDIATE takes the write lock now, so the check and the write of a
         # vote are one step even for another process with the same file.
-        self._connection.execute("BEGIN IMMEDIATE")
+        if not self._grouped:
+            self._connection.execute("BEGIN IMMEDIATE")
 
     def _commit(self) -> None:
-        self._connection.execute("COMMIT")
+        if not self._grouped:
+            self._connection.execute("COMMIT")
 
     def _rollback_if_open(self) -> None:
-        if self._connection.in_transaction:
+        if not self._grouped and self._connection.in_transaction:
             self._connection.execute("ROLLBACK")
+
+    @contextmanager
+    def group(self):
+        """
+        Writes inside share one transaction and one fsync, and come out of it together or
+        not at all. The caller must hold back every signature until this ends without an
+        error, and must discard what it did in memory if it ends with one. Each write sees the
+        writes before it, so one group decides what the same writes would decide one by one.
+        """
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"GROUP NOT STARTED: {error}") from error
+
+            self._grouped = True
+
+            try:
+                yield
+                self._connection.execute("COMMIT")
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"GROUP NOT RECORDED: {error}") from error
+            finally:
+                self._grouped = False
+                self._rollback_if_open()
 
     def _require_open(self) -> None:
         if self._closed:
@@ -978,6 +1021,9 @@ class QuorumReplica:
 
     def install_closure(self, closure: EpochClosure) -> None:
         self._store.install_closure(closure)
+
+    def group(self):
+        return self._store.group()
 
     def committee_of(self, certificate: QuorumCertificate) -> Committee:
         return self._store.committee_of(certificate)
@@ -1594,6 +1640,9 @@ class QuorumRuntime:
             raise ValueError("INITIAL STATE IS NOT THE GENESIS OF THE COMMITTEE")
 
         self.closed = False
+        self._identity = config.identity
+        self._initial_state = initial_state
+        self._governance = config.governance
         self._lock_file = self._acquire_lock(Path(config.store_path))
 
         try:
@@ -1641,6 +1690,65 @@ class QuorumRuntime:
             raise VoteStoreError("VOTE STORE IS IN USE") from error
 
         return descriptor
+
+    def handle_group(self, messages: list[dict]) -> tuple[DriverOutput, Exception | None]:
+        """
+        Several messages, one transaction. Equal to handling them one by one, except that
+        all the output comes after the commit. A malformed message stops the group: what
+        came before it counts, and the caller gets the error to close the connection, as
+        it would have.
+
+        If the commit fails nothing came out of it, and what the driver and the replica did
+        in memory did not happen either, so both are rebuilt from the disk. The error goes up,
+        and nothing is sent. Evidence in memory goes too: it is not part of the protocol.
+        """
+        replies = []
+        broadcasts = []
+        error = None
+
+        try:
+            with self.replica.group():
+                for message in messages:
+                    try:
+                        output = self.driver.handle_message(message)
+                    except (ValueError, KeyError, TypeError, RecursionError) as malformed:
+                        error = malformed
+                        break
+
+                    replies.extend(output.replies)
+                    broadcasts.extend(output.broadcasts)
+        except VoteStoreError:
+            self._rebuild()
+            raise
+
+        return DriverOutput(tuple(replies), tuple(broadcasts)), error
+
+    def submit_group(self, events: list[SignedTransfer]) -> DriverOutput:
+        """Start several events here, with one write for all the votes of this node."""
+        replies = []
+        broadcasts = []
+
+        try:
+            with self.replica.group():
+                for signed in events:
+                    output = self.driver.submit(signed)
+                    replies.extend(output.replies)
+                    broadcasts.extend(output.broadcasts)
+        except VoteStoreError:
+            self._rebuild()
+            raise
+
+        return DriverOutput(tuple(replies), tuple(broadcasts))
+
+    def _rebuild(self) -> None:
+        self._store.reload_chain()
+        self.replica = QuorumReplica(
+            self._identity,
+            self._initial_state,
+            self._store,
+            lambda _event: True,
+        )
+        self.driver = QuorumDriver(self.replica, self._governance)
 
     def close(self) -> None:
         if self.closed:

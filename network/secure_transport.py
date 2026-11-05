@@ -66,7 +66,12 @@ class DuplexTLSStream:
         self._sock = sock
         self._io_lock = threading.Lock()
         self._closed = False
+        # Bytes read to look ahead and not yet asked for.
+        self._ahead = bytearray()
         sock.setblocking(False)
+        # Each message is small and waits for an answer. With Nagle and delayed
+        # acknowledgements every step of the protocol would cost about 40 ms.
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def _wait(self, error: ssl.SSLError, seconds: float = WAIT_SLICE) -> None:
         events = (
@@ -114,7 +119,47 @@ class DuplexTLSStream:
 
                 self._wait(error, remaining)
 
+    def frame_available(self) -> bool:
+        """
+        Whether a whole frame is already here, without waiting for anything. So a frame
+        that stops halfway cannot hold back the ones before it. With one thread reading: the
+        receive loop. A bad length counts as available, and reading it raises the error.
+        """
+        while not self._frame_is_ahead():
+            self._check_open()
+
+            try:
+                with self._io_lock:
+                    self._check_open()
+                    chunk = self._sock.recv(self._CHUNK)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                return False
+
+            if not chunk:
+                # The end of the stream, which the next read reports.
+                return bool(self._ahead)
+
+            self._ahead.extend(chunk)
+
+        return True
+
+    def _frame_is_ahead(self) -> bool:
+        if len(self._ahead) < 4:
+            return False
+
+        length = int.from_bytes(self._ahead[:4], "big")
+
+        if length <= 0 or length > MAX_MESSAGE_SIZE:
+            return True
+
+        return len(self._ahead) >= 4 + length
+
     def recv(self, size: int) -> bytes:
+        if self._ahead:
+            data = bytes(self._ahead[:size])
+            del self._ahead[:size]
+            return data
+
         while True:
             self._check_open()
 

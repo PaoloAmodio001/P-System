@@ -18,6 +18,8 @@ def _duplex(connection):
 
 
 class PeerConnection:
+    MAX_RECEIVED_TOGETHER = 64
+
     def __init__(
         self,
         node_id: str,
@@ -135,7 +137,33 @@ class PeerConnection:
             connection,
         )
 
-    def receive_loop(self, handler) -> None:
+    def _received_together(self, message: dict) -> tuple[list[dict], bool]:
+        """
+        This message and the whole frames already here, up to a limit. True if a frame
+        among them was malformed: what came before it still counts, and then the
+        connection closes.
+        """
+        messages = [message]
+        connection = self.connection
+        frame_available = getattr(connection, "frame_available", None)
+
+        if frame_available is None:
+            return messages, False
+
+        try:
+            while len(messages) < self.MAX_RECEIVED_TOGETHER and frame_available():
+                messages.append(SecureTransport.receive(connection))
+        except (ConnectionError, OSError, TimeoutError, ValueError, RecursionError):
+            return messages, True
+
+        return messages, False
+
+    def receive_loop(self, handler, batch_handler=None) -> None:
+        """
+        Calls `handler(message, self)` for each message. With `batch_handler`, it gets
+        `batch_handler(messages, self)`, with the messages that are already here. That is
+        what lets several of them share one write to disk.
+        """
         if not self.connected:
             raise ConnectionError("PEER NOT CONNECTED")
 
@@ -156,14 +184,24 @@ class PeerConnection:
                 self._close_and_notify()
                 raise
 
+            broken = False
+
             try:
-                handler(message, self)
+                if batch_handler is None:
+                    handler(message, self)
+                else:
+                    messages, broken = self._received_together(message)
+                    batch_handler(messages, self)
             except (ValueError, KeyError, TypeError, IndexError):
                 self._close_and_notify()
                 return
             except Exception:
                 self._close_and_notify()
                 raise
+
+            if broken:
+                self._close_and_notify()
+                return
 
     def _close_and_notify(self) -> None:
         self.close()

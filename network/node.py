@@ -646,7 +646,7 @@ class Node:
 
         thread = threading.Thread(
             target=connection.receive_loop,
-            args=(self._handle_peer_message,),
+            args=(self._handle_peer_message, self._handle_peer_messages),
             daemon=True,
         )
         thread.start()
@@ -1229,6 +1229,24 @@ class Node:
         self._send_quorum_output(output, None)
         return bool(output.replies or output.broadcasts)
 
+    def submit_many(self, events) -> int:
+        """
+        Quorum mode: like `submit` for several events, with one write to disk for the votes
+        of this node. Returns how many messages there were to send. No more than that is
+        promised for any of the events.
+        """
+        if self._quorum is None:
+            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+
+        with self._state_lock:
+            try:
+                output = self._quorum.submit_group(list(events))
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, None)
+        return len(output.broadcasts)
+
     def propose_epoch_change(self, change) -> bool:
         """
         Quorum mode: order the end of this epoch, from this node, which then collects the
@@ -1338,6 +1356,51 @@ class Node:
         except (ConnectionError, OSError, TimeoutError):
             self._peer_disconnected(connection)
             connection.close()
+
+    def _handle_peer_messages(self, messages, connection=None) -> None:
+        """
+        Messages received together. Quorum messages next to each other share one transaction
+        and nothing is sent before it commits. Others are handled one by one, in order.
+        """
+        if self._quorum is None:
+            for message in messages:
+                self._handle_peer_message(message, connection)
+            return
+
+        group = []
+
+        for message in messages:
+            if message.get("type") in QUORUM_MESSAGE_TYPES:
+                group.append(message)
+                continue
+
+            self._handle_quorum_group(group, connection)
+            group = []
+            self._handle_peer_message(message, connection)
+
+        self._handle_quorum_group(group, connection)
+
+    def _handle_quorum_group(self, messages, connection) -> None:
+        if not messages:
+            return
+
+        if len(messages) == 1:
+            self._handle_quorum_message(messages[0], connection)
+            return
+
+        with self._state_lock:
+            if self._quorum.closed:
+                return
+
+            try:
+                output, error = self._quorum.handle_group(messages)
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, connection)
+
+        if error is not None:
+            raise error
 
     def _handle_peer_message(
         self,

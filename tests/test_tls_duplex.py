@@ -205,3 +205,70 @@ def test_peer_connection_uses_the_duplex_stream_on_tls():
     assert isinstance(connection.connection, DuplexTLSStream)
     connection.close()
     server.close()
+
+
+def test_both_ends_of_a_peer_connection_disable_nagle(streams):
+    # Each message of the protocol is small and waits for an answer. With Nagle and delayed
+    # acknowledgements each step costs about 40 ms: measured 55 ms for an event on 4 nodes.
+    client, server = _tls_stream_pair()
+    for stream in (client, server):
+        assert stream._sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY) != 0
+    client.close()
+    server.close()
+
+
+class _CountingSocket:
+    """Stands for an SSLSocket and records how many calls are inside it at once."""
+
+    def __init__(self):
+        self.inside = 0
+        self.most = 0
+        self.guard = threading.Lock()
+
+    def setblocking(self, _flag):
+        pass
+
+    def setsockopt(self, *_args):
+        pass
+
+    def close(self):
+        pass
+
+    def _enter(self):
+        with self.guard:
+            self.inside += 1
+            self.most = max(self.most, self.inside)
+        time.sleep(0.002)
+        with self.guard:
+            self.inside -= 1
+
+    def send(self, data):
+        self._enter()
+        return len(data)
+
+    def recv(self, size):
+        self._enter()
+        return b"x" * size
+
+
+def test_no_two_calls_are_ever_inside_the_ssl_object():
+    # The rule itself, with no dependence on when an SSL error happens to show.
+    sock = _CountingSocket()
+    stream = DuplexTLSStream(sock)
+    stop = time.monotonic() + 0.2
+
+    def read():
+        while time.monotonic() < stop:
+            stream.recv(10)
+
+    def write():
+        while time.monotonic() < stop:
+            stream.sendall(b"y" * 10)
+
+    threads = [threading.Thread(target=read), threading.Thread(target=write)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sock.most == 1

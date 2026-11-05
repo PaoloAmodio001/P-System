@@ -185,7 +185,10 @@ class NodeServer:
 
             threading.Thread(
                 target=peer_connection.receive_loop,
-                args=(self.node._handle_peer_message,),
+                args=(
+                    self.node._handle_peer_message,
+                    getattr(self.node, "_handle_peer_messages", None),
+                ),
                 daemon=True,
             ).start()
 

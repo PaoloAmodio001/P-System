@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+HANG_SECONDS = 120
 
 RUNNER = """
 import importlib
@@ -42,22 +43,29 @@ def run_tests_on(
     imports the real module instead: such tests cannot detect a mutation, and each file
     using this helper says which ones it leaves out.
     """
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            RUNNER,
-            module,
-            source,
-            *tests,
-            "-q",
-            "-x",
-            "--no-header",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    arguments = [
+        sys.executable,
+        "-c",
+        RUNNER,
+        module,
+        source,
+        *tests,
+        "-q",
+        "-x",
+        "--no-header",
+        "-p",
+        "no:cacheprovider",
+    ]
+
+    try:
+        return subprocess.run(
+            arguments,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=HANG_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # A test that never ends on the mutation is a test that does not pass. The test
+        # that runs the real source has the same limit, so a slow machine fails loudly there.
+        return subprocess.CompletedProcess(arguments, 1, "HUNG", "")

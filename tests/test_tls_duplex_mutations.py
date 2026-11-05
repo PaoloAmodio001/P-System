@@ -1,15 +1,12 @@
 """The tests of tests/test_tls_duplex.py must be able to fail.
 
-The tests that start a process import the real module, so they stay out here. The removal of
-the lock and of the wrapping is checked by running the worker on the mutated source: see
-test_without_the_wrapping_the_old_failure_comes_back.
+The tests that start a process import the real module, so they stay out here. They are also
+the ones that depend on timing: the lock and the wrapping are checked by tests that do not.
 
 Not here on purpose: the check on a closed stream in `sendall`. Without it the send on the
 closed socket raises OSError, so a writer stops anyway and only the type of error changes.
 """
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,6 +22,11 @@ TESTS = [
 ]
 
 MUTATIONS = {
+    "no lock on the calls": (
+        "        self._io_lock = threading.Lock()\n",
+        "        import contextlib\n"
+        "        self._io_lock = contextlib.nullcontext()\n",
+    ),
     "no deadline on a send": (
         "                if remaining <= 0:\n"
         "                    raise TimeoutError(\"PEER IS NOT READING\") from error\n",
@@ -35,7 +37,6 @@ MUTATIONS = {
         "",
     ),
     "close does not stop a reader": (
-        "    def recv(self, size: int) -> bytes:\n"
         "        while True:\n"
         "            self._check_open()\n"
         "\n"
@@ -43,7 +44,6 @@ MUTATIONS = {
         "                with self._io_lock:\n"
         "                    self._check_open()\n"
         "                    return self._sock.recv(size)\n",
-        "    def recv(self, size: int) -> bytes:\n"
         "        while True:\n"
         "            try:\n"
         "                with self._io_lock:\n"
@@ -54,6 +54,18 @@ MUTATIONS = {
         "                    offset += self._sock.send(chunk) * 2\n",
     ),
 }
+
+
+def test_without_the_wrapping_a_tls_socket_is_used_bare():
+    source = (ROOT / "network" / "peer_connection.py").read_text()
+    old = "    if isinstance(connection, ssl.SSLSocket):\n"
+    assert source.count(old) == 1
+    result = run_tests_on(
+        "network.peer_connection",
+        source.replace(old, "    if False:\n"),
+        TESTS,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
 
 
 def test_the_tests_pass_on_the_real_source():
@@ -67,49 +79,3 @@ def test_mutation_is_detected(name):
     assert SOURCE.count(old) == 1, name
     result = run_tests_on(MODULE, SOURCE.replace(old, new), TESTS)
     assert result.returncode == 1, result.stdout + result.stderr
-
-
-def _worker_failures(source: str, module: str, runs: int) -> int:
-    runner = (
-        "import importlib, runpy, sys\n"
-        f"sys.path.insert(0, {str(ROOT)!r})\n"
-        f"module = importlib.import_module({module!r})\n"
-        "exec(compile(sys.argv[1], module.__file__, 'exec'), module.__dict__)\n"
-        "worker = sys.argv[2]\n"
-        "sys.argv = [worker, '3000', '64']\n"
-        "runpy.run_path(worker, run_name='__main__')\n"
-    )
-    failures = 0
-
-    for _ in range(runs):
-        try:
-            result = subprocess.run(
-                [sys.executable, "-c", runner, source, str(ROOT / "tests" / "tls_duplex_worker.py")],
-                capture_output=True,
-                timeout=40,
-            )
-            failures += result.returncode != 0
-        except subprocess.TimeoutExpired:
-            failures += 1
-
-    return failures
-
-
-def test_without_the_wrapping_the_old_failure_comes_back():
-    source = (ROOT / "network" / "peer_connection.py").read_text()
-    old = "    if isinstance(connection, ssl.SSLSocket):\n"
-    assert source.count(old) == 1
-    mutated = source.replace(old, "    if False:\n")
-    # About a third of the runs fail: 25 runs miss it about once in 10^4.
-    assert _worker_failures(mutated, "network.peer_connection", 25) > 0
-
-
-def test_without_the_lock_on_ssl_calls_the_old_failure_comes_back():
-    old = "        self._io_lock = threading.Lock()\n"
-    assert SOURCE.count(old) == 1
-    mutated = SOURCE.replace(
-        old,
-        "        import contextlib\n"
-        "        self._io_lock = contextlib.nullcontext()\n",
-    )
-    assert _worker_failures(mutated, "network.secure_transport", 25) > 0
