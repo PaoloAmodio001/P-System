@@ -17,3 +17,8 @@ root = "DeriveCheck"
 [[lean_exe]]
 name = "quorum_check"
 root = "QuorumCheck"
+
+# Driver for tests/test_epoch_differential.py (not part of the proofs).
+[[lean_exe]]
+name = "epoch_check"
+root = "EpochCheck"
