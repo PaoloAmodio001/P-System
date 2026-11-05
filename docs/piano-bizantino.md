@@ -33,7 +33,8 @@ Paolo ha autorizzato il merge della PR #1 e ha dato autonomia di decisione.
 
 ### Problemi del passo
 
-- **Un commit (`48a1d72`) è stato fatto con un test veloce fallito**, perché il comando non si fermava sull'errore. Non è stato pushato, e il test è corretto nel commit dopo.
+- **Un commit (`48a1d72`) è stato fatto con un test veloce fallito**, perché il comando non si fermava sull'errore. Il test è corretto nel commit dopo. **Correzione del 2026-11-05:** qui c'era scritto "non è stato pushato". Il commit era fermo in locale quando è stato scritto, ma è poi arrivato su GitHub ed è nella storia di `main` con la PR #1. La storia non si riscrive: l'hook di pre-commit impedisce che si ripeta.
+- **Differenziali con 15 seed non eseguiti prima del merge della PR #1**, come la regola chiedeva. Una revisione esterna li ha eseguiti dopo il merge, il 2026-11-05: 30 passati (dato riferito dalla revisione, non rifatto qui su quel commit). Per la PR #2 sono stati eseguiti prima del merge: 45 passati su `c621828`.
 - **Le prime due esecuzioni dell'integrazione continua sono fallite** su test legati all'ambiente: una profondità di JSON insufficiente per lo stack di quel runner, e una mutazione probabilistica sui 2 core. Corretti entrambi, il secondo con test deterministici.
 - La prima ipotesi sulla latenza, Nagle, era sbagliata: `TCP_NODELAY` è giusto ma non cambiava la misura. Il limite era `fsync`.
 
