@@ -35,6 +35,7 @@ LOG = logging.getLogger("psystem.signer")
 # change of the format must make the signer refuse, not sign something it no longer understands.
 VOTE_DOMAIN = b"P-SYSTEM/QUORUM-VOTE/v1\0"
 EPOCH_REPORT_DOMAIN = b"P-SYSTEM/EPOCH-REPORT/v1\0"
+SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
 ID_SIZE = 32
 SIGNATURE_SIZE = 64
 MAX_REQUEST = 1024 * 1024
@@ -89,6 +90,12 @@ class SignerGuard:
 
         if payload.startswith(EPOCH_REPORT_DOMAIN):
             return self._permit_report(payload[len(EPOCH_REPORT_DOMAIN):])
+
+        # A snapshot is a claim about a state, with no lock to break: two can both be true. The signer
+        # cannot recompute it, so a node taken over can make it sign a false one, as any faulty
+        # member can. That is what the quorum of signatures on a snapshot is for.
+        if payload.startswith(SNAPSHOT_DOMAIN):
+            return len(payload) == len(SNAPSHOT_DOMAIN) + 3 * ID_SIZE
 
         return False
 

@@ -402,6 +402,40 @@ def test_a_log_line_is_one_json_object_with_its_fields():
 # --- Limits on what a node takes ---------------------------------------------------------
 
 
+def test_snapshots_are_off_unless_asked_for(layout):
+    base = layout[0] if isinstance(layout, tuple) else layout
+    config = read_node_config(write_config(base))
+    assert config.snapshot_every is None
+    assert config.prune is False
+    assert config.quorum(False).snapshot_every is None
+
+
+def test_snapshot_settings_reach_the_node(layout):
+    base = layout[0] if isinstance(layout, tuple) else layout
+    config = read_node_config(write_config(base, extra="[snapshots]\nevery = 100\nprune = true"))
+    assert config.snapshot_every == 100
+    assert config.prune is True
+    quorum = config.quorum(False)
+    assert quorum.snapshot_every == 100
+    assert quorum.prune is True
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "[snapshots]\nnope = 1",
+        "[snapshots]\nevery = 0",
+        "[snapshots]\nevery = \"10\"",
+        "[snapshots]\nprune = true",
+        "[snapshots]\nevery = 5\nprune = 1",
+    ],
+)
+def test_bad_snapshot_settings_are_refused(layout, extra):
+    base = layout[0] if isinstance(layout, tuple) else layout
+    with pytest.raises(DeploymentError):
+        read_node_config(write_config(base, extra=extra))
+
+
 def limited(tmp_path, **limits):
     from network.quorum import QuorumRuntime
 

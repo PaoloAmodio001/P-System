@@ -48,7 +48,7 @@ MUTATIONS = {
         "",
     ),
     "unknown schema version opened": (
-        "            elif version != _SCHEMA_VERSION:\n"
+        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):\n"
         "                raise VoteStoreError(\"UNSUPPORTED VERSION OF THE VOTE STORE\")\n",
         "",
     ),

@@ -19,6 +19,9 @@ Correspondence between the two sides:
 - A signer outside the committee cannot be written in Lean, where signers are
   Fin n. It is passed as an invalid signature, which has the same effect: every
   signature must verify.
+- A snapshot exists only on the Python side too: at random points the replica takes one, with or
+  without pruning, and restarts from it. `resume_equals_replay` says the model must not notice, and
+  this checks it against `runNode`, which replays everything.
 - A restart exists only on the Python side: the replica is rebuilt from disk, and
   the model must not notice. Cases with a forced id have no restart, because events
   read back from disk have their real id.
@@ -40,7 +43,14 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from core.attestation import Committee, QuorumCertificate, Vote, vote_payload
+from core.attestation import (
+    Committee,
+    QuorumCertificate,
+    Snapshot,
+    SnapshotAttestation,
+    Vote,
+    vote_payload,
+)
 from core.event import Transfer
 from core.state import State
 from crypto.identity import Identity
@@ -191,12 +201,12 @@ def _python_vote(committee: Committee, identities, entry: Entry, event) -> Vote:
     raise AssertionError(entry.kind)
 
 
-def _show(replica: QuorumReplica, ids_by_canonical: dict[bytes, int]) -> str:
+def _show(replica: QuorumReplica, ids_by_canonical: dict[bytes, int], pruned=()) -> str:
     def ids(values) -> str:
         return ",".join(map(str, values)) or "-"
 
     votes = sorted({ids_by_canonical[e.canonical()] for e in replica.votes()})
-    executed = [ids_by_canonical[e.canonical()] for e in replica.executed]
+    executed = [ids_by_canonical[e.canonical()] for e in (*pruned, *replica.executed)]
     accounts = " ".join(
         f"{name}={replica.state.balance(name)}/{replica.state.nonce(name)}"
         for name in ACCOUNTS
@@ -204,8 +214,29 @@ def _show(replica: QuorumReplica, ids_by_canonical: dict[bytes, int]) -> str:
     return f"votes={ids(votes)};exec={ids(executed)};{accounts}"
 
 
+# Inputs that exist only in Python: a restart, a snapshot and restart, a snapshot, pruning and restart.
+CONTROL = ("R", "S", "P")
+
+
+def _take_snapshot(replica: QuorumReplica, committee: Committee, identities) -> None:
+    candidate = replica.candidate_snapshot()
+    snapshot = Snapshot(
+        candidate.epoch,
+        candidate.state,
+        candidate.ids,
+        tuple(
+            SnapshotAttestation.create(committee, identity, candidate.digest, ())
+            for identity in identities[: committee.quorum]
+        ),
+    )
+
+    # The same state again is nothing new, and that is no failure.
+    if not replica.install_snapshot(snapshot):
+        assert replica.base is not None and replica.base.digest == snapshot.digest
+
+
 def _events_of(case: Case) -> list[Transfer]:
-    return [item[1] for item in case.inputs if item[0] != "R"]
+    return [item[1] for item in case.inputs if item[0] not in CONTROL]
 
 
 def python_run(case: Case, directory: Path, stats: dict | None = None) -> list[str]:
@@ -229,9 +260,14 @@ def python_run(case: Case, directory: Path, stats: dict | None = None) -> list[s
 
     store, replica = open_replica(True)
     lines = [_show(replica, ids_by_canonical)]
+    pruned: list[Transfer] = []
 
     for item in case.inputs:
-        if item[0] == "R":
+        if item[0] in CONTROL:
+            if item[0] != "R":
+                _take_snapshot(replica, committee, identities)
+            if item[0] == "P":
+                pruned.extend(c.event for c in replica.prune_covered())
             store.close()
             store, replica = open_replica(False)
             continue
@@ -248,7 +284,7 @@ def python_run(case: Case, directory: Path, stats: dict | None = None) -> list[s
             )
             replica.handle_certificate(QuorumCertificate(item[1], votes))
 
-        lines.append(_show(replica, ids_by_canonical))
+        lines.append(_show(replica, ids_by_canonical, pruned))
 
     store.close()
     return lines
@@ -444,7 +480,7 @@ def random_case(rng: random.Random) -> Case:
             case.inputs.append(("C", event, _random_entries(rng, case, event, pool)))
 
         if not forced_any and rng.random() < 0.08:
-            case.inputs.append(("R",))
+            case.inputs.append((rng.choice(CONTROL),))
 
     return case
 
@@ -455,8 +491,8 @@ def _describe(case: Case) -> str:
         f"refused={sorted(case.refused)}"
     ]
     for item in case.inputs:
-        if item[0] == "R":
-            lines.append("RESTART")
+        if item[0] in CONTROL:
+            lines.append({"R": "RESTART", "S": "SNAPSHOT", "P": "SNAPSHOT AND PRUNE"}[item[0]])
             continue
         event = item[1]
         label = f"id={event.event_id()[:12]} {event!r}"
@@ -563,7 +599,7 @@ def test_replica_matches_runnode(quorum_check, tmp_path, seed):  # noqa: F811
     restarts = 0
 
     for index, (case, lean) in enumerate(zip(cases, lean_results)):
-        restarts += sum(item[0] == "R" for item in case.inputs)
+        restarts += sum(item[0] in CONTROL for item in case.inputs)
         python = python_run(case, tmp_path, stats)
         if python != lean:
             smallest = minimize(case, quorum_check, tmp_path)
