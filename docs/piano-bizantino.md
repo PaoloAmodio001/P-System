@@ -6,7 +6,7 @@
 
 ### Programma verso la 1.0, branch `verso-1.0`: riepilogo per passo
 
-Le soste del programma sono diventate proposte in `docs/proposte/`, ciascuna in un commit prima del codice, su richiesta di Paolo. **Il branch è partito da `hardening-2` prima del merge della PR #2, contro quanto chiedeva il programma**: va ribasato su `main` dopo quel merge.
+Le soste del programma sono diventate proposte in `docs/proposte/`, ciascuna in un commit prima del codice, su richiesta di Paolo. **Il branch è partito da `hardening-2` prima del merge della PR #2, contro quanto chiedeva il programma**. Dopo il merge della PR #2 è stato ribasato su `main` (`6aad963`), senza conflitti.
 
 - **Passo 1, fatto.** Hook di pre-commit. `test_a_long_frame_gets_more_time` non dipende più dai buffer della macchina. Corrette tre incoerenze di `CLAUDE.md`, con il testo vecchio e nuovo nel commit. Il piano diceva che `48a1d72` non era stato pushato: è nella storia di `main`, e ora lo dice.
 - **Passo 2, fatto.** Istantanee firmate da un quorum e potatura opzionale. Riavvio di 50 000 certificati da 20 s a 0,9 s, 0,1 s con potatura. `QuorumSnapshot.lean`. Gli id degli eventi eseguiti crescono ancora.

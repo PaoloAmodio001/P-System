@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "p-system"
-version = "0.2.0"
+version = "1.0.0"
 description = "A registry of single-owner state with quorum certificates and machine-checked safety on its model."
 readme = "README.md"
 license = "Apache-2.0"

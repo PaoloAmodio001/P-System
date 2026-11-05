@@ -26,7 +26,7 @@ governance can fork, and no theorem removes that assumption. Full list and limit
 
 **It does not do:** shared state written by several parties (order books, auctions, shared counters: they need consensus, and this
 design cannot give them). Objects with their own state, and exchanges between two owners. Confidentiality between members. Guaranteed progress: votes split between two versions
-of a spend give no certificate at all, and that nonce stays locked for good.
+of a spend give no certificate at all, and that nonce stays locked for good, unless the optional `n = 5f+1` frees it at the end of an epoch.
 
 ## Quick start
 

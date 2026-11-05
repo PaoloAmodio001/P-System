@@ -8,21 +8,21 @@ Niente di questo documento è un risultato. I teoremi elencati sono **da dimostr
 
 - **Dimostrato sul modello:** `no_double_spend` e la sua forma per soglie qualsiasi, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, `conflict_identifies_faulty`, `no_double_spend_across_epochs` su una catena di comitati, `honest_sender_certifies` con la consegna come ipotesi. Crittografia idealizzata.
 - **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche, il differenziale D confronta un validatore con `runEpoch`, `reportOf` e `lockAllows`; la verifica delle chiusure resta fuori, perché nel modello è l'ipotesi `ChainValid`. Non è un refinement.
-- **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti e asset multipli.
+- **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti con stato proprio. Il passaggio a macchine separate ha gli script, ma non è stato misurato.
 
 ## Stato rispetto agli ambiti di `CLAUDE.md`, sezione 3.1
 
-Valutazione del 2026-11-05, dopo il lavoro di A, B (senza consenso sullo sblocco), D, E, F e G in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**: si può installare, far girare e valutare, ma mancano le verifiche di terzi. Le fasi sono quelle qui sotto.
+Valutazione del 2026-11-05, dopo il lavoro di A, B, D, E, F, G e del programma verso la 1.0 in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**: si può installare, far girare e valutare, ma mancano le verifiche di terzi. Le fasi sono quelle qui sotto.
 
 | Ambito | Stato | Cosa manca | Fase |
 |---|---|---|---|
-| Core e motore di esecuzione | Modalità quorum con epoche; trasferimenti di più asset come conti distinti, con quantità fissa | Oggetti con stato proprio: serve un caso d'uso reale. Scambi tra due proprietari: serve il consenso. Istantanee e potatura del log. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
+| Core e motore di esecuzione | Modalità quorum con epoche; trasferimenti di più asset come conti distinti, con quantità fissa | Oggetti con stato proprio: serve un caso d'uso reale. Scambi tra due proprietari: serve il consenso. Con la potatura gli id degli eventi eseguiti crescono ancora. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
 | Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, firmatario separato con un proprio blocco, chiavi cifrate, revoca a elenco, regola sulle chiavi delle epoche finite, limiti di frequenza, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS integrati, CRL o OCSP | E |
 | Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, una coda e uno scrittore per peer, messaggi oltre il frame, scrittura a gruppi | Prove su reti vere | E |
 | Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL`, 4 container e campagne di guasti di rete iniettati | Prove su macchine separate. Liveness incondizionata | G |
 | Formal verification | 198 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
 | Prestazioni | Misure riproducibili su una macchina in `docs/BENCHMARKS.md` | Macchine separate; riproduzione esterna; confronto con FastPay | D |
-| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000 | Misure con nodi separati e carichi lunghi. Chiudere un'epoca prima di circa 50 000 eventi. Log senza potatura | D |
+| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000, con istantanee e potatura | Misure con nodi separati e carichi lunghi | D |
 | Interoperabilità | API HTTP `/v1` con TLS opzionale, descrizione OpenAPI verificata da un test, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
 | Osservabilità | Log JSON, metriche Prometheus, allarmi pronti e validati con `promtool`, health, stack dei thread con `SIGUSR1` | Tracciamento. Soglie degli allarmi non tarate su un impiego reale | G |
 | Affidabilità operativa | Backup coerenti, ripristino che si astiene fino all'epoca dopo, manuali per ogni guasto noto | Prove lunghe settimane, esercitazioni con operatori veri | G |
@@ -59,7 +59,7 @@ Controesempio verificato a mano, non in Lean, con `n = 4`, `f = 1`. Per chiudere
 
 Il rapporto non permette di distinguerle, e in entrambe un nodo onesto può già aver eseguito. Sbloccare il conto, o scegliere una delle due, può quindi creare un fork. Sono proprio questi i conti da sbloccare: un mittente onesto con voti incompleti non ha bisogno dello sblocco, gli basta rinviare lo stesso evento.
 
-Con `n = 3f+1` e un solo giro, un'enumerazione esaustiva dei rapporti per `f = 1` e `f = 2` conferma che i casi ambigui esistono. **Vedi la decisione D2.**
+Con `n = 3f+1` e un solo giro, un'enumerazione esaustiva dei rapporti per `f = 1` e `f = 2` conferma che i casi ambigui esistono. **Vedi la decisione D2.** Ora è `FORMAL (model)`: `split_lock_ambiguous_general` per ogni `f` in `QuorumUnlock.lean`, dove `no_double_spend_with_unlock` dimostra lo sblocco con la configurazione opzionale `n = 5f+1`.
 
 ### 3. Il metodo finora non scala da solo
 
@@ -318,7 +318,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase H. Versione 1.0 e paper
 
-**Stato: non raggiungibile da qui.** Tutti i suoi criteri richiedono persone esterne. `docs/VALIDATION-PLAN.md` dice come iniziare.
+**Stato: non raggiungibile da qui.** Tutti i suoi criteri richiedono persone esterne. `docs/VALIDATION-PLAN.md` dice come iniziare. **Il numero 1.0 delle note di rilascio in `CHANGELOG.md` non soddisfa questi criteri, e le note lo dicono.** Se usarlo lo decide Paolo.
 
 **Obiettivo.** Una versione stabile, con affermazioni che reggono a una verifica esterna.
 

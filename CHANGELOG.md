@@ -1,9 +1,43 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 1.0.0 (not tagged)
 
-Quorum mode complete on a real network, and a service around it. **Not ready for production**: see
-`docs/VALIDATION-PLAN.md`.
+Quorum mode complete on a real network, and a service around it. **Not ready for production**: it has had no external audit and
+no pilot, and it has not been measured on separate machines. See `docs/VALIDATION-PLAN.md`.
+
+**This number does not meet the criteria for a 1.0 in `ROADMAP.md`, phase H**, which ask for audits, a pilot and a compatibility
+policy. All of them need people outside the project. It marks the end of the work that could be done without them. It is not
+industrial validation and it is not certification.
+
+### FORMAL (model)
+
+Theorems in Lean 4 about a model of the protocol, for at most `f` faulty validators in each committee and unforgeable signatures: 198
+theorems in 24 modules, with no axiom beyond the three standard ones. A committee chosen badly by governance can fork, and no theorem
+removes that assumption. Nothing is proved about Ed25519 or about the Python code. List and limits: `docs/PROOF-SCOPE.md`.
+
+- Two honest nodes never execute different events for one `(sender, nonce)`, also across epochs: `no_double_spend`, `no_double_spend_across_epochs`.
+- The state is what `derive` computes, whatever the order of arrival: `state_is_derive`, `convergence_after_exchange`.
+- A conflict names at least `f+1` guilty members: `conflict_identifies_faulty`. Stolen keys of an ended committee give no double spend of a sender that signed once: `old_keys_no_double_spend`.
+- A restart from a snapshot reaches the state of a full replay, and pruning locks under a floor keeps safety: `resume_is_derive`, `no_double_spend_views`.
+- Closures with no votes: any closures of one order keep safety, and only a governance that signs two orders can block: `no_double_spend_any_closures`, `one_order_never_blocks`, `two_orders_can_block`.
+- With the optional `n = 5f+1`, freeing a split nonce loses no certified event, for every `f`, and with `3f+1` no such rule exists: `no_double_spend_with_unlock`, `split_lock_ambiguous_general`.
+- An honest sender gets a certificate, **if messages arrive**: `honest_sender_certifies`. Delivery is a hypothesis.
+
+### EMPIRICAL
+
+- The Python code against the model: differentials on `QuorumReplica`, on a real `Node`, on epochs and on `--unlock`, with 15 seeds, and mutations inside `pytest` to show that the tests can fail. **Not a refinement proof.** The order in which a node runs what waits in its buffer is a rule of the node: the model takes any order, and only the differential checks this one.
+- Faults on the network between four real processes on one machine: `docs/BENCHMARKS.md`, with the commit of each run. Hours on one machine do not replace weeks on separate ones.
+- Attacks on saturation that won before the limits and lose after them: `tests/test_saturation.py`. The values of the limits are chosen by judgment.
+- Measures on one machine, and on containers with emulated latency on one machine: `docs/BENCHMARKS.md`.
+
+### OPEN
+
+- **External audit, penetration test and a pilot.** Nobody outside the project has read this code, and an AI model wrote much of it and of the proofs.
+- **Separate machines: not measured.** The scripts exist, and `docs/OPERATIONS.md` says how to use them.
+- A refinement proof from the Python code to the model. Anything about liveness that does not assume delivery.
+- Closures with no votes are the newest part of the protocol, and the least examined.
+- A governance that signs two orders blocks an epoch. A volumetric attack on bandwidth needs a firewall. The ids of executed events still grow with pruning.
+- Objects with their own state, and exchanges between two owners. Shared state written by several parties needs consensus, and this design cannot give it.
 
 ### Added in `verso-1.0`
 
@@ -31,7 +65,7 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 - A node on all interfaces announced `0.0.0.0`, and peers took it as its address, which broke reconnection.
 - A peer that does not read could hold every broadcast behind it for good.
 
-- One proposer that died at the wrong moment and one retry stopped the whole committee for good: every member refused the
+- (Later replaced by closures with no votes, above.) One proposer that died at the wrong moment and one retry stopped the whole committee for good: every member refused the
   second closure and had already stopped voting on events. Members now keep and offer the closure they voted for.
 - A peer that did not read delayed every other peer. Each peer now has its own queue and writer.
 - An epoch of more than about 12 000 events could never close, because a closure had to fit in one frame.
