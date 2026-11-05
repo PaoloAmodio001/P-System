@@ -56,13 +56,13 @@ MUTATIONS = {
         "            key not in self.equivocations\n",
     ),
     "submit asks even when its own vote is refused": (
-        "        vote = self.replica.handle_vote_request(event)\n"
+        "        vote = self.replica.handle_vote_request(event, signed)\n"
         "\n"
         "        if vote is None:\n"
         "            return _NOTHING\n"
         "\n"
         "        _, votes = self._aggregating",
-        "        vote = self.replica.handle_vote_request(event)\n"
+        "        vote = self.replica.handle_vote_request(event, signed)\n"
         "\n"
         "        if vote is None:\n"
         "            return DriverOutput(broadcasts=(encode_vote_request(signed),))\n"
@@ -129,11 +129,11 @@ MUTATIONS = {
         "        return certificate\n",
     ),
     "certificate not verified": (
-        "        if not self.halted and certificate.verify(self.committee):\n",
+        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n",
         "        if not self.halted:\n",
     ),
     "certificate handled after a halt": (
-        "        if not self.halted and certificate.verify(self.committee):\n",
+        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n",
         "        if certificate.verify(self.committee):\n",
     ),
     "conflict does not halt": (

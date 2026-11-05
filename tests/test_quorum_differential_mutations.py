@@ -113,10 +113,10 @@ def test_refusing_a_repeated_vote_makes_no_difference_here(corpus, tmp_path, mon
     # Refusing or accepting a repeated vote gives no difference in the output, because
     # the event is already among the votes. Signing it again is tested elsewhere
     # (test_voting_again_gives_the_same_signature). This test records that limit.
-    def refuse_repeat(self, event):
+    def refuse_repeat(self, event, signed=None):
         if any(v.canonical() == event.canonical() for v in original_votes(self)):
             return False
-        return original(self, event)
+        return original(self, event, signed)
 
     original = SqliteVoteStore.record_vote
     original_votes = SqliteVoteStore.votes

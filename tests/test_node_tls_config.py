@@ -145,3 +145,39 @@ def test_without_a_config_a_node_still_works_inside_one_process():
     finally:
         first.stop()
         second.stop()
+
+
+def _node_on_all_interfaces(authority, tmp_path, name):
+    return Node(name, State(), host="0.0.0.0", tls_config=config_for(authority, name, tmp_path))
+
+
+def test_a_node_on_all_interfaces_stays_reachable_at_the_address_it_was_dialed(authority, tmp_path):
+    # It announces 0.0.0.0, which means nothing to a peer. Taking that as its address broke
+    # every reconnection on a real network.
+    first = _node_on_all_interfaces(authority, tmp_path, "a-node")
+    second = _node_on_all_interfaces(authority, tmp_path, "b-node")
+    first.start()
+    second.start()
+    try:
+        _, port = second.address()
+        assert first.connect_peer(Peer(node_id="b-node", host="127.0.0.1", port=port))
+        assert first.peers["b-node"].host == "127.0.0.1"
+        assert wait_until(lambda: "a-node" in second.peers)
+        assert second.peers["a-node"].host == "127.0.0.1"
+    finally:
+        first.stop()
+        second.stop()
+
+
+def test_a_reconnection_works_after_a_peer_on_all_interfaces_goes_away(authority, tmp_path):
+    first = _node_on_all_interfaces(authority, tmp_path, "a-node")
+    second = _node_on_all_interfaces(authority, tmp_path, "b-node")
+    first.start()
+    second.start()
+    _, port = second.address()
+    assert first.connect_peer(Peer(node_id="b-node", host="127.0.0.1", port=port))
+    assert wait_until(lambda: "a-node" in second.peer_connections)
+    second.stop()
+    assert wait_until(lambda: "b-node" not in first.peer_connections)
+    assert first.peers["b-node"].host == "127.0.0.1"
+    first.stop()

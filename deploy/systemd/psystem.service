@@ -1,0 +1,28 @@
+# A node under systemd. Copy to /etc/systemd/system/psystem@.service: %i is the name of the node,
+# with its files in /var/lib/psystem/%i.
+#
+# Restart=on-failure and not always: a node that refuses to start because its store is missing
+# must stop there, and wait for a person. See docs/OPERATIONS.md.
+[Unit]
+Description=P-System node %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=psystem
+Group=psystem
+WorkingDirectory=/var/lib/psystem/%i
+ExecStart=/usr/local/bin/psystem node --config /var/lib/psystem/%i/node.toml
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/psystem/%i
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

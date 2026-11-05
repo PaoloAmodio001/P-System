@@ -539,3 +539,34 @@ def test_failed_commit_of_a_closure_leaves_the_epoch_as_it_was(tmp_path):
     run.handle_group([message])
     assert run.replica.committee.epoch == 1
     run.close()
+
+
+def test_a_message_too_large_for_a_frame_stops_nothing(tmp_path, caplog):
+    # A closure over too many events does not fit. It must be logged, not kill the reader.
+    from network.quorum import DriverOutput
+
+    node = Node(
+        "large-node",
+        GENESIS,
+        quorum=QuorumConfig(COMMITTEE, MEMBERS[0], tmp_path / "v.sqlite", create=True),
+    )
+
+    class TooLarge:
+        initiated_locally = True
+        closed = False
+
+        def send(self, _message):
+            raise ValueError("MESSAGE TOO LARGE")
+
+        def close(self):
+            self.closed = True
+
+    peer = TooLarge()
+    node.peer_connections["p"] = peer
+    node._send_quorum_output(DriverOutput(({"type": "X"},), ({"type": "EPOCH_CLOSURE"},)), peer)
+
+    assert not peer.closed
+    assert "p" in node.peer_connections
+    assert sum("too large" in record.message for record in caplog.records) == 2
+    node.peer_connections.clear()
+    node.stop()

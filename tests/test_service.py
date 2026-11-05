@@ -658,3 +658,17 @@ def test_a_closure_that_does_not_verify_is_refused_by_the_verifier():
     with pytest.raises(ValueError):
         verifier.add_closures([encode_epoch_closure(closure)["closure"]])
     assert verifier.current.epoch == 0
+
+
+def test_init_store_creates_once(layout):
+    from network.cli import main
+
+    base, _, _ = layout
+    config = write_config(base)
+    assert main(["init-store", "--config", str(config)]) == 0
+    assert (base / "votes.sqlite").exists()
+    assert main(["init-store", "--config", str(config)]) == 2
+    # And a node starts from it without being told to create anything.
+    running = Service(read_node_config(config))
+    running.start()
+    running.stop()

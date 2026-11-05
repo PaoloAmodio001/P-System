@@ -36,8 +36,8 @@ DRIVER = {
         "        if self.halted:\n"
         "            return None\n"
         "\n"
-        "        return encode_certificate_sync_request(self._frontier())\n",
-        "        return encode_certificate_sync_request(self._frontier())\n",
+        "        return encode_certificate_sync_request(self._frontier(), self.committee.epoch)\n",
+        "        return encode_certificate_sync_request(self._frontier(), self.committee.epoch)\n",
     ),
     "frontier ignores the buffer": (
         "            while (sender, nonce) in self._known:\n"
@@ -67,7 +67,9 @@ DRIVER = {
     ),
     "answer without a limit": (
         "                if batch and size > SYNC_BATCH_BYTES:\n"
-        "                    return DriverOutput(replies=(encode_certificate_sync(batch),))\n",
+        "                    return DriverOutput(\n"
+        "                        replies=(*closures, encode_certificate_sync(batch)),\n"
+        "                    )\n",
         "",
     ),
     "limit can give an empty batch": (
@@ -76,7 +78,7 @@ DRIVER = {
     ),
     "empty answer sent": (
         "        if not batch:\n"
-        "            return _NOTHING\n",
+        "            return DriverOutput(replies=closures)\n",
         "",
     ),
     "batch runs after a halt": (
@@ -98,7 +100,7 @@ DRIVER = {
         "                continue\n",
     ),
     "batch not checked": (
-        "            if not certificate.verify(self.committee):\n"
+        "            if not self.replica.certificate_is_valid(certificate):\n"
         "                return _NOTHING\n"
         "\n"
         "            self._accept(certificate)\n"
@@ -107,12 +109,12 @@ DRIVER = {
         "            learned = True\n",
     ),
     "bad certificate only skipped": (
-        "            if not certificate.verify(self.committee):\n"
+        "            if not self.replica.certificate_is_valid(certificate):\n"
         "                return _NOTHING\n"
         "\n"
         "            self._accept(certificate)\n"
         "            learned = True\n",
-        "            if not certificate.verify(self.committee):\n"
+        "            if not self.replica.certificate_is_valid(certificate):\n"
         "                continue\n"
         "\n"
         "            self._accept(certificate)\n"

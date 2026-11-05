@@ -1,0 +1,9 @@
+*
+!core
+!crypto
+!network
+!sdk
+!pyproject.toml
+!requirements.lock
+!README.md
+**/__pycache__

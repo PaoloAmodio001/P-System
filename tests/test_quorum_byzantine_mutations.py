@@ -78,9 +78,9 @@ IN_QUORUM = {
         "        return Vote.create(self.committee, self._identity, event)\n",
     ),
     "a node refuses a certificate against its own vote": (
-        "            and certificate.verify(self.committee)\n"
+        "            and self.certificate_is_valid(certificate)\n"
         "        )\n",
-        "            and certificate.verify(self.committee)\n"
+        "            and self.certificate_is_valid(certificate)\n"
         "            and not any(\n"
         "                (v.sender, v.nonce) == (event.sender, event.nonce)\n"
         "                and v.canonical() != event.canonical()\n"

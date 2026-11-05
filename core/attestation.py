@@ -391,7 +391,7 @@ class Governance:
         ):
             raise ValueError("INVALID GOVERNANCE MEMBER")
 
-        if list(self.members) != sorted(set(self.members)):
+        if self.members != tuple(sorted(set(self.members))):
             raise ValueError("GOVERNANCE MEMBERS MUST BE SORTED AND DISTINCT")
 
         if (
@@ -407,7 +407,7 @@ class Governance:
         digest = sha256(
             _canonical_json(
                 {
-                    "members": [member.hex() for member in self.members],
+                    "members": [key.hex() for key in self.members],
                     "threshold": self.threshold,
                 }
             )
@@ -530,8 +530,7 @@ class EpochReport:
         votes: tuple[SignedTransfer, ...],
     ) -> bytes:
         return (
-            EPOCH_REPORT_DOMAIN
-            + bytes.fromhex(committee.committee_id)
+            EPOCH_REPORT_DOMAIN + bytes.fromhex(committee.committee_id)
             + bytes.fromhex(change_id)
             + _votes_digest(votes)
         )
@@ -548,7 +547,7 @@ class EpochReport:
         validator = committee.index_of(identity.public_key)
 
         if validator is None:
-            raise ValueError("IDENTITY IS NOT A COMMITTEE MEMBER")
+            raise ValueError("REPORTER IS NOT A COMMITTEE MEMBER")
 
         return cls(
             validator=validator,

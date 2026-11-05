@@ -39,7 +39,16 @@ from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
 from network.secure_transport import TLSConfig
 from core.attestation import guilty_members
-from network.quorum import QUORUM_MESSAGE_TYPES, QuorumConfig, QuorumRuntime
+from network.quorum import (
+    DriverOutput,
+    LOG as QUORUM_LOG,
+    QUORUM_MESSAGE_TYPES,
+    QuorumConfig,
+    QuorumRuntime,
+)
+
+
+_NOTHING_SENT = DriverOutput()
 
 
 class Node:
@@ -626,10 +635,12 @@ class Node:
             connection.close()
             return False
 
+        # The address that worked, not the one it announces: a node on all interfaces
+        # announces 0.0.0.0, and a node behind a translation does not know its own.
         self.peers[handshake.node_id] = Peer(
             node_id=handshake.node_id,
-            host=handshake.host,
-            port=handshake.port,
+            host=peer.host,
+            port=peer.port,
         )
 
         connection.on_disconnect = self._peer_disconnected
@@ -1233,21 +1244,26 @@ class Node:
         self._send_quorum_output(output, None)
         return bool(output.replies or output.broadcasts)
 
+    def _require_quorum_mode(self) -> None:
+        if self._quorum is None:
+            raise RuntimeError("THIS NEEDS QUORUM MODE")
+
+    def _driver_call(self, call):
+        """A call into the protocol, with the public state published whatever happens."""
+        with self._state_lock:
+            try:
+                return call()
+            finally:
+                self._publish_quorum_state()
+
     def submit_many(self, events) -> int:
         """
         Quorum mode: like `submit` for several events, with one write to disk for the votes
         of this node. Returns how many messages there were to send. No more than that is
         promised for any of the events.
         """
-        if self._quorum is None:
-            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
-
-        with self._state_lock:
-            try:
-                output = self._quorum.submit_group(list(events))
-            finally:
-                self._publish_quorum_state()
-
+        self._require_quorum_mode()
+        output = self._driver_call(lambda: self._quorum.submit_group(list(events)))
         self._send_quorum_output(output, None)
         return len(output.broadcasts)
 
@@ -1257,15 +1273,10 @@ class Node:
         reports and the votes on the closure. True if there was something to send. It says
         nothing about the closure, which may never come: read `self.committee_epoch`.
         """
-        if self._quorum is None:
-            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
-
-        with self._state_lock:
-            try:
-                output = self._quorum.driver.propose_epoch_change(change)
-            finally:
-                self._publish_quorum_state()
-
+        self._require_quorum_mode()
+        output = self._driver_call(
+            lambda: self._quorum.driver.propose_epoch_change(change)
+        )
         self._send_quorum_output(output, None)
         return bool(output.broadcasts)
 
@@ -1275,23 +1286,21 @@ class Node:
         the two certificates come from different committees: a member can honestly sign
         in two epochs, and the theorem is about one committee.
         """
-        if self._quorum is None:
-            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+        self._require_quorum_mode()
 
         with self._state_lock:
             replica = self._quorum.replica
-            proof = replica.halt_proof()
+            conflict = replica.halt_proof()
 
-            if proof is None or proof[0].epoch != proof[1].epoch:
+            if conflict is None or conflict[0].epoch != conflict[1].epoch:
                 return ()
 
-            return guilty_members(replica.committee_of(proof[0]), *proof)
+            return guilty_members(replica.committee_of(conflict[0]), *conflict)
 
     @property
     def committee_epoch(self) -> int:
         """The epoch in force, in quorum mode."""
-        if self._quorum is None:
-            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+        self._require_quorum_mode()
 
         with self._state_lock:
             return self._quorum.replica.committee.epoch
@@ -1353,6 +1362,14 @@ class Node:
                     target.send(message)
                 except (ConnectionError, OSError, TimeoutError):
                     self._disconnect_peer_connection(node_id, target)
+                except ValueError as error:
+                    # Larger than a frame, so no peer can get it. Nothing is wrong with the
+                    # connection, and the message type is what an operator needs to know.
+                    QUORUM_LOG.error(
+                        "message too large to send",
+                        extra={"type": message.get("type"), "reason": str(error)},
+                    )
+                    break
 
     def _send_quorum_reply(self, connection, message) -> None:
         try:
@@ -1360,6 +1377,12 @@ class Node:
         except (ConnectionError, OSError, TimeoutError):
             self._peer_disconnected(connection)
             connection.close()
+        except ValueError as error:
+            # Larger than a frame. The peer gets no answer, and the connection stays.
+            QUORUM_LOG.error(
+                "message too large to send",
+                extra={"type": message.get("type"), "reason": str(error)},
+            )
 
     def _handle_peer_messages(self, messages, connection=None) -> None:
         """
@@ -1392,15 +1415,12 @@ class Node:
             self._handle_quorum_message(messages[0], connection)
             return
 
-        with self._state_lock:
+        def call():
             if self._quorum.closed:
-                return
+                return _NOTHING_SENT, None
+            return self._quorum.handle_group(messages)
 
-            try:
-                output, error = self._quorum.handle_group(messages)
-            finally:
-                self._publish_quorum_state()
-
+        output, error = self._driver_call(call)
         self._send_quorum_output(output, connection)
 
         if error is not None:

@@ -503,7 +503,7 @@ class SqliteVoteStore:
             self._require_open()
 
             try:
-                self._connection.execute("BEGIN IMMEDIATE")
+                self._begin()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"GROUP NOT STARTED: {error}") from error
 
@@ -872,6 +872,7 @@ class SqliteVoteStore:
                 self._begin()
 
                 if self._is_halted():
+                    # Halted, this node signs no closure.
                     return False
 
                 epoch = self.committee.epoch
@@ -911,7 +912,7 @@ class SqliteVoteStore:
                 self._begin()
 
                 if self._is_halted():
-                    raise VoteStoreError("NODE HAS HALTED")
+                    raise VoteStoreError("NODE HAS HALTED: NO NEW EPOCH")
 
                 self._connection.execute(
                     "INSERT INTO closures (epoch, closure) VALUES (?, ?)",
@@ -1551,11 +1552,10 @@ class QuorumDriver:
         certificate, send that instead. If the vote is refused, nobody is asked,
         because an honest node does not ask for what it would not sign.
         """
-        if (
-            not self._is_authorized(signed)
-            or not self._is_admitted(signed.transfer)
-            or self.halted
-        ):
+        if not self._is_authorized(signed) or self.halted:
+            return _NOTHING
+
+        if not self._is_admitted(signed.transfer):
             return _NOTHING
 
         self._record_signed(signed)
@@ -1592,7 +1592,10 @@ class QuorumDriver:
         return True
 
     def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
-        if not self._is_authorized(signed) or not self._is_admitted(signed.transfer):
+        if not self._is_authorized(signed):
+            return _NOTHING
+
+        if not self._is_admitted(signed.transfer):
             return _NOTHING
 
         # Before the replica, because a vote refused is when the proof appears.
@@ -1830,22 +1833,27 @@ class QuorumRuntime:
         broadcasts = []
         error = None
 
+        with self._group_or_rebuild():
+            for message in messages:
+                try:
+                    output = self.driver.handle_message(message)
+                except (ValueError, KeyError, TypeError, RecursionError) as malformed:
+                    error = malformed
+                    break
+
+                replies.extend(output.replies)
+                broadcasts.extend(output.broadcasts)
+
+        return DriverOutput(tuple(replies), tuple(broadcasts)), error
+
+    @contextmanager
+    def _group_or_rebuild(self):
         try:
             with self.replica.group():
-                for message in messages:
-                    try:
-                        output = self.driver.handle_message(message)
-                    except (ValueError, KeyError, TypeError, RecursionError) as malformed:
-                        error = malformed
-                        break
-
-                    replies.extend(output.replies)
-                    broadcasts.extend(output.broadcasts)
+                yield
         except VoteStoreError:
             self._rebuild()
             raise
-
-        return DriverOutput(tuple(replies), tuple(broadcasts)), error
 
     def _new_driver(self) -> QuorumDriver:
         return QuorumDriver(
@@ -1861,15 +1869,11 @@ class QuorumRuntime:
         replies = []
         broadcasts = []
 
-        try:
-            with self.replica.group():
-                for signed in events:
-                    output = self.driver.submit(signed)
-                    replies.extend(output.replies)
-                    broadcasts.extend(output.broadcasts)
-        except VoteStoreError:
-            self._rebuild()
-            raise
+        with self._group_or_rebuild():
+            for signed in events:
+                output = self.driver.submit(signed)
+                replies.extend(output.replies)
+                broadcasts.extend(output.broadcasts)
 
         return DriverOutput(tuple(replies), tuple(broadcasts))
 

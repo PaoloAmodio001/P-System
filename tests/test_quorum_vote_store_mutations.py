@@ -29,7 +29,7 @@ TESTS = [
 MUTATIONS = {
     # Opening.
     "validator outside the committee": (
-        "        if committee.index_of(validator) is None:\n"
+        "        if committee.index_of(validator) is None and not joining:\n"
         "            raise VoteStoreError(\"VALIDATOR IS NOT A COMMITTEE MEMBER\")\n",
         "",
     ),
@@ -94,27 +94,28 @@ MUTATIONS = {
         "                    return False\n",
     ),
     "lock on the sender only": (
-        "                        WHERE (sender = ? AND nonce = ?) OR event_id = ?\n"
+        "                        WHERE epoch = ? AND ((sender = ? AND nonce = ?) OR event_id = ?)\n"
         "                        \"\"\",\n"
-        "                        (event.sender, str(event.nonce), event_id),\n",
-        "                        WHERE sender = ? OR event_id = ?\n"
+        "                        (epoch, event.sender, str(event.nonce), event_id),\n",
+        "                        WHERE epoch = ? AND (sender = ? OR event_id = ?)\n"
         "                        \"\"\",\n"
-        "                        (event.sender, event_id),\n",
+        "                        (epoch, event.sender, event_id),\n",
     ),
     "lock ignores the id": (
-        "                        WHERE (sender = ? AND nonce = ?) OR event_id = ?\n"
+        "                        WHERE epoch = ? AND ((sender = ? AND nonce = ?) OR event_id = ?)\n"
         "                        \"\"\",\n"
-        "                        (event.sender, str(event.nonce), event_id),\n",
-        "                        WHERE (sender = ? AND nonce = ?)\n"
+        "                        (epoch, event.sender, str(event.nonce), event_id),\n",
+        "                        WHERE epoch = ? AND (sender = ? AND nonce = ?)\n"
         "                        \"\"\",\n"
-        "                        (event.sender, str(event.nonce)),\n",
+        "                        (epoch, event.sender, str(event.nonce)),\n",
     ),
     "vote not committed": (
-        "                    (event.sender, str(event.nonce), event_id, canonical),\n"
-        "                )\n"
+        "                        (epoch, event_id, signed.public_key.hex(), signed.signature.hex()),\n"
+        "                    )\n"
+        "\n"
         "                self._commit()\n",
-        "                    (event.sender, str(event.nonce), event_id, canonical),\n"
-        "                )\n",
+        "                        (epoch, event_id, signed.public_key.hex(), signed.signature.hex()),\n"
+        "                    )\n",
     ),
     "failed write reported as a refusal": (
         "                raise VoteStoreError(f\"VOTE NOT RECORDED: {error}\") from error\n",
@@ -137,14 +138,16 @@ MUTATIONS = {
     ),
     # The log.
     "log read back in another order": (
-        "                    \"SELECT canonical, signatures FROM certificates ORDER BY position\"\n",
-        "                    \"SELECT canonical, signatures FROM certificates ORDER BY position DESC\"\n",
+        "                    \"SELECT canonical, signatures, epoch FROM certificates ORDER BY position\"\n",
+        "                    \"SELECT canonical, signatures, epoch FROM certificates ORDER BY position DESC\"\n",
     ),
     "certificate not committed": (
-        "                    (event.event_id(), event.canonical().decode(), signatures),\n"
+        "                        certificate.epoch,\n"
+        "                    ),\n"
         "                )\n"
         "                self._commit()\n",
-        "                    (event.event_id(), event.canonical().decode(), signatures),\n"
+        "                        certificate.epoch,\n"
+        "                    ),\n"
         "                )\n",
     ),
     "failed write of a certificate ignored": (
@@ -169,19 +172,19 @@ MUTATIONS = {
         "",
     ),
     "any two certificates are a proof": (
-        "        if not _is_halt_proof(self.committee, first, second):\n"
+        "        if not _is_halt_proof(self.committee_of, first, second):\n"
         "            raise ValueError(\"NOT A PROOF OF A HALT\")\n",
         "",
     ),
     "proof with an invalid first certificate": (
-        "        first.verify(committee)\n"
-        "        and second.verify(committee)\n",
-        "        second.verify(committee)\n",
+        "        first.verify(committee_of(first))\n"
+        "        and second.verify(committee_of(second))\n",
+        "        second.verify(committee_of(second))\n",
     ),
     "proof with an invalid second certificate": (
-        "        first.verify(committee)\n"
-        "        and second.verify(committee)\n",
-        "        first.verify(committee)\n",
+        "        first.verify(committee_of(first))\n"
+        "        and second.verify(committee_of(second))\n",
+        "        first.verify(committee_of(first))\n",
     ),
     "proof across senders": (
         "        and first.event.sender == second.event.sender\n",
@@ -208,10 +211,12 @@ MUTATIONS = {
     ),
     "halt not committed": (
         "                        _encode_signatures(high),\n"
+        "                        high.epoch,\n"
         "                    ),\n"
         "                )\n"
         "                self._commit()\n",
         "                        _encode_signatures(high),\n"
+        "                        high.epoch,\n"
         "                    ),\n"
         "                )\n",
     ),
@@ -224,7 +229,7 @@ MUTATIONS = {
         "",
     ),
     "altered proof believed at opening": (
-        "        if proof is not None and not _is_halt_proof(self.committee, *proof):\n"
+        "        if proof is not None and not _is_halt_proof(self.committee_of, *proof):\n"
         "            raise VoteStoreError(\"HALT PROOF DOES NOT VERIFY\")\n",
         "",
     ),

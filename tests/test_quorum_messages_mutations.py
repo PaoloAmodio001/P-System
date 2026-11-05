@@ -128,11 +128,11 @@ MUTATIONS = {
         "        \"type\": \"VOTE_REQUEST\",\n",
     ),
     "certificate with votes that are not a list": (
-        "    data = _message_of_type(message, \"CERTIFICATE\", \"transfer\", \"votes\")\n"
+        "    data = _message_of_type(message, \"CERTIFICATE\", *fields)\n"
         "\n"
         "    if type(data[\"votes\"]) is not list:\n"
         "        raise ValueError(\"INVALID QUORUM MESSAGE\")\n",
-        "    data = _message_of_type(message, \"CERTIFICATE\", \"transfer\", \"votes\")\n",
+        "    data = _message_of_type(message, \"CERTIFICATE\", *fields)\n",
     ),
     "certificate encoded without its last vote": (
         "            for vote in certificate.votes\n",

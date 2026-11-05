@@ -72,13 +72,13 @@ IN_QUORUM = {
         "            for event_id in sorted(self._buffer, reverse=True):\n",
     ),
     "invalid certificate accepted": (
-        "        if not self.halted and certificate.verify(self.committee):\n",
+        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n",
         "        if not self.halted:\n",
     ),
     "invalid certificate halts the node": (
-        "        if not self.halted and certificate.verify(self.committee):\n"
+        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n"
         "            self._accept(certificate)\n",
-        "        if not self.halted and certificate.verify(self.committee):\n"
+        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n"
         "            self._accept(certificate)\n"
         "        elif not self.halted:\n"
         "            known = self._known.get(\n"
@@ -87,7 +87,7 @@ IN_QUORUM = {
         "            if known is not None and"
         " known.event.canonical() != certificate.event.canonical():\n"
         "                self.replica._store._connection.execute(\n"
-        '                    "INSERT OR IGNORE INTO halt VALUES (1, ?, ?, ?, ?)",\n'
+        '                    "INSERT OR IGNORE INTO halt VALUES (1, ?, ?, ?, ?, 0, 0)",\n'
         "                    (known.event.canonical().decode(),\n"
         "                     _encode_signatures(known),\n"
         "                     certificate.event.canonical().decode(),\n"
@@ -126,7 +126,7 @@ IN_QUORUM = {
         "            False\n",
     ),
     "vote not written to disk": (
-        "        if not self._store.record_vote(event):\n"
+        "        if not self._store.record_vote(event, signed):\n"
         "            return None\n",
         "",
     ),

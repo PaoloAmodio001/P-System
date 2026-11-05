@@ -147,11 +147,14 @@ class NodeServer:
                 connection.close()
                 return
 
+            # From where it connected: a peer may announce all its interfaces or nothing
+            # useful. Only the port is its own to say, because the connection came from an
+            # ephemeral one.
             self.node.peers.setdefault(
                 handshake.node_id,
                 Peer(
                     node_id=handshake.node_id,
-                    host=handshake.host,
+                    host=connection.getpeername()[0],
                     port=handshake.port,
                 ),
             )

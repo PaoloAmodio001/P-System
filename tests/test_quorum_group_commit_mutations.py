@@ -19,9 +19,9 @@ MUTATIONS = {
         "each write commits": (
             "    def _commit(self) -> None:\n"
             "        if not self._grouped:\n"
-            "            self._connection.execute(\"COMMIT\")\n",
+            "            self._timed_commit()\n",
             "    def _commit(self) -> None:\n"
-            "        self._connection.execute(\"COMMIT\")\n"
+            "        self._timed_commit()\n"
             "        if self._grouped:\n"
             "            self._connection.execute(\"BEGIN IMMEDIATE\")\n",
         ),
@@ -33,7 +33,7 @@ MUTATIONS = {
         ),
         "group never commits": (
             "                yield\n"
-            "                self._connection.execute(\"COMMIT\")\n",
+            "                self._timed_commit()\n",
             "                yield\n",
         ),
         "failed commit keeps the memory": (
@@ -48,16 +48,16 @@ MUTATIONS = {
             "",
         ),
         "output of a malformed group dropped": (
-            "                        error = malformed\n"
-            "                        break\n",
-            "                        error = malformed\n"
-            "                        replies.clear()\n"
-            "                        break\n",
+            "                    error = malformed\n"
+            "                    break\n",
+            "                    error = malformed\n"
+            "                    replies.clear()\n"
+            "                    break\n",
         ),
         "a malformed message is skipped": (
-            "                        error = malformed\n"
-            "                        break\n",
-            "                        continue\n",
+            "                    error = malformed\n"
+            "                    break\n",
+            "                    continue\n",
         ),
     },
     "network.peer_connection": {

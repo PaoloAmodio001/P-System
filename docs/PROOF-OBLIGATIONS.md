@@ -158,9 +158,13 @@ sender can leave its account blocked.
 | `QuorumNonVacuity` | witnesses for the hypotheses of `no_double_spend` (`n = 4`) |
 | `QuorumDerive` | link between the quorum model and `derive` |
 | `QuorumConvergence` | convergence after exchanging logs |
+| `QuorumThresholds` | any quorum, who is to blame, what a report can tell |
+| `QuorumEpochs` | a chain of committees, reports and locks |
+| `QuorumEpochsNonVacuity` | witnesses for thresholds and epochs |
+| `QuorumLiveness` | an honest sender gets a certificate, given delivery |
 
-- 15 modules, 104 theorem declarations (11 of them about the witnesses), about
-  2700 lines. `formal/lean/QuorumCheck.lean` is a test driver, not part of the
+- 19 modules, 143 theorem declarations (21 of them about the witnesses), about
+  3700 lines. `formal/lean/QuorumCheck.lean` is a test driver, not part of the
   proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
@@ -216,6 +220,7 @@ Hypotheses that remain, in `no_double_spend_across_epochs`:
 - O7 covers safety in the quorum model. No theorem establishes unconditional
   liveness or complete Byzantine fault tolerance.
 - There is no unconditional liveness theorem: `honest_sender_certifies` assumes delivery.
+- Epochs and thresholds are compared with Python only by tests, with no differential against Lean.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
 

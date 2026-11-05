@@ -398,10 +398,10 @@ def run_node(case: NodeCase, directory: Path) -> Result:
             replica.handle_certificate,
         )
 
-        def traced_vote(event):
+        def traced_vote(event, signed=None):
             if not replica.halted():
                 result.trace.append(f"V {_lean_event(event)}")
-            return real_vote(event)
+            return real_vote(event, signed)
 
         def traced_certificate(certificate):
             if not replica.halted():

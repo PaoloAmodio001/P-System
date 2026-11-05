@@ -1,0 +1,38 @@
+# Changelog
+
+## 0.2.0 (unreleased)
+
+Quorum mode complete on a real network, and a service around it. **Not ready for production**: see
+`docs/VALIDATION-PLAN.md`.
+
+### Fixed
+
+- Nodes in different processes could not connect at all: each process made its own throwaway authority. The system had only
+  ever run inside one process.
+- A peer could claim any node id with any certificate of the authority, and take the connection of the real node.
+- A reader and a writer on one TLS connection corrupted the session, in about a third of the runs when both sides send at once.
+- A node on all interfaces announced `0.0.0.0`, and peers took it as its address, which broke reconnection.
+- A peer that does not read could hold every broadcast behind it for good.
+
+### Added
+
+- Synchronization of certificates, so a node that was away catches up.
+- Epochs: governance of `k` of `m`, reports, one certified closure, locks carried from epoch to epoch. Members can change and
+  rotate their keys.
+- `psystem` command, HTTP API `/v1`, metrics, JSON logs, strict configuration, `Dockerfile`, systemd unit.
+- `sdk.client.Wallet`, which cannot sign two events for one nonce, and `ChainVerifier`, a light client.
+- Limits on votes: nonce window and funds. Bound on evidence in memory.
+- Group commit: messages received together share one write. Measured in `docs/BENCHMARKS.md`.
+- Safe restore: a node restored from a backup abstains until the next epoch.
+- Lean: `no_double_spend_q`, `conflict_identifies_faulty`, `split_lock_ambiguous`, `unlock_safe_5f1`,
+  `no_double_spend_across_epochs`, `closure_preserves_certified`, `closure_unique`, `honest_sender_certifies`.
+- Continuous integration of the proofs and of the whole suite. Mutations of phases 5.1, 5.2 and 5.4 back inside `pytest`.
+
+### Changed
+
+- Store schema 3: votes by epoch, with the proof that the sender signed each. Older stores migrate on opening, and a vote from
+  before has no such proof, so that node cannot report until the next epoch.
+
+## 0.1.0
+
+Research prototype: Lean model of the derivation and Python implementation, in historical mode.

@@ -1,34 +1,33 @@
 # P-System: dal prototipo di ricerca alla piattaforma
 
-Del 2026-11-04, aggiornata il 2026-11-05. Punto di partenza: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
+Del 2026-11-04, aggiornata il 2026-11-05. Punto di partenza allora: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
 
 Niente di questo documento è un risultato. I teoremi elencati sono **da dimostrare**, e i nomi sono provvisori. Le stime di tempo sono giudizi a occhio, non misure: valgono come ordine di grandezza, in mesi-persona a tempo pieno.
 
 ## Dove siamo
 
-- **Dimostrato sul modello:** `no_double_spend`, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, con comitato fisso e crittografia idealizzata.
-- **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`. Non è un refinement.
-- **Non esiste:** teorema di liveness, cambio di comitato, container, metriche, audit esterni, utenti.
-- **Integrazione continua minima:** `.github/workflows/ci.yml`, aggiunta il 2026-11-04.
+- **Dimostrato sul modello:** `no_double_spend` e la sua forma per soglie qualsiasi, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, `conflict_identifies_faulty`, `no_double_spend_across_epochs` su una catena di comitati, `honest_sender_certifies` con la consegna come ipotesi. Crittografia idealizzata.
+- **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche non c'è un differenziale con Lean. Non è un refinement.
+- **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti e asset multipli.
 
 ## Stato rispetto agli ambiti di `CLAUDE.md`, sezione 3.1
 
-Valutazione del 2026-11-04, dalla lettura del repository e dai controlli indicati in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**, e la colonna «Cosa manca» dice perché. Le fasi sono quelle qui sotto.
+Valutazione del 2026-11-05, dopo il lavoro di A, B (senza consenso sullo sblocco), D, E, F e G in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**: si può installare, far girare e valutare, ma mancano le verifiche di terzi. Le fasi sono quelle qui sotto.
 
 | Ambito | Stato | Cosa manca | Fase |
 |---|---|---|---|
-| Core e motore di esecuzione | Modalità quorum funzionante con comitato fisso; un solo tipo di evento (trasferimento) | Oggetti e asset multipli. `core/` ha 75 file, molti legati alla modalità storica: da valutare, non ancora ridotti | C |
-| Sicurezza | Ed25519, TLS 1.3 con autenticazione reciproca, blocco del voto durevole | Quote contro DoS, HSM o KMS, modello delle minacce, audit esterni. Dipendenze non bloccate | E |
-| Networking | Connessioni TLS persistenti, riconnessione, invii con scadenza, sincronizzazione dei certificati | Un peer che non legge rallenta ancora i broadcast fino alla sua scadenza | E |
-| Tolleranza ai guasti | `FORMAL (model)` per la sicurezza con al massimo `f` difettosi; `EMPIRICAL` sul codice, anche su TLS reale con un membro malevolo | Liveness, ripartenza dopo l'arresto | B |
-| Formal verification | 104 teoremi, nessun assioma oltre ai tre standard | Epoche, soglie configurabili, liveness. Il legame con Python non è un refinement | B |
-| Prestazioni | Script in `benchmarks/`, nessun risultato pubblicato | Profilazione, misure riproducibili, voti a gruppi | D |
-| Scalabilità | Laboratori in `benchmarks/`, nessun risultato pubblicato | Misure al variare di `n` e del carico. Solo `n = 4` nelle prove a 4 nodi su TLS | D |
-| Interoperabilità | Nessuna API pubblica: si usa `Node` da Python | API versionata, CLI, SDK, client leggero | F |
-| Osservabilità | Nessun logging strutturato né metriche nel nodo | Log, metriche, allarmi | G |
-| Affidabilità operativa | Voti e log durevoli, arresto che sopravvive al riavvio | Backup sicuri: oggi un backup vecchio ripristinato fa votare due volte. Manuali | G |
-| Deployment | Installazione da sorgente; nessun pacchetto né container; integrazione continua minima | Pacchetto, container, configurazione, aggiornamenti | G |
-| Documentazione tecnica | Specifica formale e obblighi di prova | Manuale operativo, specifica di API e protocollo, requisiti, pagina su cosa non è garantito | F, G |
+| Core e motore di esecuzione | Modalità quorum con epoche; un solo tipo di evento (trasferimento) | Oggetti e asset multipli: serve prima un caso d'uso reale. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
+| Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, limiti sui voti, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS, limite di frequenza per connessione, revoca dei certificati | E |
+| Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, invii con scadenza, scrittura a gruppi | Broadcast sequenziali: un peer che non legge rallenta i successivi fino alla scadenza | E |
+| Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL` e su 4 container | Prove su macchine separate e guasti di rete iniettati. Liveness incondizionata | G |
+| Formal verification | 143 teoremi, nessun assioma oltre ai tre standard | Il legame con Python resta `EMPIRICAL`; per le epoche non c'è differenziale con Lean | B |
+| Prestazioni | Misure riproducibili su una macchina in `docs/BENCHMARKS.md` | Macchine separate; riproduzione esterna; confronto con FastPay | D |
+| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina | Misure con nodi separati e carichi lunghi. Un'epoca regge circa 12 000 eventi con `n = 4` | D |
+| Interoperabilità | API HTTP `/v1`, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
+| Osservabilità | Log JSON, metriche Prometheus, health | Allarmi pronti, tracciamento | G |
+| Affidabilità operativa | Backup coerenti, ripristino che si astiene fino all'epoca dopo, manuali per ogni guasto noto | Prove lunghe settimane, esercitazioni con operatori veri | G |
+| Deployment | Pacchetto, container provato con `kill -9`, unità systemd, dipendenze bloccate con hash, SBOM | Immagini firmate, aggiornamenti a rotazione provati | G |
+| Documentazione tecnica | Architettura, protocollo, API, operazioni, minacce, validazione, dipendenze | Revisione di chi non l'ha scritta | H |
 
 **Cosa non si può ottenere solo scrivendo codice.** Per i criteri della fase H servono audit esterni, una prova di esercizio lunga settimane, operatori indipendenti e un pilota con dati reali. Nessuna di queste si può sostituire con test interni. Questo limite vale anche per il traguardo «pronto per la fase di industrializzazione».
 
@@ -109,6 +108,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase A. Chiudere fase 5 e fase 6
 
+**Stato: fatta nel codice.** Manca il preprint, che resta da scrivere e pubblicare.
+
 **Obiettivo.** Modalità quorum completa su rete reale e su `main`, con etichette corrette.
 
 **Cosa si consegna.**
@@ -132,6 +133,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 ---
 
 ## Fase B. Liveness e recupero
+
+**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `closure_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); sblocco con `n = 5f+1`, dimostrato solo nel conteggio; `new_key_old_epoch` come teorema.
 
 **Obiettivo.** Un sistema che può cambiare comitato, ruotare le chiavi e riprendersi, senza perdere la proprietà di sicurezza. È **la fase più difficile e la più interessante**: è il punto in cui FastPay si ferma e Sui ricorre al consenso.
 
@@ -168,6 +171,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase C. Modello dati generale
 
+**Stato: non iniziata, di proposito.** Cambia gli id canonici e tutte le prove, e questa roadmap chiede prima un utente potenziale su un caso reale, «altrimenti si progetta nel vuoto». Questo richiede una persona esterna.
+
 **Obiettivo.** Più asset e oggetti con stato e proprietario, restando a proprietario singolo.
 
 **Cosa si consegna.**
@@ -196,6 +201,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 ---
 
 ## Fase D. Prestazioni
+
+**Stato: fatta su una macchina.** Profilo, scrittura a gruppi con il test di equivalenza con gli invii uno a uno, benchmark in `docs/BENCHMARKS.md`. Non fatti: verifica parallela, che il profilo non chiede; raggruppamento dei messaggi in uscita; confronto con FastPay, che richiede più macchine.
 
 **Obiettivo.** Il massimo ragionevole da un sistema interamente in Python, con costi misurati e limiti dichiarati. Decisione di Paolo del 2026-11-04: niente Rust, tutto in Python. L'obiettivo non è battere FastPay, ma sapere e dire per quali volumi P-System è adatto.
 
@@ -231,6 +238,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase E. Sicurezza
 
+**Stato: fatta la parte interna.** Identità TLS legata al nodo, limiti sui voti, fuzzing nella suite, modello delle minacce, dipendenze bloccate con hash, SBOM. **Non fatti:** audit e test di penetrazione, che richiedono persone esterne; HSM o KMS; quote per connessione.
+
 **Obiettivo.** Reggere un attaccante reale, non solo quello del modello.
 
 **Cosa si consegna.**
@@ -256,6 +265,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase F. API, SDK, CLI, client leggeri
 
+**Stato: fatta, senza prove con sviluppatori esterni.** API `/v1`, CLI `psystem`, `Wallet` che non equivoca per errore, `ChainVerifier` come client leggero. `light_client_sound` e `read_quorum_sound` non sono teoremi: il primo segue a mano da `no_double_spend_across_epochs`, il secondo non esiste perché le letture di un solo nodo sono dichiarate non fidate.
+
 **Obiettivo.** Che chi non conosce il protocollo possa usarlo senza farsi male.
 
 **Cosa si consegna.**
@@ -279,6 +290,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 ---
 
 ## Fase G. Esercizio
+
+**Stato: fatta la parte tecnica su una macchina.** Container provato con `kill -9`, systemd, metriche, log, backup, ripristino che si astiene, manuali. **Non fatti:** prove lunghe settimane, che non si possono comprimere; Jepsen; operatori indipendenti; aggiornamenti a rotazione.
 
 **Obiettivo.** Far girare il sistema per mesi, con operatori che non lo hanno scritto.
 
@@ -304,6 +317,8 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 ---
 
 ## Fase H. Versione 1.0 e paper
+
+**Stato: non raggiungibile da qui.** Tutti i suoi criteri richiedono persone esterne. `docs/VALIDATION-PLAN.md` dice come iniziare.
 
 **Obiettivo.** Una versione stabile, con affermazioni che reggono a una verifica esterna.
 

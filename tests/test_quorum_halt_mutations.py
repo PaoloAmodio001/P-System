@@ -55,11 +55,11 @@ CERTIFICATE_CHECK = """                if self._is_halted():
 
 MUTATIONS = {
     "first certificate not verified": (
-        "        first.verify(committee)\n        and second.verify(committee)\n",
-        "        second.verify(committee)\n",
+        "        first.verify(committee_of(first))\n        and second.verify(committee_of(second))\n",
+        "        second.verify(committee_of(second))\n",
     ),
     "second certificate not verified": (
-        "        and second.verify(committee)\n",
+        "        and second.verify(committee_of(second))\n",
         "",
     ),
     "sender not compared": (
@@ -75,11 +75,11 @@ MUTATIONS = {
         "",
     ),
     "proof not checked when written": (
-        "        if not _is_halt_proof(self.committee, first, second):\n",
+        "        if not _is_halt_proof(self.committee_of, first, second):\n",
         "        if False:\n",
     ),
     "proof not checked when opened": (
-        "        if proof is not None and not _is_halt_proof(self.committee, *proof):\n",
+        "        if proof is not None and not _is_halt_proof(self.committee_of, *proof):\n",
         "        if False:\n",
     ),
     "unreadable proof not turned into a store error": (
@@ -115,10 +115,12 @@ MUTATIONS = {
     ),
     "halt not committed": (
         "                        _encode_signatures(high),\n"
+        "                        high.epoch,\n"
         "                    ),\n"
         "                )\n"
         "                self._commit()\n",
         "                        _encode_signatures(high),\n"
+        "                        high.epoch,\n"
         "                    ),\n"
         "                )\n",
     ),

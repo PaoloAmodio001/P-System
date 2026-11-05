@@ -164,19 +164,23 @@ def encode_vote_request(event: SignedTransfer) -> dict:
     }
 
 
-def decode_vote_request(message) -> SignedTransfer:
-    data = _message_of_type(
-        message,
-        "VOTE_REQUEST",
-        "transfer",
-        "public_key",
-        "signature",
-    )
-
+def _signed_event_of(data: dict) -> SignedTransfer:
     return SignedTransfer(
         transfer=_decode_quorum_event(data["transfer"]),
         public_key=_hex_bytes(data["public_key"], _PUBLIC_KEY_PATTERN),
         signature=_hex_bytes(data["signature"], _SIGNATURE_PATTERN),
+    )
+
+
+def decode_vote_request(message) -> SignedTransfer:
+    return _signed_event_of(
+        _message_of_type(
+            message,
+            "VOTE_REQUEST",
+            "transfer",
+            "public_key",
+            "signature",
+        )
     )
 
 
@@ -343,12 +347,7 @@ def _encode_signed_event(event: SignedTransfer) -> dict:
 
 
 def _decode_signed_event(value) -> SignedTransfer:
-    data = _object_with_fields(value, "transfer", "public_key", "signature")
-    return SignedTransfer(
-        transfer=_decode_quorum_event(data["transfer"]),
-        public_key=_hex_bytes(data["public_key"], _PUBLIC_KEY_PATTERN),
-        signature=_hex_bytes(data["signature"], _SIGNATURE_PATTERN),
-    )
+    return _signed_event_of(_object_with_fields(value, "transfer", "public_key", "signature"))
 
 
 def _natural(value) -> int:
@@ -382,7 +381,7 @@ def _decode_change(value) -> EpochChange:
     signatures = []
 
     for entry in _list_of(data["signatures"]):
-        if type(entry) is not list or len(entry) != 2:
+        if not (type(entry) is list and len(entry) == 2):
             raise ValueError("INVALID QUORUM MESSAGE")
 
         signatures.append(
@@ -418,11 +417,8 @@ def _encode_report(report: EpochReport) -> dict:
 
 def _decode_report(value) -> EpochReport:
     data = _object_with_fields(value, "validator", "votes", "signature")
-    return EpochReport(
-        validator=_natural(data["validator"]),
-        votes=tuple(_decode_signed_event(item) for item in _list_of(data["votes"])),
-        signature=_hex_bytes(data["signature"], _SIGNATURE_PATTERN),
-    )
+    votes = tuple(_decode_signed_event(item) for item in _list_of(data["votes"]))
+    return EpochReport(_natural(data["validator"]), votes, _hex_bytes(data["signature"], _SIGNATURE_PATTERN))
 
 
 def encode_epoch_report(change_id: str, report: EpochReport) -> dict:
@@ -460,11 +456,8 @@ def _decode_closure(value) -> EpochClosure:
         entry = _object_with_fields(item, "validator", "signature")
         votes.append(_decode_vote_fields(entry["validator"], entry["signature"]))
 
-    return EpochClosure(
-        change=_decode_change(data["change"]),
-        reports=tuple(_decode_report(item) for item in _list_of(data["reports"])),
-        votes=tuple(votes),
-    )
+    reports = tuple(_decode_report(item) for item in _list_of(data["reports"]))
+    return EpochClosure(_decode_change(data["change"]), reports, tuple(votes))
 
 
 def encode_closure_vote_request(closure: EpochClosure) -> dict:

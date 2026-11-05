@@ -6,7 +6,8 @@ The `psystem` command: create a deployment, run a node, talk to one.
     psystem key generate n0/identity.key
     psystem key show n0/identity.key
     psystem genesis genesis.json --member KEY... --f 1 --balance ACCOUNT=AMOUNT...
-    psystem node --config n0/node.toml [--create-store]
+    psystem init-store --config n0/node.toml
+    psystem node --config n0/node.toml
     psystem status --api http://127.0.0.1:8080
     psystem transfer --api URL --key K --journal J --to ACCOUNT --amount N
     psystem epoch sign change.json --key GOVERNANCE_KEY
@@ -117,6 +118,33 @@ def _node(args) -> int:
     return 0
 
 
+def _init_store(args) -> int:
+    """
+    Create the store of a validator, once. Starting a node never creates one by itself, or a
+    validator that lost its file would start again with no votes and vote twice.
+    """
+    from network.deployment import read_node_config
+    from network.quorum import SqliteVoteStore
+
+    config = read_node_config(Path(args.config))
+
+    if config.store.exists():
+        print(f"REFUSED: {config.store} EXISTS", file=sys.stderr)
+        return 2
+
+    store = SqliteVoteStore(
+        config.store,
+        config.genesis.committee,
+        config.identity.public_key,
+        create=True,
+        governance=config.genesis.governance,
+        joining=config.joining,
+    )
+    store.close()
+    print(config.store)
+    return 0
+
+
 def _client(args):
     from sdk.client import Client
 
@@ -221,6 +249,10 @@ def _parser() -> argparse.ArgumentParser:
     genesis.add_argument("--governance", action="append")
     genesis.add_argument("--governance-threshold", type=int)
     genesis.set_defaults(run=_genesis)
+
+    init_store = commands.add_parser("init-store")
+    init_store.add_argument("--config", required=True)
+    init_store.set_defaults(run=_init_store)
 
     node = commands.add_parser("node")
     node.add_argument("--config", required=True)
