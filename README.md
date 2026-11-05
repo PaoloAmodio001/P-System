@@ -16,6 +16,7 @@ pilot and no run on separate machines. See `docs/VALIDATION-PLAN.md` for what is
 | Two valid certificates in conflict name at least `f+1` guilty members | `FORMAL (model)`: `conflict_identifies_faulty` |
 | Keys of an ended committee, all stolen, give no double spend of a sender that signed once | `FORMAL (model)`: `old_keys_no_double_spend` |
 | The supply of an asset never grows | `FORMAL (model)`: `asset_supply_conserved` |
+| A restart from a snapshot reaches the state that replaying everything reaches, and pruning locks under a floor keeps the above | `FORMAL (model)`: `resume_is_derive`, `no_double_spend_views` |
 | An honest sender gets a certificate, **if messages arrive** | `FORMAL (model)`: `honest_sender_certifies`. Delivery is a hypothesis |
 | The Python code behaves like the model | `EMPIRICAL`: differential tests. **Not a refinement proof** |
 

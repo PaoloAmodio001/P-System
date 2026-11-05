@@ -54,6 +54,7 @@ authors of the code, and it is what an audit should start from and attack.
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
 - **Liveness.** `honest_sender_certifies` assumes delivery. Nothing promises progress against an adversarial network,
   and proposers acting at once can still split the votes on a closure, which stops that epoch from closing for good.
+- **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. A signer can add locks nobody signed to a snapshot: that can only stop the node that takes it from voting on those nonces. A node that pruned cannot prove a conflict under its floor.
 - **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.
 - **Power loss.** `kill -9` is tested. Power loss is not, and `fsync` calls were traced by hand once.
 

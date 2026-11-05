@@ -31,6 +31,8 @@ automatically prove that the Python implementation satisfies it.
 | Stolen keys of ended committees cannot certify new spends | `accepted_complete`, `old_keys_no_double_spend` | `tests/test_quorum_old_keys.py` | FORMAL (model), EMPIRICAL (Python) |
 | A closure survives the death of its proposer | `blocking_closure_is_seen`, `retry_gets_every_vote`, given delivery | `tests/test_quorum_epoch_retry.py` | FORMAL (model), EMPIRICAL (Python) |
 | The supply of an asset does not grow | `asset_supply_conserved`, with `executed_authorized` | `tests/test_assets.py` | FORMAL (model), EMPIRICAL (Python) |
+| A restart from a snapshot gives what replaying gives | `resume_equals_replay`, `resume_is_derive` | `tests/test_snapshots.py`, `tests/test_quorum_differential.py` | FORMAL (model), EMPIRICAL (Python) |
+| Pruning locks under a floor keeps safety | `no_double_spend_views`, `prune_without_floor_lets_conflict_through` | `tests/test_snapshots.py`, `tests/test_epoch_differential.py` | FORMAL (model), EMPIRICAL (Python) |
 | One validator across epochs follows the model | None | `tests/test_epoch_differential.py` | EMPIRICAL |
 | Safety under network faults between real processes | None | `tests/chaos.py`, `scripts/soak.py` | EMPIRICAL, on one machine |
 | Conflicting alternatives are preserved | None | `tests/test_conflict_rebuild_semantics.py` and reconciliation tests | EMPIRICAL |

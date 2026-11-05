@@ -165,8 +165,9 @@ sender can leave its account blocked.
 | `QuorumOldKeys` | what keys of ended committees can still do |
 | `QuorumClosureRetry` | why a retry finishes a closure, and when it cannot |
 | `QuorumAssets` | the total of a set of accounts |
+| `QuorumSnapshot` | restarting from a snapshot, floors, validators with different locks |
 
-- 22 modules, 160 theorem declarations, about 3900 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
+- 23 modules, 181 theorem declarations, about 4500 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
   of the proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
@@ -209,6 +210,12 @@ Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacu
 | `blocking_closure_is_seen`, `retry_gets_every_vote` | Any `q` reporters include a voter of a closure that could block others; with one closure voted, each of them can vote for what the proposer picks | FORMAL (model), given delivery |
 | `split_closures_block` | With `n = 4`, two votes for each of two closures leave none able to reach three | FORMAL (model), for that instance |
 | `asset_supply_conserved` | A run of executable events, each inside a set of accounts or outside it, leaves the sum of the set unchanged | FORMAL (model) |
+| `resume_equals_replay` | A node restarted from the snapshot of its own past goes on as if it had replayed everything: same state, ids and votes | FORMAL (model) |
+| `resume_is_derive`, `resume_same_state_as_full` | From a snapshot of any set `derive` accepts, the state reached is what `derive` computes on all the events, and what a node that ran them all holds | FORMAL (model) |
+| `attested_snapshot_matches_node` | With fewer faulty than a quorum needs, a snapshot with a quorum of signatures is the state of any honest node with those events | FORMAL (model). What an honest member checks is `Attests` |
+| `union_locks_cover` | The union of the locks of a quorum of signers holds what every honest member holds over the floor | FORMAL (model) |
+| `no_double_spend_views` | No double spend in any two epochs, where each validator has its own locks and its own floor, under `ViewChain` | FORMAL (model). `viewChain_of_chainValid`: the uniform chain is an instance |
+| `prune_without_floor_lets_conflict_through`, `invalid_set_has_no_derivation`, `attestation_without_honest_signer_proves_nothing`, `resume_without_ids_loses_children` | What goes wrong without each hypothesis | FORMAL (model), for those instances |
 
 Hypotheses that remain, in `no_double_spend_across_epochs`:
 

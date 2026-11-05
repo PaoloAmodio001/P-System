@@ -71,13 +71,13 @@ Time grows faster than the events, and no node votes in that epoch from the mome
 
 ## Restarting
 
-A node replays its whole log at a restart, and checks every signature. Measured on ext4, one store and one replica, with no pruning or snapshot:
+`python -m benchmarks.restart_time 10000 50000`: opening one store with one replica, on ext4, on this machine:
 
-| Certificates in the log | Restart | Store file | Peak memory |
-|---|---|---|---|
-| 10 000 | 3.8 s | 7 MiB | 64 MiB |
-| 50 000 | 20 s | 36 MiB | 181 MiB |
+| Certificates | No snapshot | Snapshot | Snapshot and pruning | Store file |
+|---|---|---|---|---|
+| 10 000 | 3.4 s | 0.16 s | 0.016 s | 7.4 MiB, 8.1 with a snapshot |
+| 50 000 | 20.3 s | 0.91 s | 0.10 s | 36.7 MiB, 39.9 with a snapshot |
 
-So about 0.4 ms per certificate, and an always growing log. **There is no snapshot and no pruning.** A long-lived deployment would need them, and they are not designed yet: what to trust instead of the signatures is a protocol question.
+Without a snapshot a node replays its whole log and checks every signature, about 0.4 ms per certificate. With one, it checks the signatures of the snapshot and of what came after it. What is left of 0.91 s is reading the rows into memory. Pruning does not shrink the file by itself: SQLite reuses the pages, and `VACUUM`, with the node stopped, gives them back. What keeps growing is the ids of executed events: 32 bytes each in the snapshot, against about 700 for a certificate.
 
 The system is in Python, and systems like FastPay in Rust report far more on far more hardware. No comparison has been run, and the guarantees of durability would have to be compared before the numbers. High-volume payments are not its use. Processes with a modest rate and a need for proofs may be, and that remains to be shown with a real user.

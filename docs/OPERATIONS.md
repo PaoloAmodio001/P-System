@@ -47,6 +47,10 @@ max_nonce_ahead = 1024    # refuse votes further ahead than this
 require_funds = true      # refuse votes for senders with nothing
 max_evidence = 100000     # proofs of equivocation kept in memory
 
+[snapshots]               # both optional, and off by default
+every = 10000             # ask the committee to sign the state each this many events
+prune = false             # drop what a snapshot covers: read "Snapshots and pruning" first
+
 [api]
 host = "127.0.0.1"
 port = 8080
@@ -156,6 +160,14 @@ proportion: close an epoch before it holds about 50 000 events, see `docs/BENCHM
 never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same
 operation. Rotating the key of an **account** does not exist: the account is the key.
+
+## Snapshots and pruning
+
+A snapshot only shortens a restart: 50 000 certificates in 0.9 s instead of 20 s (`docs/BENCHMARKS.md`). It removes nothing. Set `every` on the members. `psystem_snapshot_events` and `snapshot` in `/v1/status` say how far the last one reaches.
+
+**Pruning takes away history.** With `prune = true`, `/v1/certificates/{event_id}` answers `404` for what the snapshot covers, and a client can no longer get the proof of an old event from this node. `executed` in `/v1/status` still counts everything, and `certificates_held` says what is left. Keep at least one node that does not prune, or an archive of your own, if anyone may ask. A node that prunes also cannot sign a snapshot older than its own. To give the disk back, stop the node and run `VACUUM` on a copy.
+
+A node that was away takes a snapshot from a peer that pruned, signed by the committee in force. If that snapshot is older than a change of committee, it waits for new signatures: a member asks by itself at its next tick.
 
 ## Backup
 
