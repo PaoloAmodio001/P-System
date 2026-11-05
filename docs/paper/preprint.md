@@ -80,7 +80,7 @@ The table says what each work is reported to do, from its paper. It is not a com
 |---|---|---|---|---|
 | Guerraoui et al., PODC 2019 | None needed for one owner. `k` owners have consensus number `k` | Not its subject | Not its subject | No |
 | FastPay | None | Fixed committee in the paper | Locked: "may only lock the account of the faulty sender" | No |
-| Astro | None, Byzantine reliable broadcast | Not in the setting we compare | Not its subject | No |
+| Astro | None, Byzantine reliable broadcast | Not handled, as the paper of Sui Lutris notes | Not its subject | No |
 | Pastro, DISC 2021 | None, in a permissionless setting with weighted stake | Stake changes, handled with forward-secure signatures | Not its subject | No |
 | Kuznetsov, Tonkikh, DISC 2020 | None on the current configuration | Its subject, with forward-secure signatures, for lattice agreement | Not its subject | No |
 | Sui Lutris | Consensus for shared objects and at the epoch boundary | Yes, proved, through consensus | **Unlocked** at the end of an epoch, through consensus, with finality at about two round trips | No |
