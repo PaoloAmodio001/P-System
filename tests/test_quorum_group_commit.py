@@ -431,7 +431,16 @@ def test_node_group_with_other_messages_between_keeps_the_order(tmp_path):
         def send(self, message):
             sent.append(message["type"])
 
-        enqueue = send
+        def enqueue(self, message):
+
+            self.send(message)
+
+            return 0
+
+
+        def charge(self, tokens):
+
+            pass
 
     node._handle_peer_messages(
         [
@@ -461,7 +470,16 @@ def test_node_group_with_a_malformed_message_raises_after_sending(tmp_path):
         def send(self, message):
             sent.append(message["type"])
 
-        enqueue = send
+        def enqueue(self, message):
+
+            self.send(message)
+
+            return 0
+
+
+        def charge(self, tokens):
+
+            pass
 
     with pytest.raises(ValueError):
         node._handle_peer_messages(
@@ -556,7 +574,16 @@ def test_a_message_too_large_for_a_frame_stops_nothing(tmp_path, caplog):
         def send(self, _message):
             raise ValueError("MESSAGE TOO LARGE")
 
-        enqueue = send
+        def enqueue(self, message):
+
+            self.send(message)
+
+            return 0
+
+
+        def charge(self, tokens):
+
+            pass
 
         def close(self):
             self.closed = True

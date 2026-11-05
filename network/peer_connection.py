@@ -22,9 +22,12 @@ def _duplex(connection):
 
 class Pacer:
     """
-    At most `rate` messages per second on average, by waiting. Reading less makes the peer wait,
+    At most `rate` tokens per second on average, by waiting. Reading less makes the peer wait,
     through TCP. An honest peer never gets near this, and one that floods costs only itself.
+    A message costs one token, and what costs the node more costs more: `charge`.
     """
+
+    MAX_WAIT = 1.0
 
     def __init__(self, rate: float, burst: float, clock=time.monotonic, sleep=time.sleep) -> None:
         self.rate = rate
@@ -40,8 +43,10 @@ class Pacer:
         self._last = now
         self._tokens -= count
 
+        # A debt can be long, and each wait is short, so that a closing node does not wait for it.
+        # What is left of it stays, and the next message waits again.
         if self._tokens < 0:
-            self._sleep(-self._tokens / self.rate)
+            self._sleep(min(self.MAX_WAIT, -self._tokens / self.rate))
 
 
 class PeerConnection:
@@ -165,6 +170,10 @@ class PeerConnection:
             for fragment in split_payload(message.get("type"), payload)
         ]
 
+    def charge(self, tokens: int) -> None:
+        """This peer cost the node more than a message. The wait is on its own reader, and no one else's."""
+        self._pacer.take(tokens)
+
     def send(self, message: dict) -> None:
         frames = self._frames_of(message)
 
@@ -180,11 +189,11 @@ class PeerConnection:
             for frame in frames:
                 connection.sendall(frame)
 
-    def enqueue(self, message: dict) -> None:
+    def enqueue(self, message: dict) -> int:
         """
         Send without waiting for this peer, in the order of the calls. A peer that does not
         read then holds back only itself. ConnectionError if it is too far behind, and the
-        caller drops the connection, as for a send that fails.
+        caller drops the connection, as for a send that fails. Returns the bytes on their way.
         """
         frames = self._frames_of(message)
         size = sum(len(frame) for frame in frames)
@@ -208,6 +217,8 @@ class PeerConnection:
                 self._writer.start()
 
             self._queue_changed.notify_all()
+
+        return size
 
     def _write_queued(self) -> None:
         while True:

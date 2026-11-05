@@ -92,6 +92,7 @@ def metrics_text(node: Node) -> str:
             ("psystem_halted", "gauge", "1 if this node has halted on a conflict", int(driver.halted)),
             ("psystem_is_member", "gauge", "1 if this node votes in this epoch", int(replica.is_member)),
             ("psystem_certificates_waiting", "gauge", "Valid certificates that cannot run yet", len(driver._buffer)),
+            ("psystem_certificates_left_out_total", "counter", "Certificates not kept for lack of room: they come back with synchronization", driver.certificates_left_out),
             ("psystem_equivocations", "gauge", "Proofs of equivocation seen, in memory", len(driver.equivocations)),
             ("psystem_peers_connected", "gauge", "Connected peers", len(node.peer_connections)),
             ("psystem_store_commits_total", "counter", "Durable writes", store.commits),

@@ -93,29 +93,33 @@ IN_QUORUM = {
     "conflict not noticed": (
         "            self.replica.record_halt(known, certificate)\n"
         "            self._buffer.clear()\n"
+        "            self._waiting.clear()\n"
         "            self._aggregating.clear()\n"
-        "            return\n",
-        "            return\n",
+        "            return False\n",
+        "            return False\n",
     ),
     "second alternative runs": (
         "            self.replica.record_halt(known, certificate)\n"
         "            self._buffer.clear()\n"
+        "            self._waiting.clear()\n"
         "            self._aggregating.clear()\n"
-        "            return\n",
+        "            return False\n",
         # The halt stays, or this would die on the same line as the mutation above.
         "            self.replica.record_halt(known, certificate)\n"
         "            self._buffer.clear()\n"
+        "            self._waiting.clear()\n"
         "            self._aggregating.clear()\n"
         "            self.replica.state.balances[event.receiver] = (\n"
         "                self.replica.state.balance(event.receiver) + event.amount\n"
         "            )\n"
-        "            return\n",
+        "            return False\n",
     ),
     "buffer not retried": (
-        "                    del self._buffer[event_id]\n"
-        "                    progress = True\n",
-        "                    del self._buffer[event_id]\n"
-        "                    return\n",
+        "            self._no_longer_waiting(event_id)\n"
+        "            following = self._waiting.get(certificate.event.sender, {}).get(\n",
+        "            self._no_longer_waiting(event_id)\n"
+        "            return\n"
+        "            following = self._waiting.get(certificate.event.sender, {}).get(\n",
     ),
 }
 

@@ -51,6 +51,10 @@ from network.quorum import (
 _NOTHING_SENT = DriverOutput()
 
 
+# 5 MiB per second for each peer, with the 5000 tokens per second of a connection.
+REPLY_BYTES_PER_TOKEN = 1024
+
+
 class Node:
     SIMULTANEOUS_DIAL_SECONDS = 3.0
     RECONNECT_BASE_DELAY = 2.0
@@ -90,6 +94,7 @@ class Node:
 
         self.received: list[SignedTransfer] = []
         self.signed_events: dict[str, SignedTransfer] = {}
+        self._published_driver = None
         self.pending_signed_events: dict[
             str,
             list[SignedTransfer],
@@ -155,13 +160,20 @@ class Node:
         driver = self._quorum.driver
         equivocations = self.equivocations
 
-        for proof in driver.equivocations.values():
+        for proof in driver.new_equivocations():
             equivocations = equivocations.add(proof)
 
         # This runs for every message, so it only adds what is new. The log grows at the end, and
         # only a rebuild from disk after a failed write can leave it shorter.
         log = replica.log
         known = len(self.events)
+
+        # Only what is new. With many proofs, copying them at each message was its own limit.
+        if driver is not self._published_driver:
+            self._published_driver = driver
+            self.signed_events = {}
+
+        self.signed_events.update(driver.new_signed_events())
 
         if (
             known > len(log)
@@ -175,7 +187,6 @@ class Node:
         added = [certificate.event for certificate in log[known:]]
         self.events.extend(added)
         self.local_events.extend(added)
-        self.signed_events = dict(driver.signed_events)
         self.equivocations = equivocations
 
         if not self._quorum.closed:
@@ -1454,6 +1465,10 @@ class Node:
         self._send_quorum_output(output, connection)
 
     def _send_quorum_output(self, output, connection) -> None:
+        # Out of the lock: the wait is on the reader of this peer alone.
+        if connection is not None and output.cost:
+            connection.charge(output.cost)
+
         for message in output.replies:
             if connection is not None:
                 self._send_quorum_reply(connection, message)
@@ -1481,7 +1496,8 @@ class Node:
 
     def _send_quorum_reply(self, connection, message) -> None:
         try:
-            connection.enqueue(message)
+            # What a peer asks for, it pays for: a small request can have a large answer.
+            connection.charge(connection.enqueue(message) // REPLY_BYTES_PER_TOKEN)
         except (ConnectionError, OSError, TimeoutError):
             self._peer_disconnected(connection)
             connection.close()

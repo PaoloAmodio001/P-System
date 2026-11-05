@@ -138,7 +138,7 @@ def test_slowly_sent_bytes_do_not_extend_the_deadline():
         server.stop()
 
 
-def test_connection_over_the_limit_is_closed_and_a_slot_frees_up():
+def test_with_no_place_left_the_one_waiting_longest_goes():
     server = Node("limit-server")
     honest = Node("limit-honest")
     server._server_controller.MAX_PENDING_HANDSHAKES = 1
@@ -149,19 +149,9 @@ def test_connection_over_the_limit_is_closed_and_a_slot_frees_up():
 
     try:
         assert _wait_until(lambda: len(server._server_controller._pending) == 1)
-        refused = socket.create_connection(server.address())
-        try:
-            assert _server_closed_within(refused, 5.0)
-        finally:
-            refused.close()
-
-        # This is the limit of the defense: the slot is taken, so an honest
-        # peer is refused too while the silent connection lasts.
-        assert not honest.connect_peer(peer)
-
-        holder.close()
-        assert _wait_until(lambda: not server._server_controller._pending)
+        # The silent connection goes, and an honest peer gets its place.
         assert honest.open_peer_connection(peer)
+        assert _server_closed_within(holder, 5.0)
     finally:
         holder.close()
         honest.stop()

@@ -5,6 +5,7 @@ The model is in formal/lean/PSystem/Quorum.lean. The link between the two is
 empirical, not a refinement proof.
 """
 
+import heapq
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ import time
 from bisect import bisect_left
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from core.attestation import (
@@ -1661,6 +1662,14 @@ QUORUM_MESSAGE_TYPES = frozenset(
 
 # Well under the 16 MiB of a frame. A node that needs more asks again.
 SYNC_BATCH_BYTES = 4 * 1024 * 1024
+# What a bad signature costs a peer, in tokens of its 5000 per second: 50 of them per second, which
+# take under 1% of a core. An honest peer sends none, and it only slows the one that does.
+BAD_SIGNATURE_COST = 100
+# Certificates that cannot run yet. A certificate that can run never counts against this. One left
+# out does not enter `_known`, so it comes back with synchronization.
+MAX_BUFFERED_CERTIFICATES = 100_000
+# Events being collected votes for, started here: only who holds the token of the API starts them.
+MAX_AGGREGATING_EVENTS = 100_000
 # A sender left out is one the node asks everything about, which costs traffic and is
 # still correct. The limit keeps the request itself within a frame.
 SYNC_MAX_FRONTIER_SENDERS = 100_000
@@ -1672,6 +1681,8 @@ class DriverOutput:
 
     replies: tuple[dict, ...] = ()
     broadcasts: tuple[dict, ...] = ()
+    # What the message cost the node beyond reading it, in tokens of the peer that sent it.
+    cost: int = 0
 
 
 _NOTHING = DriverOutput()
@@ -1696,10 +1707,10 @@ class QuorumDriver:
     elsewhere. What it aggregated is in memory and lost at a restart, and the
     remedy is to submit again: a new vote gives the same signature.
 
-    The buffer has no limit, because a limit would make the result depend on the
-    order of arrival. Neither has the record of signed events: see the known limits
-    on denial of service. Both are in memory, so a certificate still waiting is lost
-    at a restart and has to be delivered again.
+    The buffer has a limit, and that does not make the result depend on the order of arrival: a
+    certificate left out comes back with synchronization, and one that can run is never left out.
+    It is in memory, so a certificate still waiting is lost at a restart and has to be delivered
+    again.
 
     Synchronization adds no transition: a certificate that arrives in a batch goes
     through the same path as one that arrives alone, and the model already allows any
@@ -1749,6 +1760,14 @@ class QuorumDriver:
         self._first_signed: dict[tuple[str, int], SignedTransfer] = {}
         self._aggregating: dict[bytes, tuple[Transfer, dict[int, Vote]]] = {}
         self._buffer: dict[str, QuorumCertificate] = {}
+        # The same, by sender and nonce: only the next nonce of a sender can run.
+        self._waiting: dict[str, dict[int, str]] = {}
+        self.max_buffered = MAX_BUFFERED_CERTIFICATES
+        self.certificates_left_out = 0
+        self.max_aggregating = MAX_AGGREGATING_EVENTS
+        self._cost = 0
+        self._unpublished_signed: list[SignedTransfer] = []
+        self._unpublished_proofs: list[EquivocationProof] = []
         # One certificate for each (sender, nonce), executed or waiting: a second
         # one for another event is the conflict that halts the node.
         self._known: dict[tuple[str, int], QuorumCertificate] = {
@@ -1773,6 +1792,15 @@ class QuorumDriver:
         connection. A message of the right form that is not valid only gets no
         answer: anyone can send one, and it must never stop the node.
         """
+        self._cost = 0
+        output = self._dispatch(message)
+
+        if self._cost:
+            return replace(output, cost=self._cost)
+
+        return output
+
+    def _dispatch(self, message: dict) -> DriverOutput:
         message_type = message.get("type")
 
         if message_type == "VOTE_REQUEST":
@@ -1938,10 +1966,12 @@ class QuorumDriver:
             # No honest node sends this. Stopping here means that a frame full of bad
             # certificates costs one check of a signature.
             if not self.replica.certificate_is_valid(certificate):
+                self._cost += BAD_SIGNATURE_COST
                 return _NOTHING
 
-            self._accept(certificate)
-            learned = True
+            # One left out teaches nothing. Asking again for it would never end.
+            if self._accept(certificate):
+                learned = True
 
         request = self.sync_request() if learned else None
 
@@ -2090,8 +2120,11 @@ class QuorumDriver:
             candidate is None
             or digest != candidate.digest
             or candidate.epoch != self.committee.epoch
-            or not attestation.verify(self.committee, digest)
         ):
+            return _NOTHING
+
+        if not attestation.verify(self.committee, digest):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         self._snapshot_votes[attestation.validator] = attestation
@@ -2111,7 +2144,12 @@ class QuorumDriver:
         return DriverOutput(broadcasts=(encode_snapshot(snapshot),))
 
     def _handle_snapshot(self, snapshot: Snapshot) -> DriverOutput:
-        if self.halted or not self._take_snapshot(snapshot):
+        if self.halted:
+            return _NOTHING
+
+        # Refused or nothing new: reading it was the cost, and it is the same.
+        if not self._take_snapshot(snapshot):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         request = self.sync_request()
@@ -2138,7 +2176,7 @@ class QuorumDriver:
         # What was waiting and is now inside the snapshot will never run: it already did.
         for event_id, certificate in list(self._buffer.items()):
             if replica.is_covered(certificate.event):
-                del self._buffer[event_id]
+                self._no_longer_waiting(event_id)
 
         self._retry_buffer()
         return True
@@ -2149,6 +2187,7 @@ class QuorumDriver:
             or self.halted
             or not change.verify(self.governance, self.committee)
         ):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         report = self.replica.report_epoch(change)
@@ -2163,8 +2202,11 @@ class QuorumDriver:
         if (
             self._change is None
             or change_id != self._change.change_id
-            or not report.verify(self.committee, change_id)
         ):
+            return _NOTHING
+
+        if not report.verify(self.committee, change_id):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         self._reports[report.validator] = report
@@ -2191,8 +2233,11 @@ class QuorumDriver:
             self.governance is None
             or self.halted
             or closure.change.previous_id != self.committee.committee_id
-            or not closure.verify(self.governance, self.committee)
         ):
+            return _NOTHING
+
+        if not closure.verify(self.governance, self.committee):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         self._install(closure)
@@ -2227,10 +2272,10 @@ class QuorumDriver:
         certificate, send that instead. If the vote is refused, nobody is asked,
         because an honest node does not ask for what it would not sign.
         """
-        if not self._is_authorized(signed) or self.halted:
+        if self.halted or not self._is_admitted(signed.transfer):
             return _NOTHING
 
-        if not self._is_admitted(signed.transfer):
+        if not self._is_authorized(signed):
             return _NOTHING
 
         self._record_signed(signed)
@@ -2239,6 +2284,12 @@ class QuorumDriver:
 
         if known is not None and known.event.canonical() == event.canonical():
             return DriverOutput(broadcasts=(encode_certificate(known),))
+
+        if (
+            event.canonical() not in self._aggregating
+            and len(self._aggregating) >= self.max_aggregating
+        ):
+            return _NOTHING
 
         vote = self.replica.handle_vote_request(event, signed)
 
@@ -2267,10 +2318,12 @@ class QuorumDriver:
         return True
 
     def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
-        if not self._is_authorized(signed):
+        # The cheap check first: a request this node would refuse anyway costs no signature.
+        if not self._is_admitted(signed.transfer):
             return _NOTHING
 
-        if not self._is_admitted(signed.transfer):
+        if not self._is_authorized(signed):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         # Before the replica, because a vote refused is when the proof appears.
@@ -2292,6 +2345,7 @@ class QuorumDriver:
         event, votes = aggregating
 
         if not vote.verify(self.committee, event):
+            self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
         # By validator, so that the same one twice counts once.
@@ -2321,13 +2375,21 @@ class QuorumDriver:
         return certificate
 
     def _handle_certificate(self, certificate: QuorumCertificate) -> DriverOutput:
-        if not self.halted and self.replica.certificate_is_valid(certificate):
+        if self.halted:
+            return _NOTHING
+
+        if self.replica.certificate_is_valid(certificate):
             self._accept(certificate)
+        else:
+            self._cost += BAD_SIGNATURE_COST
 
         return _NOTHING
 
-    def _accept(self, certificate: QuorumCertificate) -> None:
-        """The certificate is valid. Halt on a conflict, or try to execute it."""
+    def _accept(self, certificate: QuorumCertificate) -> bool:
+        """
+        The certificate is valid. Halt on a conflict, or try to execute it. True if this node took it,
+        also if it held it already, and False if there is no room for it now.
+        """
         event = certificate.event
         key = (event.sender, event.nonce)
         known = self._known.get(key)
@@ -2341,12 +2403,13 @@ class QuorumDriver:
                     "conflicting certificate of an ended committee ignored",
                     extra={"sender": event.sender, "nonce": event.nonce, "epoch": certificate.epoch},
                 )
-                return
+                return False
 
             self.replica.record_halt(known, certificate)
             self._buffer.clear()
+            self._waiting.clear()
             self._aggregating.clear()
-            return
+            return False
 
         if known is None and self.replica.is_covered(event):
             # Pruned, or never held. Nothing can run under the snapshot in any case. Without the
@@ -2357,27 +2420,76 @@ class QuorumDriver:
                     extra={"sender": event.sender, "nonce": event.nonce},
                 )
 
-            return
+            return False
 
         if known is None:
+            if not self._has_room_for(event):
+                self.certificates_left_out += 1
+                return False
+
+            event_id = event.event_id()
             self._known[key] = certificate
-            self._buffer[event.event_id()] = certificate
+            self._buffer[event_id] = certificate
+            self._waiting.setdefault(event.sender, {})[event.nonce] = event_id
 
         self._retry_buffer()
+        return True
+
+    def _has_room_for(self, event: Transfer) -> bool:
+        expected = self.replica.state.nonce(event.sender)
+
+        # The next nonce of a sender may be able to run, and that never waits for room.
+        if event.nonce <= expected:
+            return True
+
+        if self.max_nonce_ahead is not None and event.nonce > expected + self.max_nonce_ahead:
+            return False
+
+        return len(self._buffer) < self.max_buffered
+
+    def _no_longer_waiting(self, event_id: str) -> None:
+        event = self._buffer.pop(event_id).event
+        nonces = self._waiting[event.sender]
+        del nonces[event.nonce]
+
+        if not nonces:
+            del self._waiting[event.sender]
 
     def _retry_buffer(self) -> None:
-        # In order of id and up to the fixed point, so that the result depends on
-        # the set of certificates. A failed write leaves the certificate here, and
-        # any later certificate tries it again.
-        progress = True
+        # Always the smallest id that can run, so that the order depends on the certificates and not on
+        # how they arrived. Only the next nonce of each sender can run, so what waits further on costs
+        # nothing here. One that cannot run yet is tried again after anything else runs, since that may
+        # bring it funds or a parent. A failed write leaves the certificate here, and any later
+        # certificate tries it again.
+        state = self.replica.state
+        ready = [
+            nonces[state.nonce(sender)]
+            for sender, nonces in self._waiting.items()
+            if state.nonce(sender) in nonces
+        ]
+        heapq.heapify(ready)
+        blocked = []
 
-        while progress:
-            progress = False
+        while ready:
+            event_id = heapq.heappop(ready)
+            certificate = self._buffer[event_id]
 
-            for event_id in sorted(self._buffer):
-                if self.replica.handle_certificate(self._buffer[event_id]):
-                    del self._buffer[event_id]
-                    progress = True
+            if not self.replica.handle_certificate(certificate):
+                blocked.append(event_id)
+                continue
+
+            self._no_longer_waiting(event_id)
+            following = self._waiting.get(certificate.event.sender, {}).get(
+                self.replica.state.nonce(certificate.event.sender)
+            )
+
+            if following is not None:
+                heapq.heappush(ready, following)
+
+            for waiting in blocked:
+                heapq.heappush(ready, waiting)
+
+            blocked = []
 
     @staticmethod
     def _is_authorized(signed: SignedTransfer) -> bool:
@@ -2406,7 +2518,11 @@ class QuorumDriver:
 
         event = signed.transfer
         key = (event.sender, event.nonce)
-        self.signed_events.setdefault(event.event_id(), signed)
+
+        if event.event_id() not in self.signed_events:
+            self.signed_events[event.event_id()] = signed
+            self._unpublished_signed.append(signed)
+
         first = self._first_signed.setdefault(key, signed)
 
         if (
@@ -2414,6 +2530,18 @@ class QuorumDriver:
             and key not in self.equivocations
         ):
             self.equivocations[key] = EquivocationProof(first, signed)
+            self._unpublished_proofs.append(self.equivocations[key])
+
+    def new_signed_events(self) -> dict[str, SignedTransfer]:
+        """What was kept since the last call: the node publishes it with no copy of the rest."""
+        new = {signed.transfer.event_id(): signed for signed in self._unpublished_signed}
+        self._unpublished_signed = []
+        return new
+
+    def new_equivocations(self) -> list[EquivocationProof]:
+        new = self._unpublished_proofs
+        self._unpublished_proofs = []
+        return new
 
 
 @dataclass(frozen=True)
@@ -2526,6 +2654,7 @@ class QuorumRuntime:
         """
         replies = []
         broadcasts = []
+        cost = 0
         error = None
 
         with self._group_or_rebuild():
@@ -2538,8 +2667,9 @@ class QuorumRuntime:
 
                 replies.extend(output.replies)
                 broadcasts.extend(output.broadcasts)
+                cost += output.cost
 
-        return DriverOutput(tuple(replies), tuple(broadcasts)), error
+        return DriverOutput(tuple(replies), tuple(broadcasts), cost), error
 
     @contextmanager
     def _group_or_rebuild(self):

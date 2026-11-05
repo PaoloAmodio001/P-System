@@ -67,7 +67,16 @@ class Reply:
     def send(self, message):
         self.sent.append(json.loads(json.dumps(message)))
 
-    enqueue = send
+    def enqueue(self, message):
+
+        self.send(message)
+
+        return 0
+
+
+    def charge(self, tokens):
+
+        pass
 
 
 def open_node(path: Path, index: int, committee=COMMITTEE, genesis=GENESIS, create=True):

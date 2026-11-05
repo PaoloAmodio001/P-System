@@ -27,18 +27,23 @@ MUTATIONS = {
         "        return is_well_formed_event(signed.transfer) and signed.verify()\n",
     ),
     "vote request not authorized": (
-        "    def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:\n"
-        "        if not self._is_authorized(signed):\n",
-        "    def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:\n"
-        "        if False:\n",
+        "        if not self._is_authorized(signed):\n"
+        "            self._cost += BAD_SIGNATURE_COST\n",
+        "        if False:\n"
+        "            self._cost += BAD_SIGNATURE_COST\n",
     ),
     "submit not authorized": (
-        "        if not self._is_authorized(signed) or self.halted:\n",
-        "        if self.halted:\n",
+        "        if not self._is_authorized(signed):\n"
+        "            return _NOTHING\n"
+        "\n"
+        "        self._record_signed(signed)\n"
+        "        event = signed.transfer\n",
+        "        self._record_signed(signed)\n"
+        "        event = signed.transfer\n",
     ),
     "submit works after a halt": (
-        "        if not self._is_authorized(signed) or self.halted:\n",
-        "        if not self._is_authorized(signed):\n",
+        "        if self.halted or not self._is_admitted(signed.transfer):\n",
+        "        if not self._is_admitted(signed.transfer):\n",
     ),
     "proof of equivocation not recorded": (
         "        # Before the replica, because a vote refused is when the proof appears.\n"
@@ -93,7 +98,8 @@ MUTATIONS = {
         "",
     ),
     "buffer kept after a halt": (
-        "            self._buffer.clear()\n",
+        "            self._buffer.clear()\n"
+        "            self._waiting.clear()\n",
         "",
     ),
     "same validator counted again": (
@@ -128,12 +134,16 @@ MUTATIONS = {
         "        return certificate\n",
     ),
     "certificate not verified": (
-        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n",
-        "        if not self.halted:\n",
+        "        if self.replica.certificate_is_valid(certificate):\n"
+        "            self._accept(certificate)\n",
+        "        if True:\n"
+        "            self._accept(certificate)\n",
     ),
     "certificate handled after a halt": (
-        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n",
-        "        if certificate.verify(self.committee):\n",
+        "    def _handle_certificate(self, certificate: QuorumCertificate) -> DriverOutput:\n"
+        "        if self.halted:\n"
+        "            return _NOTHING\n",
+        "    def _handle_certificate(self, certificate: QuorumCertificate) -> DriverOutput:\n",
     ),
     "conflict does not halt": (
         "            self.replica.record_halt(known, certificate)\n",
@@ -152,24 +162,36 @@ MUTATIONS = {
         "            for certificate in []\n",
     ),
     "buffer tried only once": (
-        "                    del self._buffer[event_id]\n"
-        "                    progress = True\n",
-        "                    del self._buffer[event_id]\n",
+        "            if following is not None:\n"
+        "                heapq.heappush(ready, following)\n",
+        "",
+    ),
+    "one that could not run is not tried again": (
+        "            for waiting in blocked:\n"
+        "                heapq.heappush(ready, waiting)\n",
+        "",
     ),
     "buffer not tried in order of id": (
-        "            for event_id in sorted(self._buffer):\n",
-        "            for event_id in list(self._buffer):\n",
+        "            event_id = heapq.heappop(ready)\n",
+        "            event_id = ready.pop()\n",
     ),
     "certificate leaves the buffer before it is written": (
-        "                if self.replica.handle_certificate(self._buffer[event_id]):\n"
-        "                    del self._buffer[event_id]\n",
-        "                if self.replica.handle_certificate(self._buffer.pop(event_id)):\n",
+        "            certificate = self._buffer[event_id]\n"
+        "\n"
+        "            if not self.replica.handle_certificate(certificate):\n",
+        "            certificate = self._buffer[event_id]\n"
+        "            self._no_longer_waiting(event_id)\n"
+        "            self._buffer[event_id] = certificate\n"
+        "            self._waiting.setdefault(certificate.event.sender, {})[certificate.event.nonce] = event_id\n"
+        "            del self._buffer[event_id]\n"
+        "            del self._waiting[certificate.event.sender]\n"
+        "            if not self.replica.handle_certificate(certificate):\n",
     ),
     "buffer not tried on a repeated certificate": (
-        "            self._buffer[event.event_id()] = certificate\n"
+        "            self._waiting.setdefault(event.sender, {})[event.nonce] = event_id\n"
         "\n"
         "        self._retry_buffer()\n",
-        "            self._buffer[event.event_id()] = certificate\n"
+        "            self._waiting.setdefault(event.sender, {})[event.nonce] = event_id\n"
         "            self._retry_buffer()\n",
     ),
     "malformed message ignored": (
