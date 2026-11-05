@@ -765,6 +765,22 @@ class SqliteVoteStore:
             is not None
         )
 
+    def is_locked_event(self, event: Transfer) -> bool:
+        """This very event is among the locks of the closures so far."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                return (
+                    self._connection.execute(
+                        "SELECT 1 FROM locks WHERE sender = ? AND nonce = ? AND canonical = ?",
+                        (event.sender, str(event.nonce), event.canonical().decode()),
+                    ).fetchone()
+                    is not None
+                )
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ LOCKS: {error}") from error
+
     def _is_locked_against(self, event: Transfer, canonical: str) -> bool:
         return any(
             row[0] != canonical
@@ -1041,7 +1057,7 @@ class QuorumReplica:
         self._executed_ids: set[str] = set()
 
         for certificate in store.certificates():
-            if not self._can_execute(certificate):
+            if not self._can_replay(certificate):
                 raise VoteStoreError("LOG OF CERTIFICATES DOES NOT REPLAY")
             self._execute(certificate)
 
@@ -1055,6 +1071,19 @@ class QuorumReplica:
         return self.committee.index_of(self._identity.public_key) is not None
 
     def certificate_is_valid(self, certificate: QuorumCertificate) -> bool:
+        """
+        The signatures verify, and for a committee that has ended, the event is in the locks.
+        Keys of an ended committee can be stolen, and with enough of them any signature verifies.
+        Everything really certified in an epoch is in the locks of the next one
+        (`closure_preserves_certified`), so this loses nothing real: `QuorumOldKeys.lean`.
+        """
+        return certificate.verify(self._store.committee_of(certificate)) and (
+            certificate.epoch >= self.committee.epoch
+            or self._store.is_locked_event(certificate.event)
+        )
+
+    def certificate_was_valid(self, certificate: QuorumCertificate) -> bool:
+        """For the log of this node, read back: it passed the rule above when it arrived."""
         return certificate.verify(self._store.committee_of(certificate))
 
     @property
@@ -1173,18 +1202,22 @@ class QuorumReplica:
         self._execute(certificate)
         return True
 
-    def _can_execute(self, certificate: QuorumCertificate) -> bool:
-        # Signatures last: they are the only expensive check, and the result does
-        # not depend on the order because the checks have no side effects. The
-        # check on the event comes first, because the others assume it.
-        event = certificate.event
+    def _can_run_now(self, event: Transfer) -> bool:
+        # The check on the event comes first, because the others assume it.
         return (
             is_well_formed_event(event)
             and self._is_fresh(event)
             and self._is_ready(event)
             and self._is_executable(event)
-            and self.certificate_is_valid(certificate)
         )
+
+    def _can_execute(self, certificate: QuorumCertificate) -> bool:
+        # Signatures last: they are the only expensive check, and the result does
+        # not depend on the order because the checks have no side effects.
+        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)
+
+    def _can_replay(self, certificate: QuorumCertificate) -> bool:
+        return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)
 
     def _is_fresh(self, event: Transfer) -> bool:
         return event.event_id() not in self._executed_ids
@@ -1814,6 +1847,16 @@ class QuorumDriver:
         known = self._known.get(key)
 
         if known is not None and known.event.canonical() != event.canonical():
+            # A conflict over an ended committee says only that its keys were stolen, and it
+            # concerns a sender that signed both versions, since both are in the locks. It must
+            # not stop this node: what it holds stays.
+            if certificate.epoch < self.committee.epoch:
+                LOG.warning(
+                    "conflicting certificate of an ended committee ignored",
+                    extra={"sender": event.sender, "nonce": event.nonce, "epoch": certificate.epoch},
+                )
+                return
+
             self.replica.record_halt(known, certificate)
             self._buffer.clear()
             self._aggregating.clear()

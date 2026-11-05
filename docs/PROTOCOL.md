@@ -75,6 +75,11 @@ members. A node stops for good and keeps both: see `docs/OPERATIONS.md`.
 5. The events of the reports become locks, added to the earlier ones. A validator votes for `e` only if
    every lock on its `(sender, nonce)` is `e`.
 
+A certificate of an ended committee counts only for an event in the locks. Its keys can be stolen after the closure, and then
+any signature verifies, while everything really certified is in the locks (`closure_preserves_certified`). A conflict over an
+ended committee is logged and ignored: it does not halt the node. See `QuorumOldKeys.lean`, and its limit: a sender that signed
+two versions, both reported, can have the wrong one taken with stolen keys.
+
 So an event with no certificate and one alternative finishes when sent again in the next epoch, and an
 equivocated one stays locked for good. `split_lock_ambiguous` shows no rule on the reports can avoid
 that with `n = 3f+1`.

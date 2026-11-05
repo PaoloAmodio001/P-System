@@ -312,3 +312,36 @@ import PSystem
 
 #print axioms PSystem.Quorum.certificate_executes
 
+#print axioms PSystem.Quorum.old_certificate_outside_locks_refused
+
+#print axioms PSystem.Quorum.accepted_complete
+
+#print axioms PSystem.Quorum.certified_agrees_with_locks
+
+#print axioms PSystem.Quorum.old_keys_no_double_spend
+
+#print axioms PSystem.Quorum.two_versions_in_locks_both_accepted
+
+#print axioms PSystem.Quorum.lists_meet
+
+#print axioms PSystem.Quorum.adopted_some_of_mem
+
+#print axioms PSystem.Quorum.blocking_closure_is_seen
+
+#print axioms PSystem.Quorum.adopted_is_voted
+
+#print axioms PSystem.Quorum.retry_gets_every_vote
+
+#print axioms PSystem.Quorum.split_closures_block
+
+#print axioms PSystem.Quorum.split_votes_are_two_closures
+
+#print axioms PSystem.sumBalance_apply
+
+#print axioms PSystem.sumBalance_apply_closed
+
+#print axioms PSystem.asset_supply_conserved
+
+#print axioms PSystem.leaving_changes_the_sum
+
+#print axioms PSystem.assets_are_separate

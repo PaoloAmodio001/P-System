@@ -178,6 +178,7 @@ class ChainVerifier:
     def __post_init__(self) -> None:
         self.committees: dict[int, Committee] = {self.genesis.epoch: self.genesis}
         self.current = self.genesis
+        self._locks: set[bytes] = set()
 
     def add_closures(self, closures: list[dict]) -> None:
         """Follow the closures a node gave. Raises ValueError on one that does not verify."""
@@ -194,10 +195,23 @@ class ChainVerifier:
 
             self.current = closure.change.next_committee(self.current)
             self.committees[self.current.epoch] = self.current
+            self._locks.update(event.canonical() for event in closure.locks())
 
     def verify(self, certificate) -> bool:
+        """
+        As a node does: for a committee that has ended, the event must be in the locks, because
+        its keys may have been stolen since. This protects as far as the closures this verifier
+        has: a node can hold back the later ones, so ask more than one.
+        """
         committee = self.committees.get(certificate.epoch)
-        return committee is not None and certificate.verify(committee)
+        return (
+            committee is not None
+            and certificate.verify(committee)
+            and (
+                certificate.epoch >= self.current.epoch
+                or certificate.event.canonical() in self._locks
+            )
+        )
 
 
 class Client:

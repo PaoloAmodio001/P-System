@@ -7,6 +7,9 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 
 ### Fixed
 
+- **Keys of an ended committee, stolen after its closure, could certify a spend the sender never signed, and nodes of later
+  epochs executed it.** Changing committee protected nothing against stolen keys. An old certificate now counts only for an event
+  in the locks: `QuorumOldKeys.lean`, `tests/test_quorum_old_keys.py`.
 - Nodes in different processes could not connect at all: each process made its own throwaway authority. The system had only
   ever run inside one process.
 - A peer could claim any node id with any certificate of the authority, and take the connection of the real node.

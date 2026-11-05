@@ -21,6 +21,8 @@ authors of the code, and it is what an audit should start from and attack.
 |---|---|---|---|
 | Sender | Signs two versions of a spend | Vote lock: at most one is certified, maybe none | `no_double_spend` FORMAL (model); differentials A, B, C EMPIRICAL |
 | Up to `f` members | Vote for everything, forge, withhold | Quorum intersection | Same |
+| Thief of keys of an ended committee, all of them | Certify a spend nobody signed, or a second one | An old certificate counts only for an event in the locks | `old_keys_no_double_spend`, `accepted_complete` FORMAL (model); `tests/test_quorum_old_keys.py` EMPIRICAL |
+| Same, and of governance | Show a joining node or a light client another chain from the genesis | **Not stopped.** Compare the id of a recent committee out of band before trusting one | None |
 | Up to `f` members | Lie in a report to lose a certified event | An honest signer among any quorum of reports | `closure_preserves_certified` FORMAL (model) |
 | Up to `f` members | Report events nobody signed, to lock accounts | A report with one such event is refused | `tests/test_quorum_epochs.py` EMPIRICAL |
 | More than `f` members | Sign two certificates | Not stopped. Detected if one node sees both, with the guilty named | `conflict_identifies_faulty` FORMAL (model) |

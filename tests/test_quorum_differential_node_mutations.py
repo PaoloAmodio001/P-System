@@ -203,9 +203,9 @@ IN_NODE = {
         "        self._send_quorum_output(output, None)\n",
     ),
     "public events drift from the log": (
-        "        self.events = list(executed)\n",
-        "        self.events = list(executed) + list(self.events[len(executed):])\n"
-        "        self.events = sorted(self.events, key=lambda e: e.event_id())\n",
+        "        self.events.extend(added)\n",
+        "        self.events.extend(added)\n"
+        "        self.events.sort(key=lambda e: e.event_id())\n",
     ),
     "halt does not reach the status": (
         "        known = list(self.events) + self._quorum_halt_events\n",
@@ -216,7 +216,7 @@ IN_NODE = {
         "                pass\n",
     ),
     "broadcasts not sent": (
-        "                    target.send(message)\n",
+        "                    target.enqueue(message)\n",
         "                    pass\n",
     ),
     "quorum messages take the old way": (
