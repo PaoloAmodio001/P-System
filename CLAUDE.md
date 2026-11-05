@@ -32,8 +32,8 @@ Le seguenti decisioni costituiscono vincoli architetturali:
 - Nessun nodo sceglie autonomamente tra alternative in conflitto. Un evento viene eseguito soltanto quando dispone di un certificato valido di almeno `2f+1` firme.
 - Un nodo onesto vota la prima alternativa valida che riceve. Il voto non equivale all'esecuzione dell'evento.
 - L'ottenimento del certificato dipende dalle condizioni della rete. È possibile che nessuna alternativa raggiunga il quorum. Questa eventualità deve essere documentata esplicitamente.
-- Il comitato è composto da `n = 3f+1` nodi.
-- Il modello rimane privo di consenso globale, ma introduce una struttura permissioned. La riconfigurazione del comitato non rientra nel modello attuale.
+- Il comitato è composto, nella configurazione standard, da `n = 3f+1` nodi con quorum `2f+1`. La decisione D2 di `ROADMAP.md` prevede una configurazione opzionale `n = 5f+1` con quorum `4f+1`: il suo stato reale è in `docs/PROOF-SCOPE.md`.
+- Il modello rimane privo di consenso globale, ma introduce una struttura permissioned. La riconfigurazione del comitato è nel modello come catena di epoche (`formal/lean/PSystem/QuorumEpochs.lean`), ordinata da un governo a soglia (decisione D1). Il governo sceglie il comitato: è un'ipotesi di fiducia anche per la sicurezza, e nessun teorema la elimina.
 - Le proprietà di sicurezza devono riguardare due nodi onesti distinti, non soltanto la coerenza interna di un singolo nodo.
 
 Non dichiarare garantita la sicurezza bizantina finché le proprietà necessarie non saranno dimostrate formalmente e verificate rispetto all'implementazione eseguibile.
@@ -143,6 +143,7 @@ Non attribuire a P-System applicazioni industriali o spaziali già operative qua
 - Il modello formale rimane in Lean 4.
 - Ogni modifica logica deve essere isolabile e documentata.
 - Prima di ogni commit eseguire `pytest -q -m "not slow"` e `lake build`.
+- Il repository ha un hook di pre-commit, da installare con `sh scripts/install_hooks.sh`, che blocca il commit se `pytest -q -m "not slow"` o `lake build` falliscono. Non aggirarlo con `--no-verify`.
 - Alla fine di ogni fase e prima di ogni push eseguire la suite completa `pytest -q`, inclusi test differenziali e mutazionali, e `lake build`.
 - Prima di un merge su `main`, eseguire inoltre i test differenziali con `PSYSTEM_DIFF_SEEDS=15`.
 - Se un controllo fallisce, non effettuare il push: analizzare il problema, correggerlo e ripetere i controlli.
@@ -174,8 +175,7 @@ Prima di modifiche architetturali importanti, presentare il piano e attendere l'
 - Integrare le nuove funzionalità senza compromettere quelle già funzionanti.
 - Mantenere backup prima delle modifiche importanti.
 - Evitare verifiche complete e ripetitive dopo ogni singola modifica, quando non necessarie.
-- Rimandare la campagna completa di test e verifiche alla fase di completamento, indicativamente quando il progetto avrà raggiunto il 90% dello sviluppo.
-- Continuare comunque a utilizzare controlli mirati durante lo sviluppo e rispettare le verifiche obbligatorie prima di commit e push.
+- La campagna finale della Fase C (sicurezza, prestazioni, documentazione, prova di resistenza) si fa a sviluppo quasi concluso. Non sostituisce e non rimanda le verifiche della sezione 7: la suite completa resta obbligatoria prima di ogni push.
 
 ### Fase C — Verifica finale
 
