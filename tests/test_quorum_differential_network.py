@@ -21,6 +21,7 @@ import itertools
 import random
 import socket
 import threading
+import types
 import time
 
 import pytest
@@ -401,6 +402,44 @@ def test_a_broadcast_goes_on_after_a_peer_that_blocks_it(make_nodes, monkeypatch
     assert f"faulty-{victim.node_id}" not in victim.peer_connections
     stream.close()
     assert_the_theorems_hold([victim, other])
+
+
+def test_a_queue_that_is_full_does_not_stop_a_broadcast_to_the_others():
+    # With no network. In the test above the faulty peer can drop out before the broadcast on a
+    # loaded machine, and then that test proves nothing about this rule.
+    sent = []
+    dropped = []
+
+    class Target:
+        def __init__(self, name, full=False):
+            self.name = name
+            self.full = full
+
+        def enqueue(self, message):
+            if self.full:
+                raise ConnectionError("PEER IS TOO FAR BEHIND")
+            sent.append((self.name, message))
+
+    node = types.SimpleNamespace(
+        _peer_connections_lock=threading.Lock(),
+        peer_connections={
+            "full": Target("full", full=True),
+            "first": Target("first"),
+            "second": Target("second"),
+        },
+        _disconnect_peer_connection=lambda node_id, target: dropped.append(node_id),
+    )
+    output = types.SimpleNamespace(replies=(), broadcasts=({"type": "A"}, {"type": "B"}))
+
+    Node._send_quorum_output(node, output, None)
+
+    assert sent == [
+        ("first", {"type": "A"}),
+        ("second", {"type": "A"}),
+        ("first", {"type": "B"}),
+        ("second", {"type": "B"}),
+    ]
+    assert dropped == ["full", "full"]
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")

@@ -739,7 +739,7 @@ def test_the_metrics_count_votes_of_the_epoch(layout):
 # Revocation.
 
 
-def nodes_with_revocation(tmp_path, revoked_file=None, only_first=False):
+def nodes_with_revocation(tmp_path, revoked_file=None, only_first=False, sync_interval=0.1, only_second=False):
     authority = create_authority(tmp_path / "ca")
     sender = Identity.create()
     genesis = State({sender.identity_id: 10})
@@ -758,12 +758,16 @@ def nodes_with_revocation(tmp_path, revoked_file=None, only_first=False):
                     members[index],
                     tmp_path / f"{index}.sqlite",
                     create=True,
-                    sync_interval=0.1,
+                    sync_interval=sync_interval,
                 ),
                 tls_config=replace(
                     tls,
                     revoked_file=(
-                        None if revoked_file is None or (only_first and index > 0) else str(revoked_file)
+                        None
+                        if revoked_file is None
+                        or (only_first and index > 0)
+                        or (only_second and index == 0)
+                        else str(revoked_file)
                     ),
                 ),
             )
@@ -820,12 +824,30 @@ def test_who_dials_checks_the_list_by_itself(tmp_path):
 def test_who_listens_checks_the_list_by_itself(tmp_path):
     revoked = tmp_path / "revoked.txt"
     revoked.write_text("")
-    left, right = nodes_with_revocation(tmp_path, revoked, only_first=True)
+    # No sync loop: it closes revoked connections too, and would hide a listener that lets one in.
+    # Only the listener holds the list, and the one with the lower id dials: the other way round the
+    # listener dials back, and its check as a dialer would hide the one under test.
+    left, right = nodes_with_revocation(tmp_path, revoked, sync_interval=None, only_second=True)
+    assert left.node_id < right.node_id
     try:
-        revoked.write_text(f"{fingerprint(right)}\n")
-        link_ok(right, left)
+        revoked.write_text(f"{fingerprint(left)}\n")
+        link_ok(left, right)
         time.sleep(0.5)
-        assert right.node_id not in left.peer_connections
+        assert left.node_id not in right.peer_connections
+    finally:
+        left.stop()
+        right.stop()
+
+
+def test_a_listener_with_nothing_revoked_keeps_the_same_connection(tmp_path):
+    # The control of the test above: what it sees there is the list, not something else.
+    revoked = tmp_path / "revoked.txt"
+    revoked.write_text("")
+    left, right = nodes_with_revocation(tmp_path, revoked, sync_interval=None, only_second=True)
+    try:
+        link_ok(left, right)
+        time.sleep(0.5)
+        assert left.node_id in right.peer_connections
     finally:
         left.stop()
         right.stop()
