@@ -22,3 +22,8 @@ root = "QuorumCheck"
 [[lean_exe]]
 name = "epoch_check"
 root = "EpochCheck"
+
+# Driver for tests/test_unlock_differential.py (not part of the proofs).
+[[lean_exe]]
+name = "unlock_check"
+root = "UnlockCheck"

@@ -95,6 +95,10 @@ the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between
 the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
 before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.
 
+## Unlocking, optional
+
+A genesis with `"unlock": true` has `n = 5f+1` and `q = 4f+1`, and every next committee keeps that. Its id says so, so the two configurations do not take each other's votes. A closure then locks only what at least `2f+1` of its reporters reported, each counted once. Earlier locks stay. So a nonce with its votes split and no event at that threshold is free in the next epoch. Two events can both pass it if neither is certified: both stay locked, and nobody chooses. Why this is safe, and why it cannot work with `3f+1`: `QuorumUnlock.lean`.
+
 ## Limits
 
 None of these changes what an honest sender gets. They delay it at most.

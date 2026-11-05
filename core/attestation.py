@@ -120,6 +120,10 @@ class Committee:
     # the id of the previous one binds a committee to its whole history.
     epoch: int = 0
     previous_id: str = ""
+    # The optional configuration of decision D2: 5f+1 members, a quorum of 4f+1, and a closure that
+    # locks only what at least 2f+1 reported, so a nonce with its votes split is free again.
+    # formal/lean/PSystem/QuorumUnlock.lean. A next committee keeps it.
+    unlock: bool = False
 
     def __post_init__(self) -> None:
         if type(self.epoch) is not int or self.epoch < 0:
@@ -137,11 +141,14 @@ class Committee:
         if type(self.f) is not int or self.f < 0:
             raise ValueError("INVALID COMMITTEE FAULT BOUND")
 
+        if type(self.unlock) is not bool:
+            raise ValueError("INVALID COMMITTEE CONFIGURATION")
+
         if (
             type(self.members) is not tuple
-            or len(self.members) != 3 * self.f + 1
+            or len(self.members) != (5 if self.unlock else 3) * self.f + 1
         ):
-            raise ValueError("COMMITTEE SIZE MUST BE 3F+1")
+            raise ValueError("COMMITTEE SIZE MUST BE 5F+1" if self.unlock else "COMMITTEE SIZE MUST BE 3F+1")
 
         for member in self.members:
             if (
@@ -165,6 +172,7 @@ class Committee:
         public_keys,
         f: int,
         initial_state: State,
+        unlock: bool = False,
     ) -> "Committee":
         keys = list(public_keys)
 
@@ -176,6 +184,7 @@ class Committee:
             members=tuple(sorted(keys)),
             f=f,
             genesis_root=initial_state.root(),
+            unlock=unlock,
         )
 
     @property
@@ -184,7 +193,7 @@ class Committee:
 
     @property
     def quorum(self) -> int:
-        return 2 * self.f + 1
+        return (4 if self.unlock else 2) * self.f + 1
 
     @property
     def committee_id(self) -> str:
@@ -193,6 +202,10 @@ class Committee:
             "genesis_root": self.genesis_root,
             "members": [member.hex() for member in self.members],
         }
+
+        # Only if set, so that the id of a standard committee stays what it was.
+        if self.unlock:
+            data["unlock"] = True
 
         # Only from epoch 1, so that the id of a first committee stays what it was.
         if self.epoch > 0:
@@ -466,6 +479,7 @@ class EpochChange:
             genesis_root=current.genesis_root,
             epoch=current.epoch + 1,
             previous_id=current.committee_id,
+            unlock=current.unlock,
         )
 
     def verify(self, governance: Governance, current: Committee) -> bool:
@@ -648,14 +662,28 @@ class EpochClosure:
             )
         )
 
-    def locks(self) -> tuple[Transfer, ...]:
-        """The events of all the reports, each once, in a fixed order."""
-        events = {
-            signed.transfer.canonical(): signed.transfer
-            for report in self.reports
-            for signed in report.votes
-        }
-        return tuple(events[canonical] for canonical in sorted(events))
+    def locks(self, committee: Committee) -> tuple[Transfer, ...]:
+        """
+        What this closure of `committee` locks, each event once, in a fixed order. All that was
+        reported, or with `unlock` what at least 2f+1 of the reporters reported, each counted once
+        however many times it repeats itself: `thresholdLocks` in the model.
+        """
+        events: dict[bytes, Transfer] = {}
+        reporters: dict[bytes, int] = {}
+
+        for report in self.reports:
+            for canonical in {signed.transfer.canonical() for signed in report.votes}:
+                reporters[canonical] = reporters.get(canonical, 0) + 1
+
+            for signed in report.votes:
+                events[signed.transfer.canonical()] = signed.transfer
+
+        threshold = 2 * committee.f + 1 if committee.unlock else 1
+        return tuple(
+            events[canonical]
+            for canonical in sorted(events)
+            if reporters[canonical] >= threshold
+        )
 
 
 @dataclass(frozen=True)

@@ -1177,7 +1177,7 @@ class SqliteVoteStore:
         """
         current = self.committee
         following = closure.change.next_committee(current)
-        locks = closure.locks()
+        locks = closure.locks(current)
         text = json.dumps(encode_epoch_closure(closure)["closure"], separators=(",", ":"))
 
         with self._lock:
@@ -1574,6 +1574,9 @@ class QuorumReplica:
 
     def install_closure(self, closure: EpochClosure) -> None:
         self._store.install_closure(closure)
+
+    def committee_before_last(self) -> Committee:
+        return self._store.committee_at(self.committee.epoch - 1)
 
     def group(self):
         return self._store.group()
@@ -2250,7 +2253,7 @@ class QuorumDriver:
             extra={
                 "epoch": self.committee.epoch,
                 "committee_id": self.committee.committee_id,
-                "locks": len(closure.locks()),
+                "locks": len(closure.locks(self.replica.committee_before_last())),
             },
         )
         # Votes collected so far were signed for the committee that has ended.

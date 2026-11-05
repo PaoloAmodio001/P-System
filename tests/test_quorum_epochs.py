@@ -469,7 +469,7 @@ def test_a_certified_event_is_in_the_locks_of_any_quorum_of_reports(cluster):
     cluster.certify(signed, [0, 1, 2])
     closure = cluster.close_epoch(_same_members_change(), proposer=3, reporters=[3, 1, 0])
     assert closure is not None
-    assert signed.transfer.canonical() in {e.canonical() for e in closure.locks()}
+    assert signed.transfer.canonical() in {e.canonical() for e in closure.locks(COMMITTEE)}
 
 
 def test_the_alternative_of_a_certified_event_gets_no_vote_after_the_closure(cluster):
@@ -521,7 +521,7 @@ def test_locks_are_carried_through_several_epochs(cluster):
     second = change_to(cluster.drivers[0].committee, keys=[m.public_key for m in MEMBERS])
     # Nothing was voted in epoch 1, so the reports are empty: the lock must still hold.
     closure = cluster.close_epoch(second)
-    assert closure is not None and closure.locks() == ()
+    assert closure is not None and closure.locks(COMMITTEE) == ()
     assert cluster.drivers[0].committee.epoch == 2
 
     for driver in cluster.drivers:
