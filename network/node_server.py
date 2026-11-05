@@ -141,6 +141,12 @@ class NodeServer:
                 connection.close()
                 return
 
+            # A certificate of the authority names one node. Without this, anyone holding
+            # one could take the place of any peer, and the connection to the real one.
+            if handshake.node_id not in SecureTransport.peer_names(connection):
+                connection.close()
+                return
+
             self.node.peers.setdefault(
                 handshake.node_id,
                 Peer(

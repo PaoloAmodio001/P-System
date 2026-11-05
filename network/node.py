@@ -37,6 +37,7 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
+from network.secure_transport import TLSConfig
 from core.attestation import guilty_members
 from network.quorum import QUORUM_MESSAGE_TYPES, QuorumConfig, QuorumRuntime
 
@@ -53,9 +54,12 @@ class Node:
         port: int = 0,
         relevance_graph: RelevanceGraph | None = None,
         quorum: QuorumConfig | None = None,
+        tls_config: TLSConfig | None = None,
     ):
         self.node_id = node_id
-        self.tls_config = get_node_tls_config(node_id)
+        # Without one, a throwaway authority of this process: nodes in different processes
+        # need certificates of a common authority to connect.
+        self.tls_config = tls_config or get_node_tls_config(node_id)
 
         # Immutable baseline from which the local projection is derived.
         self._initial_state = (

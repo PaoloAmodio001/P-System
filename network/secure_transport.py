@@ -276,6 +276,20 @@ class SecureTransport:
         return certificate
 
     @staticmethod
+    def peer_names(connection: ssl.SSLSocket) -> set[str]:
+        """The DNS names in the certificate of the peer, which the authority has signed."""
+        certificate = connection.getpeercert()
+
+        if not certificate:
+            return set()
+
+        return {
+            value
+            for kind, value in certificate.get("subjectAltName", ())
+            if kind == "DNS"
+        }
+
+    @staticmethod
     def send(connection, message: dict) -> None:
         payload = json.dumps(
             message,
