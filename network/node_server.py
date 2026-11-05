@@ -141,11 +141,20 @@ class NodeServer:
                 connection.close()
                 return
 
+            # A certificate of the authority names one node. Without this, anyone holding
+            # one could take the place of any peer, and the connection to the real one.
+            if handshake.node_id not in SecureTransport.peer_names(connection):
+                connection.close()
+                return
+
+            # From where it connected: a peer may announce all its interfaces or nothing
+            # useful. Only the port is its own to say, because the connection came from an
+            # ephemeral one.
             self.node.peers.setdefault(
                 handshake.node_id,
                 Peer(
                     node_id=handshake.node_id,
-                    host=handshake.host,
+                    host=connection.getpeername()[0],
                     port=handshake.port,
                 ),
             )
@@ -185,9 +194,14 @@ class NodeServer:
 
             threading.Thread(
                 target=peer_connection.receive_loop,
-                args=(self.node._handle_peer_message,),
+                args=(
+                    self.node._handle_peer_message,
+                    getattr(self.node, "_handle_peer_messages", None),
+                ),
                 daemon=True,
             ).start()
+
+            self.node._request_certificates(peer_connection)
 
         except (
             ValueError,

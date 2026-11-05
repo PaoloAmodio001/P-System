@@ -210,3 +210,105 @@ import PSystem
 #print axioms PSystem.QuorumExamples.exchange_run_diverges_then_converges
 
 #print axioms PSystem.QuorumExamples.no_convergence_with_small_quorum
+
+-- QuorumSafety.lean (delivered certificates, authorization)
+#print axioms PSystem.Quorum.delivered_certs_common_voter
+
+#print axioms PSystem.Quorum.delivered_certs_agree
+
+#print axioms PSystem.Quorum.votes_authorized_foldl
+
+#print axioms PSystem.Quorum.votes_authorized
+
+#print axioms PSystem.Quorum.executed_authorized
+
+-- QuorumNonVacuity.lean (authorization witness)
+#print axioms PSystem.QuorumExamples.authorization_needs_unforgeable
+
+-- QuorumThresholds.lean
+#print axioms PSystem.Quorum.delivered_certs_common_voter_q
+
+#print axioms PSystem.Quorum.no_double_spend_q
+
+#print axioms PSystem.Quorum.no_double_spend_5f1
+
+#print axioms PSystem.Quorum.common_length_ge
+
+#print axioms PSystem.Quorum.conflict_identifies_faulty
+
+#print axioms PSystem.Quorum.fin4_cases
+
+#print axioms PSystem.Quorum.split_reports_compatible_first
+
+#print axioms PSystem.Quorum.split_reports_compatible_second
+
+#print axioms PSystem.Quorum.split_lock_ambiguous
+
+#print axioms PSystem.Quorum.unlock_safe_5f1
+
+
+-- QuorumEpochs.lean
+#print axioms PSystem.Quorum.epoch_voteLock_step
+
+#print axioms PSystem.Quorum.epoch_voteLock_foldl
+
+#print axioms PSystem.Quorum.epoch_voteLock
+
+#print axioms PSystem.Quorum.votes_respect_locks_foldl
+
+#print axioms PSystem.Quorum.votes_respect_locks
+
+#print axioms PSystem.Quorum.lockAllows_spec
+
+#print axioms PSystem.Quorum.votes_stable_once_closed
+
+#print axioms PSystem.Quorum.split_at_close
+
+#print axioms PSystem.Quorum.report_holds_every_vote
+
+#print axioms PSystem.Quorum.certified_same_epoch
+
+#print axioms PSystem.Quorum.certified_has_honest_voter
+
+#print axioms PSystem.Quorum.closure_preserves_certified
+
+#print axioms PSystem.Quorum.locks_carried
+
+#print axioms PSystem.Quorum.no_double_spend_across_epochs
+
+#print axioms PSystem.Quorum.closure_unique
+
+
+-- QuorumEpochsNonVacuity.lean
+#print axioms PSystem.QuorumExamples.chain_valid
+
+#print axioms PSystem.QuorumExamples.mem_reporters
+
+#print axioms PSystem.QuorumExamples.certified_of
+
+#print axioms PSystem.QuorumExamples.certified_a_epoch_0
+
+#print axioms PSystem.QuorumExamples.certified_a_epoch_1
+
+#print axioms PSystem.QuorumExamples.chain_satisfies_hypotheses
+
+#print axioms PSystem.QuorumExamples.fork_without_carrying_locks
+
+#print axioms PSystem.QuorumExamples.unforgeable6
+
+#print axioms PSystem.QuorumExamples.equivocation_run_6_satisfies_hypotheses
+
+#print axioms PSystem.QuorumExamples.unlock_safe_witness
+
+
+-- QuorumLiveness.lean
+#print axioms PSystem.Quorum.voteAllowed_of_free
+
+#print axioms PSystem.Quorum.votes_free_foldl
+
+#print axioms PSystem.Quorum.votes_for_delivered
+
+#print axioms PSystem.Quorum.honest_sender_certifies
+
+#print axioms PSystem.Quorum.certificate_executes
+

@@ -264,8 +264,9 @@ validator observed first.
 
 ### 13.1 Quorum mode
 
-Status: specified, not implemented in Python. Proof status: obligation
-O7 in `docs/PROOF-OBLIGATIONS.md`.
+Status: implemented in Python behind `Node(quorum=...)`. Proof status: obligation
+O7 in `docs/PROOF-OBLIGATIONS.md`, with an empirical link to the code, not a
+refinement.
 
 A fixed committee of `n = 3f+1` validators, known to all nodes, of which
 at most `f` are faulty.
@@ -283,7 +284,27 @@ at most `f` are faulty.
 - Two certificates for conflicting events mean that more than `f`
   validators are faulty, outside the assumptions. A node stops and reports
   it; it does not choose.
-- Evidence of uncertified conflicting alternatives is preserved.
+- Evidence of uncertified conflicting alternatives is preserved. It does not
+  make the decision status `CONFLICTED`; only a stop for two conflicting
+  certificates does.
+- The `sender` of an event is the `identity_id` of the key that signs it, so the
+  check on a vote request depends only on the signature and gives the same
+  answer on every node. Aliases do not authorize spending in quorum mode.
+- Only committee members execute events. A node outside the committee (an
+  observer) is not part of quorum mode and no result covers it.
+- Only a well-formed event can be voted on or certified: sender and receiver are
+  non-empty strings, amount and nonce are integers from `0` to `2^256 - 1`, and
+  parents are 64 lowercase hex characters. The model has no malformed events, and
+  its natural numbers have no upper bound. So Python refuses more than the model
+  does, never less. A zero amount or a transfer to self is well formed, and is
+  refused at execution, as in the model.
+- Messages are `VOTE_REQUEST`, `VOTE`, `CERTIFICATE`, `CERTIFICATE_SYNC` and
+  `CERTIFICATE_SYNC_REQUEST` (`network/message.py`). The last one carries the next
+  nonce of each sender, and a certificate received in a batch is handled as if it
+  had arrived alone. A decoder refuses unknown or missing fields and any
+  value not in its one accepted form, such as uppercase hex. It sorts parents, as
+  the canonical form does. It does not judge meaning: a certificate of the right
+  form with too few or wrong signatures decodes, and `verify` refuses it.
 
 ---
 

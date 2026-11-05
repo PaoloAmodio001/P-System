@@ -37,9 +37,22 @@ from network.reconciliation_protocol import (
 )
 from network.node_server import NodeServer
 from network.node_tls_identity import get_node_tls_config
+from network.secure_transport import TLSConfig
+from core.attestation import guilty_members
+from network.quorum import (
+    DriverOutput,
+    LOG as QUORUM_LOG,
+    QUORUM_MESSAGE_TYPES,
+    QuorumConfig,
+    QuorumRuntime,
+)
+
+
+_NOTHING_SENT = DriverOutput()
 
 
 class Node:
+    SIMULTANEOUS_DIAL_SECONDS = 3.0
     RECONNECT_BASE_DELAY = 2.0
     RECONNECT_MAX_DELAY = 60.0
 
@@ -50,9 +63,13 @@ class Node:
         host: str = "127.0.0.1",
         port: int = 0,
         relevance_graph: RelevanceGraph | None = None,
+        quorum: QuorumConfig | None = None,
+        tls_config: TLSConfig | None = None,
     ):
         self.node_id = node_id
-        self.tls_config = get_node_tls_config(node_id)
+        # Without one, a throwaway authority of this process: nodes in different processes
+        # need certificates of a common authority to connect.
+        self.tls_config = tls_config or get_node_tls_config(node_id)
 
         # Immutable baseline from which the local projection is derived.
         self._initial_state = (
@@ -110,9 +127,58 @@ class Node:
             tls_config=self.tls_config,
         )
 
+        # Quorum mode: docs/FORMAL-SPECIFICATION.md, section 13.1. With None nothing
+        # below this point changes what the node does. The rules are in
+        # network/quorum.py, and here is only how they meet the network.
+        self._quorum = None
+        self._quorum_halt_events = []
+
+        self._sync_interval = None
+        self._sync_stop_event = threading.Event()
+        self._sync_thread = None
+
+        if quorum is not None:
+            self._quorum = QuorumRuntime(quorum, self._initial_state)
+            self._sync_interval = quorum.sync_interval
+            self._publish_quorum_state()
+
+    def _publish_quorum_state(self) -> None:
+        """
+        Copy what the replica holds into the public fields. Call with _state_lock,
+        or before the node is shared. The log is the only source: events and
+        local_events are the same list of certified events, and evidence stays in
+        signed_events and equivocations. After a restart the first two come back
+        from the log, and the evidence, which is in memory, does not.
+        """
+        replica = self._quorum.replica
+        driver = self._quorum.driver
+        executed = replica.executed
+        equivocations = self.equivocations
+
+        for proof in driver.equivocations.values():
+            equivocations = equivocations.add(proof)
+
+        self.events = list(executed)
+        self.local_events = list(executed)
+        self.signed_events = dict(driver.signed_events)
+        self.equivocations = equivocations
+
+        if not self._quorum.closed:
+            proof = replica.halt_proof()
+            self._quorum_halt_events = (
+                [certificate.event for certificate in proof] if proof else []
+            )
+
+        # A copy, so that a reader without the lock never sees a state in the middle
+        # of an execution, and cannot change the one the replica works on.
+        self.state = replica.state.copy()
+
     def start(self):
         if self._running:
             return
+
+        if self._quorum is not None and self._quorum.closed:
+            raise RuntimeError("QUORUM NODE IS CLOSED: CREATE A NEW NODE")
 
         self._server_controller.start()
         self._server = self._server_controller.server
@@ -128,12 +194,26 @@ class Node:
             )
             self._reconnect_thread.start()
 
+        if self._sync_interval is not None and self._sync_thread is None:
+            self._sync_stop_event.clear()
+            self._sync_thread = threading.Thread(
+                target=self._sync_loop,
+                daemon=True,
+            )
+            self._sync_thread.start()
+
     def stop(self):
         self._reconnect_running = False
 
         if self._reconnect_thread is not None:
             self._reconnect_thread.join(timeout=1.0)
             self._reconnect_thread = None
+
+        self._sync_stop_event.set()
+
+        if self._sync_thread is not None:
+            self._sync_thread.join(timeout=1.0)
+            self._sync_thread = None
 
         # The server first: a handshake in progress could otherwise publish a
         # connection after the ones below are closed.
@@ -149,6 +229,12 @@ class Node:
         self._server = None
         self._thread = None
         self._running = False
+
+        # Last, so that the lock on the store is free when stop returns. Under the
+        # lock, so that no message being handled finds the store closed halfway.
+        if self._quorum is not None:
+            with self._state_lock:
+                self._quorum.close()
 
     def _reconnect_loop(self):
         while self._reconnect_running:
@@ -327,6 +413,8 @@ class Node:
         preserved in knowledge and conflict state, but it is NOT applied
         to the local projection. No winner is selected.
         """
+        self._refuse_in_quorum_mode()
+
         for existing in self.events:
             if existing.event_id() != event.event_id():
                 continue
@@ -385,6 +473,12 @@ class Node:
 
         return True
 
+    def _refuse_in_quorum_mode(self) -> None:
+        # An error and not a no-op: a caller that believes it executed an event,
+        # or reconcile() passing in silence, would hide a fork.
+        if self._quorum is not None:
+            raise RuntimeError("NOT AVAILABLE IN QUORUM MODE")
+
     def receive(self, event, broadcast: bool = True):
         """Thread-safe trusted/local event ingress."""
         with self._state_lock:
@@ -398,6 +492,14 @@ class Node:
     ) -> bool:
         """Authenticate, authorize and only then execute a signed event."""
         with self._state_lock:
+            if self._quorum is not None:
+                # Evidence only: in quorum mode only a certificate executes. So
+                # pending_signed_events stays empty, and an identity claim has
+                # nothing to promote. False because nothing was executed.
+                self._quorum.driver.record_evidence(event)
+                self._publish_quorum_state()
+                return False
+
             if not event.verify():
                 return False
 
@@ -458,7 +560,13 @@ class Node:
         )
 
         if connection is None or not connection.connected:
-            return False
+            if not self._wait_for_connection_from(peer):
+                return False
+
+            connection = self.peer_connections.get(peer.node_id)
+
+            if connection is None:
+                return False
 
         try:
             self._send_identity_claims(connection)
@@ -468,7 +576,9 @@ class Node:
             TimeoutError,
         ):
             self._disconnect_peer_connection(peer.node_id, connection)
-            return False
+
+            # The same moment, seen while sending.
+            return self._wait_for_connection_from(peer)
 
         return True
 
@@ -534,10 +644,12 @@ class Node:
             connection.close()
             return False
 
+        # The address that worked, not the one it announces: a node on all interfaces
+        # announces 0.0.0.0, and a node behind a translation does not know its own.
         self.peers[handshake.node_id] = Peer(
             node_id=handshake.node_id,
-            host=handshake.host,
-            port=handshake.port,
+            host=peer.host,
+            port=peer.port,
         )
 
         connection.on_disconnect = self._peer_disconnected
@@ -558,19 +670,44 @@ class Node:
 
         thread = threading.Thread(
             target=connection.receive_loop,
-            args=(self._handle_peer_message,),
+            args=(self._handle_peer_message, self._handle_peer_messages),
             daemon=True,
         )
         thread.start()
+        self._request_certificates(connection)
 
         # Il successo è già stato registrato alla pubblicazione. Il lock
         # serializza questo controllo con la callback di disconnessione:
         # segnala False se la connessione è già stata rimossa o chiusa.
         with self._peer_connections_lock:
-            return (
+            if (
                 self.peer_connections.get(handshake.node_id) is connection
                 and connection.connected
-            )
+            ):
+                return True
+
+        return self._wait_for_connection_from(peer)
+
+    def _wait_for_connection_from(self, peer: Peer) -> bool:
+        """
+        This connection worked and then went. When both sides dial at once only the one started
+        by the lower id stays, so the other side closes this one, and its own may still be on
+        the way. A moment of that is not a failure. Only the higher id can be in this position.
+        """
+        if self.node_id < peer.node_id:
+            return False
+
+        deadline = time.monotonic() + self.SIMULTANEOUS_DIAL_SECONDS
+
+        while time.monotonic() < deadline:
+            current = self.peer_connections.get(peer.node_id)
+
+            if current is not None and current.connected and not current.initiated_locally:
+                return True
+
+            time.sleep(0.01)
+
+        return False
 
     def _register_peer_connection(
         self,
@@ -785,6 +922,8 @@ class Node:
         event: SignedTransfer,
     ) -> EventLifecycle:
         """Return the explicit authorization/execution lifecycle state."""
+        self._refuse_in_quorum_mode()
+
         if not event.verify():
             return EventLifecycle.REJECTED
         claim = self.identities.get(event.identity_id)
@@ -911,7 +1050,9 @@ class Node:
     def _knowledge_conflict_state(self) -> ConflictState:
         conflict = ConflictState(tuple())
 
-        known = list(self.events)
+        # In quorum mode the log never holds a conflict: the two certificates of a
+        # halt are the only way to CONFLICTED, and a simple equivocation is not one.
+        known = list(self.events) + self._quorum_halt_events
 
         for index, first in enumerate(known):
             for second in known[index + 1:]:
@@ -1039,6 +1180,10 @@ class Node:
             self._disconnect_peer_connection(peer.node_id, connection)
 
     def merge_events(self, events, broadcast: bool = True):
+        # Here too, and not only in receive: with no events, reconcile() would pass
+        # in silence on a node where it can never work.
+        self._refuse_in_quorum_mode()
+
         changed = False
 
         for event in events:
@@ -1114,12 +1259,216 @@ class Node:
 
         return event.transfer.sender == claim.alias
 
+    def submit(self, event: SignedTransfer) -> bool:
+        """
+        Quorum mode: start an event from this node, which then collects the votes.
+        True if there was something to send, False if the event was refused. An
+        answer of True says nothing about the certificate: it may never arrive.
+        """
+        if self._quorum is None:
+            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")
+
+        with self._state_lock:
+            try:
+                output = self._quorum.driver.submit(event)
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, None)
+        return bool(output.replies or output.broadcasts)
+
+    def _require_quorum_mode(self) -> None:
+        if self._quorum is None:
+            raise RuntimeError("THIS NEEDS QUORUM MODE")
+
+    def _driver_call(self, call):
+        """A call into the protocol, with the public state published whatever happens."""
+        with self._state_lock:
+            try:
+                return call()
+            finally:
+                self._publish_quorum_state()
+
+    def submit_many(self, events) -> int:
+        """
+        Quorum mode: like `submit` for several events, with one write to disk for the votes
+        of this node. Returns how many messages there were to send. No more than that is
+        promised for any of the events.
+        """
+        self._require_quorum_mode()
+        output = self._driver_call(lambda: self._quorum.submit_group(list(events)))
+        self._send_quorum_output(output, None)
+        return len(output.broadcasts)
+
+    def propose_epoch_change(self, change) -> bool:
+        """
+        Quorum mode: order the end of this epoch, from this node, which then collects the
+        reports and the votes on the closure. True if there was something to send. It says
+        nothing about the closure, which may never come: read `self.committee_epoch`.
+        """
+        self._require_quorum_mode()
+        output = self._driver_call(
+            lambda: self._quorum.driver.propose_epoch_change(change)
+        )
+        self._send_quorum_output(output, None)
+        return bool(output.broadcasts)
+
+    def guilty_members(self) -> tuple[bytes, ...]:
+        """
+        After a halt, the keys that signed both certificates. Empty with no halt, or when
+        the two certificates come from different committees: a member can honestly sign
+        in two epochs, and the theorem is about one committee.
+        """
+        self._require_quorum_mode()
+
+        with self._state_lock:
+            replica = self._quorum.replica
+            conflict = replica.halt_proof()
+
+            if conflict is None or conflict[0].epoch != conflict[1].epoch:
+                return ()
+
+            return guilty_members(replica.committee_of(conflict[0]), *conflict)
+
+    @property
+    def committee_epoch(self) -> int:
+        """The epoch in force, in quorum mode."""
+        self._require_quorum_mode()
+
+        with self._state_lock:
+            return self._quorum.replica.committee.epoch
+
+    def _sync_loop(self) -> None:
+        while not self._sync_stop_event.wait(self._sync_interval):
+            with self._peer_connections_lock:
+                targets = list(self.peer_connections.values())
+
+            for connection in targets:
+                self._request_certificates(connection)
+
+    def _request_certificates(self, connection) -> None:
+        """Ask a peer for what this node lacks. In quorum mode only."""
+        if self._quorum is None:
+            return
+
+        with self._state_lock:
+            if self._quorum.closed:
+                return
+
+            request = self._quorum.driver.sync_request()
+
+        if request is not None:
+            self._send_quorum_reply(connection, request)
+
+    def _handle_quorum_message(self, message, connection) -> None:
+        # The lock covers the driver and nothing else: a peer that does not read
+        # blocks a send, and must not block the node with it. A VoteStoreError goes
+        # up to receive_loop, which closes the connection and raises it again, and
+        # nothing was signed.
+        with self._state_lock:
+            if self._quorum.closed:
+                return
+
+            # In finally: a failed write can come after an execution that did
+            # happen, and the public state must not stay behind.
+            try:
+                output = self._quorum.driver.handle_message(message)
+            finally:
+                self._publish_quorum_state()
+
+        self._send_quorum_output(output, connection)
+
+    def _send_quorum_output(self, output, connection) -> None:
+        for message in output.replies:
+            if connection is not None:
+                self._send_quorum_reply(connection, message)
+
+        if not output.broadcasts:
+            return
+
+        with self._peer_connections_lock:
+            targets = list(self.peer_connections.items())
+
+        for message in output.broadcasts:
+            for node_id, target in targets:
+                try:
+                    target.send(message)
+                except (ConnectionError, OSError, TimeoutError):
+                    self._disconnect_peer_connection(node_id, target)
+                except ValueError as error:
+                    # Larger than a frame, so no peer can get it. Nothing is wrong with the
+                    # connection, and the message type is what an operator needs to know.
+                    QUORUM_LOG.error(
+                        "message too large to send",
+                        extra={"type": message.get("type"), "reason": str(error)},
+                    )
+                    break
+
+    def _send_quorum_reply(self, connection, message) -> None:
+        try:
+            connection.send(message)
+        except (ConnectionError, OSError, TimeoutError):
+            self._peer_disconnected(connection)
+            connection.close()
+        except ValueError as error:
+            # Larger than a frame. The peer gets no answer, and the connection stays.
+            QUORUM_LOG.error(
+                "message too large to send",
+                extra={"type": message.get("type"), "reason": str(error)},
+            )
+
+    def _handle_peer_messages(self, messages, connection=None) -> None:
+        """
+        Messages received together. Quorum messages next to each other share one transaction
+        and nothing is sent before it commits. Others are handled one by one, in order.
+        """
+        if self._quorum is None:
+            for message in messages:
+                self._handle_peer_message(message, connection)
+            return
+
+        group = []
+
+        for message in messages:
+            if message.get("type") in QUORUM_MESSAGE_TYPES:
+                group.append(message)
+                continue
+
+            self._handle_quorum_group(group, connection)
+            group = []
+            self._handle_peer_message(message, connection)
+
+        self._handle_quorum_group(group, connection)
+
+    def _handle_quorum_group(self, messages, connection) -> None:
+        if not messages:
+            return
+
+        if len(messages) == 1:
+            self._handle_quorum_message(messages[0], connection)
+            return
+
+        def call():
+            if self._quorum.closed:
+                return _NOTHING_SENT, None
+            return self._quorum.handle_group(messages)
+
+        output, error = self._driver_call(call)
+        self._send_quorum_output(output, connection)
+
+        if error is not None:
+            raise error
+
     def _handle_peer_message(
         self,
         message,
         connection=None,
     ) -> None:
         message_type = message.get("type")
+
+        if self._quorum is not None and message_type in QUORUM_MESSAGE_TYPES:
+            self._handle_quorum_message(message, connection)
+            return
 
         if message_type == "IDENTITY_CLAIM":
             claim = decode_identity_claim(message)

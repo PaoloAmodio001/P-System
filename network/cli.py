@@ -1,0 +1,300 @@
+"""
+The `psystem` command: create a deployment, run a node, talk to one.
+
+    psystem authority init ca/
+    psystem authority issue ca/ --node-id n0 --out n0/
+    psystem key generate n0/identity.key
+    psystem key show n0/identity.key
+    psystem genesis genesis.json --member KEY... --f 1 --balance ACCOUNT=AMOUNT...
+    psystem init-store --config n0/node.toml
+    psystem node --config n0/node.toml
+    psystem status --api http://127.0.0.1:8080
+    psystem transfer --api URL --key K --journal J --to ACCOUNT --amount N
+    psystem epoch sign change.json --key GOVERNANCE_KEY
+    psystem backup n0/votes.sqlite --out backup.sqlite
+    psystem restore backup.sqlite --to n0/votes.sqlite --genesis genesis.json --key n0/identity.key
+"""
+
+import argparse
+import json
+import signal
+import sqlite3
+import sys
+import threading
+from pathlib import Path
+
+from crypto.identity import Identity
+
+
+def _authority_init(args) -> int:
+    from network.node_tls_identity import create_authority
+
+    authority = create_authority(Path(args.directory))
+    print(authority.certificate_path)
+    return 0
+
+
+def _authority_issue(args) -> int:
+    from network.node_tls_identity import issue_node_certificate, load_authority
+
+    config = issue_node_certificate(
+        load_authority(Path(args.directory)),
+        args.node_id,
+        Path(args.out),
+    )
+    print(json.dumps({"certificate": config.certificate, "key": config.private_key}))
+    return 0
+
+
+def _key_generate(args) -> int:
+    identity = Identity.create()
+    identity.save(Path(args.path))
+    print(json.dumps(_describe(identity)))
+    return 0
+
+
+def _key_show(args) -> int:
+    print(json.dumps(_describe(Identity.load(Path(args.path)))))
+    return 0
+
+
+def _describe(identity: Identity) -> dict:
+    return {"public_key": identity.public_key.hex(), "account": identity.identity_id}
+
+
+def _genesis(args) -> int:
+    from network.deployment import write_genesis
+
+    balances = {}
+
+    for item in args.balance or []:
+        account, _, amount = item.partition("=")
+        balances[account] = int(amount)
+
+    genesis = write_genesis(
+        Path(args.path),
+        [bytes.fromhex(member) for member in args.member],
+        args.f,
+        balances,
+        [bytes.fromhex(member) for member in args.governance or []],
+        args.governance_threshold,
+    )
+    print(
+        json.dumps(
+            {
+                "genesis_hash": genesis.file_hash,
+                "committee_id": genesis.committee.committee_id,
+                "quorum": genesis.committee.quorum,
+            }
+        )
+    )
+    return 0
+
+
+def _node(args) -> int:
+    from network.deployment import read_node_config
+    from network.service import Service, configure_logging
+
+    configure_logging()
+    service = Service(read_node_config(Path(args.config)), create=args.create_store)
+    stop = threading.Event()
+
+    for name in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(name, lambda *_: stop.set())
+
+    service.start()
+    print(
+        json.dumps(
+            {
+                "node_id": service.config.node_id,
+                "port": service.node.port,
+                "api_port": service.api_address[1],
+            }
+        ),
+        flush=True,
+    )
+    stop.wait()
+    service.stop()
+    return 0
+
+
+def _init_store(args) -> int:
+    """
+    Create the store of a validator, once. Starting a node never creates one by itself, or a
+    validator that lost its file would start again with no votes and vote twice.
+    """
+    from network.deployment import read_node_config
+    from network.quorum import SqliteVoteStore
+
+    config = read_node_config(Path(args.config))
+
+    if config.store.exists():
+        print(f"REFUSED: {config.store} EXISTS", file=sys.stderr)
+        return 2
+
+    store = SqliteVoteStore(
+        config.store,
+        config.genesis.committee,
+        config.identity.public_key,
+        create=True,
+        governance=config.genesis.governance,
+        joining=config.joining,
+    )
+    store.close()
+    print(config.store)
+    return 0
+
+
+def _client(args):
+    from sdk.client import Client
+
+    token = Path(args.token_file).read_text().strip() if args.token_file else None
+    return Client(args.api, token)
+
+
+def _status(args) -> int:
+    print(json.dumps(_client(args).status(), indent=2, sort_keys=True))
+    return 0
+
+
+def _transfer(args) -> int:
+    from sdk.client import Wallet
+
+    wallet = Wallet(Identity.load(Path(args.key)), Path(args.journal))
+    client = _client(args)
+    nonce = args.nonce
+
+    if nonce is None:
+        nonce = max(wallet.next_nonce(), client.account(wallet.account)["next_nonce"])
+
+    signed = wallet.transfer(args.to, args.amount, nonce)
+    wallet.close()
+    print(json.dumps(client.submit(signed), sort_keys=True))
+    return 0
+
+
+def _backup(args) -> int:
+    """A consistent copy of a store. A copy of the file while a node runs may not be one."""
+    source = sqlite3.connect(f"{Path(args.store).resolve().as_uri()}?mode=ro", uri=True)
+    target = sqlite3.connect(args.out)
+    source.backup(target)
+    target.close()
+    source.close()
+    print(args.out)
+    return 0
+
+
+def _restore(args) -> int:
+    """
+    Put a copy back, and make the node abstain until the next epoch. A copy can be older than
+    the votes this validator signed, and voting again from it could sign two alternatives.
+    """
+    from network.deployment import read_genesis
+    from network.quorum import SqliteVoteStore
+
+    target = Path(args.to)
+
+    if target.exists():
+        print(f"REFUSED: {target} EXISTS", file=sys.stderr)
+        return 2
+
+    source = sqlite3.connect(f"{Path(args.backup).resolve().as_uri()}?mode=ro", uri=True)
+    copy = sqlite3.connect(target)
+    source.backup(copy)
+    copy.close()
+    source.close()
+
+    genesis = read_genesis(Path(args.genesis))
+    store = SqliteVoteStore(
+        target,
+        genesis.committee,
+        Identity.load(Path(args.key)).public_key,
+        governance=genesis.governance,
+        joining=True,
+    )
+    store.mark_restored()
+    epoch = store.committee.epoch
+    store.close()
+    print(json.dumps({"restored": str(target), "abstains_until_after_epoch": epoch}))
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="psystem", description=__doc__.splitlines()[1])
+    commands = parser.add_subparsers(required=True, dest="command")
+
+    authority = commands.add_parser("authority").add_subparsers(required=True, dest="action")
+    init = authority.add_parser("init")
+    init.add_argument("directory")
+    init.set_defaults(run=_authority_init)
+    issue = authority.add_parser("issue")
+    issue.add_argument("directory")
+    issue.add_argument("--node-id", required=True)
+    issue.add_argument("--out", required=True)
+    issue.set_defaults(run=_authority_issue)
+
+    key = commands.add_parser("key").add_subparsers(required=True, dest="action")
+    generate = key.add_parser("generate")
+    generate.add_argument("path")
+    generate.set_defaults(run=_key_generate)
+    show = key.add_parser("show")
+    show.add_argument("path")
+    show.set_defaults(run=_key_show)
+
+    genesis = commands.add_parser("genesis")
+    genesis.add_argument("path")
+    genesis.add_argument("--member", action="append", required=True)
+    genesis.add_argument("--f", type=int, required=True)
+    genesis.add_argument("--balance", action="append")
+    genesis.add_argument("--governance", action="append")
+    genesis.add_argument("--governance-threshold", type=int)
+    genesis.set_defaults(run=_genesis)
+
+    init_store = commands.add_parser("init-store")
+    init_store.add_argument("--config", required=True)
+    init_store.set_defaults(run=_init_store)
+
+    node = commands.add_parser("node")
+    node.add_argument("--config", required=True)
+    node.add_argument("--create-store", action="store_true")
+    node.set_defaults(run=_node)
+
+    for name, run in (("status", _status), ("transfer", _transfer)):
+        sub = commands.add_parser(name)
+        sub.add_argument("--api", required=True)
+        sub.add_argument("--token-file")
+        sub.set_defaults(run=run)
+        if name == "transfer":
+            sub.add_argument("--key", required=True)
+            sub.add_argument("--journal", required=True)
+            sub.add_argument("--to", required=True)
+            sub.add_argument("--amount", type=int, required=True)
+            sub.add_argument("--nonce", type=int)
+
+    backup = commands.add_parser("backup")
+    backup.add_argument("store")
+    backup.add_argument("--out", required=True)
+    backup.set_defaults(run=_backup)
+
+    restore = commands.add_parser("restore")
+    restore.add_argument("backup")
+    restore.add_argument("--to", required=True)
+    restore.add_argument("--genesis", required=True)
+    restore.add_argument("--key", required=True)
+    restore.set_defaults(run=_restore)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    args = _parser().parse_args(argv)
+
+    try:
+        return args.run(args)
+    except (ValueError, OSError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

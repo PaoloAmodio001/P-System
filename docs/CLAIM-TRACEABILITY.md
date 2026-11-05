@@ -1,6 +1,6 @@
 # P-System Claim Traceability
 
-Revision inspected: after tag `pre-lean-cleanup` (labels reviewed 2026-11-03)
+Revision inspected: `byzantine-quorum` (labels reviewed 2026-11-05)
 Status: preliminary research inventory, not a release certification.
 
 ## 1. Evidence categories
@@ -33,12 +33,18 @@ automatically prove that the Python implementation satisfies it.
 | Reconciliation preserves event knowledge | None | Network reconciliation and canonical-view tests | EMPIRICAL |
 | Retry delays are bounded, positive and unbounded in time | `backoff_bounded`, `backoff_positive`, `retryTime_ge_index`, `retry_hits_stable_availability` (`Backoff.lean`), properties of the formula | Reconnect and retry tests | FORMAL (formula only); not liveness |
 | Network security and authorization | None; no cryptography is modelled | Signature, authorization and TLS tests | EMPIRICAL |
-| Honest nodes never execute conflicting events (quorum mode) | `no_double_spend` (`QuorumSafety.lean`), with unforgeable signatures as a hypothesis | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python) |
-| A node's state is what `derive` computes from the events it executed (quorum mode) | `state_is_derive` (`QuorumDerive.lean`) | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python) |
-| Two honest nodes that exchange logs reach the same state (quorum mode) | `convergence_after_exchange`, `exchange_executes_union` (`QuorumConvergence.lean`); delivery is in the statement | None; quorum mode is not implemented in Python | FORMAL (model); OPEN (Python); not liveness |
-| The current implementation prevents forks between honest nodes | None | `tests/test_p15_byzantine_safety.py` asserts the opposite: the nodes detect the conflict and keep different states | Not claimed; false for the current code |
-| Byzantine fault tolerance, including liveness | No theorem | None | OPEN; not claimed |
-| Performance advantage | No theorem establishes a performance advantage | Benchmark execution and comparative baseline required | OPEN |
+| Honest nodes never execute conflicting events (quorum mode) | `no_double_spend` (`QuorumSafety.lean`), with unforgeable signatures as a hypothesis | `tests/test_quorum_byzantine.py`, differentials A and B (`tests/test_quorum_differential.py`, `tests/test_quorum_differential_node.py`), differential C on real TLS with a faulty member (`tests/test_quorum_differential_network.py`) | FORMAL (model); EMPIRICAL (Python) |
+| A node's state is what `derive` computes from the events it executed (quorum mode) | `state_is_derive` (`QuorumDerive.lean`) | Differentials A and B, driver and node tests | FORMAL (model); EMPIRICAL (Python) |
+| Two honest nodes that exchange logs reach the same state (quorum mode) | `convergence_after_exchange`, `exchange_executes_union` (`QuorumConvergence.lean`); delivery is in the statement | `tests/test_quorum_byzantine.py` (permutations of the same certificates), `tests/test_quorum_sync.py`, differential C | FORMAL (model); EMPIRICAL (Python); not liveness |
+| An executed event was accepted by the check of an honest validator (quorum mode) | `executed_authorized` (`QuorumSafety.lean`), with `auth` abstract | `tests/test_quorum_driver.py`, `tests/test_quorum_node.py`; signature and sender are checked in Python, `auth` is abstract in the model | FORMAL (model); EMPIRICAL (Python) |
+| The historical mode (`quorum=None`) prevents forks between honest nodes | None | `tests/test_p15_byzantine_safety.py` asserts the opposite: the nodes detect the conflict and keep different states | Not claimed; false for that mode |
+| Honest nodes never execute conflicting events across a chain of committees | `no_double_spend_across_epochs`, `closure_preserves_certified` (`QuorumEpochs.lean`) | `tests/test_quorum_epochs.py`, `tests/test_quorum_differential_epochs.py`, `tests/test_quorum_differential_processes.py` | FORMAL (model); EMPIRICAL (Python), with no differential against Lean |
+| Two certificates in conflict name the guilty members | `conflict_identifies_faulty` (`QuorumThresholds.lean`) | `guilty_members` in `tests/test_quorum_epochs.py`, `tests/test_service.py` | FORMAL (model); EMPIRICAL (Python) |
+| An honest sender gets a certificate | `honest_sender_certifies` (`QuorumLiveness.lean`), with delivery as a hypothesis | `tests/test_quorum_differential_processes.py` | FORMAL (model, conditional); not unconditional liveness |
+| A certificate checked by a light client proves an event, whatever the node | Follows from `no_double_spend_across_epochs` by hand; no theorem of its own | `tests/test_service.py` | EMPIRICAL |
+| Unlocking at the end of an epoch with `n = 5f+1` | `unlock_safe_5f1`, for one `(sender, nonce)` | None | FORMAL (counting only); not implemented, not offered |
+| Byzantine fault tolerance, including unconditional liveness | No theorem | None | OPEN; not claimed |
+| Performance | No theorem | `docs/BENCHMARKS.md`, on one machine; no comparison with another system | EMPIRICAL for those numbers on that machine; any comparison is OPEN |
 
 Theorems cited by earlier versions of this table (P01–P16, `R1_*`,
 `r17_*`, `apply_event_deterministic`) were removed from the Lean model;

@@ -12,3 +12,8 @@ name = "PSystem"
 [[lean_exe]]
 name = "derive_check"
 root = "DeriveCheck"
+
+# Driver for tests/test_quorum_differential.py (not part of the proofs).
+[[lean_exe]]
+name = "quorum_check"
+root = "QuorumCheck"

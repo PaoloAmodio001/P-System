@@ -1,67 +1,88 @@
 # P-System
 
-Experimental distributed event processing with a Python implementation and a Lean 4 formal model.
+A registry of single-owner state, with no global consensus: a fixed committee of `3f+1` validators certifies events, each owner
+orders their own, and every node reaches the same state from the same set of events. Python implementation, with a Lean 4 model of
+the protocol and machine-checked safety theorems about that model.
 
-## Research objectives
+**This is a research prototype that has grown a working service. It is not ready for production.** It has had no external audit, no
+pilot and no run on separate machines. See `docs/VALIDATION-PLAN.md` for what is missing and who has to do it.
 
-- Causal ordering and canonical event identity.
-- Conflict detection and deterministic local state projections.
-- Formal specification and selected machine-checked Lean 4 proofs.
+## What it does and what it proves
 
-These objectives do not mean every property is proved for the complete implementation.
+| Property | Status |
+|---|---|
+| Two honest nodes never execute different events for one `(sender, nonce)`, also across epochs of different committees | `FORMAL (model)`: `no_double_spend`, `no_double_spend_across_epochs` |
+| The state is what `derive` computes from the executed events, whatever their order of arrival | `FORMAL (model)`: `state_is_derive`, `convergence_after_exchange` |
+| Two valid certificates in conflict name at least `f+1` guilty members | `FORMAL (model)`: `conflict_identifies_faulty` |
+| An honest sender gets a certificate, **if messages arrive** | `FORMAL (model)`: `honest_sender_certifies`. Delivery is a hypothesis |
+| The Python code behaves like the model | `EMPIRICAL`: differential tests. **Not a refinement proof** |
 
-## Repository structure
+The theorems hold with at most `f` faulty validators in each committee and unforgeable signatures. A committee chosen badly by
+governance can fork, and no theorem removes that assumption. Full list and limits: `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`.
 
-- `core/` — event processing and state derivation.
-- `network/` — distributed nodes and peer networking.
-- `tests/` — automated tests.
-- `proof/` — proof-related utilities.
-- `benchmarks/` — performance and scalability experiments.
-- `docs/` — specifications, verification scope, and research roadmap.
-- `formal/lean/` — Lean 4 model and machine-checked proofs.
+**It does not do:** shared state written by several parties (order books, auctions, shared counters: they need consensus, and this
+design cannot give them). More than one asset. Confidentiality between members. Guaranteed progress: votes split between two versions
+of a spend give no certificate at all, and that nonce stays locked for good.
 
-## Installation
+## Quick start
 
-Use a Python virtual environment:
+```sh
+python -m venv .venv && . .venv/bin/activate
+pip install --require-hashes -r requirements.lock && pip install --no-deps .
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python scripts/make_local_deployment.py /tmp/psystem-demo --f 1
+cd /tmp/psystem-demo && docker compose up -d --build
 ```
 
-For the dashboard and benchmark tools, install the optional dependencies:
+Without containers, and for a real deployment: `docs/OPERATIONS.md`.
 
-```bash
-python -m pip install -r requirements-optional.txt
+```python
+from crypto.identity import Identity
+from network.deployment import read_genesis
+from sdk.client import ChainVerifier, Client, Wallet
+
+genesis = read_genesis("genesis.json")
+wallet = Wallet(Identity.load("sender.key"), "wallet.sqlite")   # never signs two events for one nonce
+client = Client("http://127.0.0.1:8080")
+
+signed = wallet.transfer("receiver-account", 8)
+client.submit(signed)                                           # "accepted" says nothing about a certificate
+client.wait_final(signed.transfer, ChainVerifier(genesis.committee, genesis.governance))
 ```
 
-For development and testing:
+## Documents
 
-```bash
+| | |
+|---|---|
+| `docs/ARCHITECTURE.md` | The components and the path of an event |
+| `docs/PROTOCOL.md`, `docs/API.md` | The wire protocol and the HTTP API |
+| `docs/OPERATIONS.md` | Install, configure, monitor, fail, back up, upgrade |
+| `docs/THREAT-MODEL.md`, `SECURITY.md` | What it withstands and what it does not |
+| `docs/BENCHMARKS.md` | Measurements, and how to repeat them |
+| `docs/VALIDATION-PLAN.md` | Readiness, validation and certification, which are different things |
+| `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`, `docs/CLAIM-TRACEABILITY.md` | What is proved, tested or open |
+| `ROADMAP.md`, `docs/piano-bizantino.md`, `CHANGELOG.md` | Where it is going, how it got here |
+
+## Running the checks
+
+```sh
 python -m pip install -r requirements-dev.txt
+pytest -q -m "not slow"                  # about 40 seconds with -n 4
+pytest -q                                # adds mutations and differentials, several minutes
+PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py
+cd formal/lean && lake build             # needs Lean: see formal/lean/lean-toolchain
 ```
 
-## Running the tests
+Every push runs the proofs and the whole suite in continuous integration (`.github/workflows/ci.yml`). Results describe specific
+runs, not universal guarantees.
 
-Activate the Python environment and run `pytest -q`. Build the formal model with `cd formal/lean && lake build`.
+## Repository
 
-The current run records 449 passing Python tests and a successful Lean build. These results describe specific runs, not universal guarantees.
-
-Main verified result (Lean, model level): two nodes that know the same events compute the same state, or both reject the batch, independently of arrival order, shared accounts and causal chains (`derive_knowledge_invariant`). The Python `StateDeriver` agrees with that model on 3000 random histories (`tests/test_lean_differential.py`); this is empirical evidence, not a refinement proof. See `docs/PROOF-OBLIGATIONS.md` for status labels and limits.
-
-The Lean model and Python implementation are separate artifacts. A successful Lean build does not establish complete refinement of the implementation or prove every system-wide safety and liveness property.
-
-See `docs/FORMAL-SPECIFICATION.md`, `docs/IMPLEMENTATION-REFINEMENT.md`, `docs/FORMAL-VERIFICATION-ROADMAP.md`, `docs/PROOF-OBLIGATIONS.md`, and `docs/PROOF-SCOPE.md`.
+`core/` events and state, `network/` protocol, node and service, `sdk/` client, `crypto/` keys, `formal/lean/` model and proofs,
+`tests/`, `benchmarks/`, `deploy/` and `scripts/`, `docs/`. The historical mode (`Node(quorum=None)`) stays in `core/` and `network/`. It
+has no Byzantine guarantee and allows forks between honest nodes (`tests/test_p15_byzantine_safety.py`), and a deployment made with
+`psystem` never uses it.
 
 ## License
 
-Copyright 2026 Paolo Amodio.
-
-P-System is distributed under the Apache License, Version 2.0. See `LICENSE` for the full license text.
-
-
-## Research status
-
-P-System is a work in progress. Security, performance, and formal refinement claims require explicit proofs or reproducible experiments.
+Copyright 2026 Paolo Amodio. Apache License 2.0: see `LICENSE`.

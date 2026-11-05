@@ -182,9 +182,66 @@ theorem executed_has_cert {n Sig} {verify : Fin n → Event → Sig → Bool} {q
 /-! ## Across nodes -/
 
 /--
+Two valid certificates delivered to honest nodes have a common honest validator
+that voted for both events. This is the only place where the hypotheses about
+`n`, `f` and signatures are used, and where a fact about one node's inputs
+reaches another.
+-/
+theorem delivered_certs_common_voter
+    {n f : Nat} {Sig : Type}
+    (hn : n = 3 * f + 1)
+    (faulty : List (Fin n)) (hf : faulty.length ≤ f)
+    (verify : Fin n → Event → Sig → Bool)
+    (auth : Fin n → Event → Bool)
+    (s₀ : State)
+    (inputs : Fin n → List (Input n Sig))
+    (hsig : Unforgeable verify faulty (2 * f + 1) auth s₀ inputs)
+    {u v : Fin n} (hu : u ∉ faulty) (hv : v ∉ faulty)
+    {c₁ c₂ : Cert n Sig}
+    (hin₁ : Input.certificate c₁ ∈ inputs u) (hvalid₁ : certValid verify (2 * f + 1) c₁ = true)
+    (hin₂ : Input.certificate c₂ ∈ inputs v) (hvalid₂ : certValid verify (2 * f + 1) c₂ = true) :
+    ∃ x, x ∉ faulty ∧
+      c₁.event ∈ (runNode verify (2 * f + 1) (auth x) s₀ (inputs x)).votes ∧
+      c₂.event ∈ (runNode verify (2 * f + 1) (auth x) s₀ (inputs x)).votes := by
+  simp only [certValid, Bool.and_eq_true, decide_eq_true_eq] at hvalid₁ hvalid₂
+  obtain ⟨⟨hnd₁, hq₁⟩, hall₁⟩ := hvalid₁
+  obtain ⟨⟨hnd₂, hq₂⟩, hall₂⟩ := hvalid₂
+  obtain ⟨x, hx₁, hx₂, hx⟩ := quorum_intersection_honest (F := faulty) hnd₁ hnd₂
+    (by simpa using hq₁) (by simpa using hq₂) (by omega)
+  obtain ⟨p₁, hp₁, rfl⟩ := List.mem_map.mp hx₁
+  obtain ⟨p₂, hp₂, hsame⟩ := List.mem_map.mp hx₂
+  refine ⟨p₁.1, hx, hsig u hu c₁ hin₁ p₁ hp₁ hx (List.all_eq_true.mp hall₁ p₁ hp₁), ?_⟩
+  have hvotes := hsig v hv c₂ hin₂ p₂ hp₂ (hsame ▸ hx) (List.all_eq_true.mp hall₂ p₂ hp₂)
+  rwa [hsame] at hvotes
+
+/--
+Two valid certificates delivered to honest nodes, even if not executed, are for
+the same event when they share `(sender, nonce)` or id. So a node that holds two
+valid certificates in conflict has evidence that the hypotheses do not hold:
+it can stop, because this cannot happen with at most `f` faults.
+-/
+theorem delivered_certs_agree
+    {n f : Nat} {Sig : Type}
+    (hn : n = 3 * f + 1)
+    (faulty : List (Fin n)) (hf : faulty.length ≤ f)
+    (verify : Fin n → Event → Sig → Bool)
+    (auth : Fin n → Event → Bool)
+    (s₀ : State)
+    (inputs : Fin n → List (Input n Sig))
+    (hsig : Unforgeable verify faulty (2 * f + 1) auth s₀ inputs)
+    {u v : Fin n} (hu : u ∉ faulty) (hv : v ∉ faulty)
+    {c₁ c₂ : Cert n Sig}
+    (hin₁ : Input.certificate c₁ ∈ inputs u) (hvalid₁ : certValid verify (2 * f + 1) c₁ = true)
+    (hin₂ : Input.certificate c₂ ∈ inputs v) (hvalid₂ : certValid verify (2 * f + 1) c₂ = true) :
+    (c₁.event.sender = c₂.event.sender → c₁.event.nonce = c₂.event.nonce → c₁.event = c₂.event) ∧
+    (c₁.event.id = c₂.event.id → c₁.event = c₂.event) := by
+  obtain ⟨x, _, hx₁, hx₂⟩ := delivered_certs_common_voter hn faulty hf verify auth s₀ inputs hsig
+    hu hv hin₁ hvalid₁ hin₂ hvalid₂
+  exact voteLock_runNode verify _ (auth x) s₀ (inputs x) _ hx₁ _ hx₂
+
+/--
 Events executed by two honest nodes have a common honest validator that voted
-for both. This is the only place where the hypotheses about `n`, `f` and
-signatures are used, and where a fact about one node's inputs reaches another.
+for both.
 -/
 theorem common_honest_voter
     {n f : Nat} {Sig : Type}
@@ -199,20 +256,12 @@ theorem common_honest_voter
     {e₁ e₂ : Event}
     (he₁ : e₁ ∈ (runNode verify (2 * f + 1) (auth u) s₀ (inputs u)).executed)
     (he₂ : e₂ ∈ (runNode verify (2 * f + 1) (auth v) s₀ (inputs v)).executed) :
-    ∃ x, e₁ ∈ (runNode verify (2 * f + 1) (auth x) s₀ (inputs x)).votes ∧
+    ∃ x, x ∉ faulty ∧ e₁ ∈ (runNode verify (2 * f + 1) (auth x) s₀ (inputs x)).votes ∧
       e₂ ∈ (runNode verify (2 * f + 1) (auth x) s₀ (inputs x)).votes := by
   obtain ⟨c₁, rfl, hin₁, hvalid₁⟩ := executed_has_cert he₁
   obtain ⟨c₂, rfl, hin₂, hvalid₂⟩ := executed_has_cert he₂
-  simp only [certValid, Bool.and_eq_true, decide_eq_true_eq] at hvalid₁ hvalid₂
-  obtain ⟨⟨hnd₁, hq₁⟩, hall₁⟩ := hvalid₁
-  obtain ⟨⟨hnd₂, hq₂⟩, hall₂⟩ := hvalid₂
-  obtain ⟨x, hx₁, hx₂, hx⟩ := quorum_intersection_honest (F := faulty) hnd₁ hnd₂
-    (by simpa using hq₁) (by simpa using hq₂) (by omega)
-  obtain ⟨p₁, hp₁, rfl⟩ := List.mem_map.mp hx₁
-  obtain ⟨p₂, hp₂, hsame⟩ := List.mem_map.mp hx₂
-  refine ⟨p₁.1, hsig u hu c₁ hin₁ p₁ hp₁ hx (List.all_eq_true.mp hall₁ p₁ hp₁), ?_⟩
-  have hvotes := hsig v hv c₂ hin₂ p₂ hp₂ (hsame ▸ hx) (List.all_eq_true.mp hall₂ p₂ hp₂)
-  rwa [hsame] at hvotes
+  exact delivered_certs_common_voter hn faulty hf verify auth s₀ inputs hsig hu hv
+    hin₁ hvalid₁ hin₂ hvalid₂
 
 /--
 No double spend. Two honest nodes, possibly the same, never execute different
@@ -236,7 +285,7 @@ theorem no_double_spend
     (he₂ : e₂ ∈ (runNode verify (2 * f + 1) (auth v) s₀ (inputs v)).executed)
     (hsender : e₁.sender = e₂.sender) (hnonce : e₁.nonce = e₂.nonce) :
     e₁ = e₂ := by
-  obtain ⟨x, hx₁, hx₂⟩ :=
+  obtain ⟨x, _, hx₁, hx₂⟩ :=
     common_honest_voter hn faulty hf verify auth s₀ inputs hsig hu hv he₁ he₂
   exact (voteLock_runNode verify _ (auth x) s₀ (inputs x) e₁ hx₁ e₂ hx₂).1 hsender hnonce
 
@@ -259,8 +308,63 @@ theorem same_id_same_event
     (he₂ : e₂ ∈ (runNode verify (2 * f + 1) (auth v) s₀ (inputs v)).executed)
     (hid : e₁.id = e₂.id) :
     e₁ = e₂ := by
-  obtain ⟨x, hx₁, hx₂⟩ :=
+  obtain ⟨x, _, hx₁, hx₂⟩ :=
     common_honest_voter hn faulty hf verify auth s₀ inputs hsig hu hv he₁ he₂
   exact (voteLock_runNode verify _ (auth x) s₀ (inputs x) e₁ hx₁ e₂ hx₂).2 hid
+
+/-! ## Authorization -/
+
+theorem votes_authorized_foldl {n : Nat} {Sig : Type} (verify : Fin n → Event → Sig → Bool)
+    (q : Nat) (auth : Event → Bool) (inputs : List (Input n Sig)) (st : NodeState n Sig)
+    {e : Event} (he : e ∈ (inputs.foldl (step verify q auth) st).votes) :
+    e ∈ st.votes ∨ auth e = true := by
+  induction inputs generalizing st with
+  | nil => exact Or.inl he
+  | cons i rest ih =>
+      rcases ih _ he with hstep | hauth
+      · cases i with
+        | voteRequest e' =>
+            simp only [step] at hstep
+            split at hstep
+            · rename_i hif
+              simp only [List.mem_cons] at hstep
+              rcases hstep with rfl | hold
+              · exact Or.inr (Bool.and_eq_true_iff.mp hif).1
+              · exact Or.inl hold
+            · exact Or.inl hstep
+        | certificate c =>
+            simp only [step] at hstep
+            split at hstep <;> exact Or.inl hstep
+      · exact Or.inr hauth
+
+/-- An honest validator only votes for events that its own check accepts. -/
+theorem votes_authorized {n : Nat} {Sig : Type} (verify : Fin n → Event → Sig → Bool)
+    (q : Nat) (auth : Event → Bool) (s₀ : State) (inputs : List (Input n Sig)) {e : Event}
+    (he : e ∈ (runNode verify q auth s₀ inputs).votes) : auth e = true := by
+  rcases votes_authorized_foldl verify q auth inputs _ he with hempty | hauth
+  · simp at hempty
+  · exact hauth
+
+/--
+An event executed by an honest node was accepted by the check `auth` of at least
+one honest validator. `auth` is abstract: this says nothing about Ed25519 by
+itself, and what it gives depends on what the check verifies.
+-/
+theorem executed_authorized
+    {n f : Nat} {Sig : Type}
+    (hn : n = 3 * f + 1)
+    (faulty : List (Fin n)) (hf : faulty.length ≤ f)
+    (verify : Fin n → Event → Sig → Bool)
+    (auth : Fin n → Event → Bool)
+    (s₀ : State)
+    (inputs : Fin n → List (Input n Sig))
+    (hsig : Unforgeable verify faulty (2 * f + 1) auth s₀ inputs)
+    {u : Fin n} (hu : u ∉ faulty) {e : Event}
+    (he : e ∈ (runNode verify (2 * f + 1) (auth u) s₀ (inputs u)).executed) :
+    ∃ x, x ∉ faulty ∧ auth x e = true := by
+  obtain ⟨c, rfl, hin, hvalid⟩ := executed_has_cert he
+  obtain ⟨x, hx, hvote, _⟩ := delivered_certs_common_voter hn faulty hf verify auth s₀ inputs hsig
+    hu hu hin hvalid hin hvalid
+  exact ⟨x, hx, votes_authorized verify _ (auth x) s₀ (inputs x) hvote⟩
 
 end PSystem.Quorum

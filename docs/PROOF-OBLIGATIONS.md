@@ -72,6 +72,8 @@ Module `QuorumSafety` in `formal/lean/PSystem/` (2026-11-03), on the model in
 | `no_double_spend` | With `n = 3f+1`, at most `f` faulty validators, quorum `2f+1` and unforgeable signatures, two honest nodes, possibly the same, never execute different events with the same `(sender, nonce)` | FORMAL (model) |
 | `same_id_same_event` | Under the same hypotheses, two events executed by honest nodes with the same id are the same event; no collision-resistance hypothesis | FORMAL (model) |
 | `common_honest_voter` | Under the same hypotheses, an honest validator voted for both of two events executed by honest nodes | FORMAL (model) |
+| `delivered_certs_agree` | Under the same hypotheses, two valid certificates delivered to honest nodes, even if not executed, are for one event when they share `(sender, nonce)` or id. This justifies stopping a node that holds two in conflict | FORMAL (model) |
+| `executed_authorized` | Under the same hypotheses, an event executed by an honest node was accepted by the check `auth` of an honest validator. `auth` is abstract: nothing is proved about Ed25519 | FORMAL (model) |
 | `quorum_intersection_honest` | Two sets of at least `q` validators out of `n` share a member outside `F` when `n + \|F\| < 2q` | FORMAL (supporting lemma) |
 | `Unforgeable` | A valid signature of an honest validator in a certificate delivered to an honest node implies that validator voted for that event | ASSUMPTION |
 
@@ -82,13 +84,17 @@ Axioms used: `propext`, `Quot.sound`, `Classical.choice` (standard).
 
 Scope and limits of this result:
 
-- It is a property of the model. Quorum mode is not implemented in Python,
-  so it says nothing about the current code, which allows forks between
-  honest nodes.
+- It is a property of the model, and it says nothing by itself about the
+  Python code. Quorum mode is implemented there behind `Node(quorum=...)`, and
+  the link with the model is `EMPIRICAL`: differential and behaviour tests, not
+  a refinement. With `quorum=None` the code allows forks between honest nodes.
 - That the hypotheses can be satisfied, and that they cannot be dropped, is
   proved only for `n = 4`, `f = 1` (witnesses below). Tightness for other
   values of `f` is not proved.
 - It concerns conflicting events only and does not say that nodes converge.
+- The theorems quantify over `Fin n`, the committee. A node outside the
+  committee that only executes certificates (an observer) is not covered, and
+  the implementation does not allow one.
 - Mathematically it is the known quorum argument (FastPay, Lemma A.1). The
   contribution is the machine-checked statement against an arbitrary input
   list per node, not a new idea.
@@ -104,6 +110,7 @@ properties:
 | `fork_with_too_many_faults` | `f+1` faulty validators: the same | FORMAL (witness, `f = 1`) |
 | `fork_with_forged_signature`, `forged_run_not_unforgeable` | A forged signature gives a fork; `no_double_spend` implies that run violates `Unforgeable` | FORMAL (witness, `f = 1`) |
 | `fork_with_faulty_receiver` | With the other hypotheses holding, the conclusion fails for a faulty receiver, so `hu` and `hv` are needed | FORMAL (witness, `f = 1`) |
+| `authorization_needs_unforgeable` | With a forged signature, an honest node executes an event that the check `auth` refuses | FORMAL (witness, `f = 1`) |
 
 ### Link to `derive`
 
@@ -151,9 +158,14 @@ sender can leave its account blocked.
 | `QuorumNonVacuity` | witnesses for the hypotheses of `no_double_spend` (`n = 4`) |
 | `QuorumDerive` | link between the quorum model and `derive` |
 | `QuorumConvergence` | convergence after exchanging logs |
+| `QuorumThresholds` | any quorum, who is to blame, what a report can tell |
+| `QuorumEpochs` | a chain of committees, reports and locks |
+| `QuorumEpochsNonVacuity` | witnesses for thresholds and epochs |
+| `QuorumLiveness` | an honest sender gets a certificate, given delivery |
 
-- 15 modules, 98 theorem declarations (10 of them about the witnesses), about
-  2600 lines.
+- 19 modules, 143 theorem declarations (21 of them about the witnesses), about
+  3700 lines. `formal/lean/QuorumCheck.lean` is a test driver, not part of the
+  proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
 - `formal/lean/AuditPSystem.lean` prints the axioms of every theorem; all
@@ -168,6 +180,35 @@ properties of the formula, not a liveness result.
 A Lean theorem establishes a property of the formal model only. It does
 not establish that the Python implementation refines that model.
 
+## Thresholds and epochs (phase B of `ROADMAP.md`)
+
+Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacuity`.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `no_double_spend_q` | `no_double_spend` for any quorum `q`, under `n + \|F\| < 2q` | FORMAL (model) |
+| `no_double_spend_5f1` | The instance `n = 5f+1`, `q = 4f+1` | FORMAL (model) |
+| `conflict_identifies_faulty` | Two valid certificates in conflict name at least `2q - n` common signers, and each is faulty. No bound on the faulty is assumed | FORMAL (model) |
+| `split_lock_ambiguous` | With `n = 4`, `q = 3`, no rule on the reports alone can return the certified event in every history | FORMAL (model), for that instance |
+| `unlock_safe_5f1` | With `n = 5f+1`, `q = 4f+1` and `4f+1` reports, a certified event has at least `2f+1` reports and any other at most `2f` | FORMAL (model), for one `(sender, nonce)`; no protocol uses it yet |
+| `report_holds_every_vote` | A report holds every vote of its validator, also those requested after the close | FORMAL (model) |
+| `closure_preserves_certified` | What has a certificate in an epoch is in the locks of the next | FORMAL (model) |
+| `locks_carried` | A lock stays in every later epoch | FORMAL (model) |
+| `no_double_spend_across_epochs` | No two different events with one `(sender, nonce)` have a certificate, in any two epochs | FORMAL (model) |
+| `closure_unique` | At most one certified closure for each epoch, as an event of governance with the epoch as nonce | FORMAL (model) |
+| `chain_satisfies_hypotheses`, `fork_without_carrying_locks`, `equivocation_run_6_satisfies_hypotheses`, `unlock_safe_witness` | The hypotheses can hold together, and without carrying the locks there is a fork | FORMAL (witnesses, one instance each) |
+
+| `honest_sender_certifies` | If `q` honest validators receive one version of an event and see no conflicting request that passes their check, each votes for it and their signatures form a valid certificate | FORMAL (model), with delivery as a hypothesis; not unconditional liveness |
+| `certificate_executes` | A valid certificate for an event that can run on the state of a node is executed | FORMAL (model) |
+
+Hypotheses that remain, in `no_double_spend_across_epochs`:
+
+- each committee respects its own bound on faulty validators (`Epoch.safe`): governance chooses
+  the committee, so this is an assumption of trust that no theorem removes;
+- `Certified` says that an honest signer really voted, which is what `Unforgeable` says;
+- `ChainValid` says that the reports reach the locks of the next epoch. Nothing says that a
+  closure is ever reached: this is safety, not liveness.
+
 ## Limitations of the current model
 
 - `ApplyEvent` does not check `Executable` (subtraction truncates at zero).
@@ -176,9 +217,10 @@ not establish that the Python implementation refines that model.
   order matters.
 - Identity binding and TLS are not modelled. Signatures appear only as
   abstract parameters of `Quorum`, with unforgeability as a hypothesis.
-- O7 covers safety in the quorum model. No theorem establishes liveness or
-  complete Byzantine fault tolerance.
-- There is no liveness theorem.
+- O7 covers safety in the quorum model. No theorem establishes unconditional
+  liveness or complete Byzantine fault tolerance.
+- There is no unconditional liveness theorem: `honest_sender_certifies` assumes delivery.
+- Epochs and thresholds are compared with Python only by tests, with no differential against Lean.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
 
@@ -350,5 +392,20 @@ say that honest nodes see the same messages.
 is idealised; nothing is proved about Ed25519 or SHA-256.
 
 Status: done for the Lean model (sections above); the witnesses cover only
-`n = 4`, `f = 1`. The link to Python will be `EMPIRICAL`, not `REFINEMENT`, and
-quorum mode is not implemented in Python yet.
+`n = 4`, `f = 1`.
+
+The link to Python is `EMPIRICAL`, not `REFINEMENT`, and so far covers only
+`QuorumReplica` (`network/quorum.py`), which no node uses yet.
+`tests/test_quorum_differential.py` compares it with `runNode` after each input,
+on adversarial random inputs. `tests/test_quorum_differential_mutations.py` checks
+that the comparison notices each rule being broken. Events the model cannot
+express, because they are malformed or exceed the `2^256 - 1` bound on integers,
+are outside this comparison. `is_well_formed_event` refuses them, and that is
+tested only on the Python side.
+
+Three seeds run by default, with `pytest -q`. **Before merging `byzantine-quorum`
+into `main`, run all fifteen:**
+
+    PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py
+
+On 2026-11-04 the fifteen seeds (45000 cases) gave no difference.

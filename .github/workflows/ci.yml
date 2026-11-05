@@ -1,0 +1,66 @@
+# Minimal continuous integration: phase A of ROADMAP.md.
+#
+# What a green run says: the suite and the Lean proofs pass on Linux, on this commit. It says
+# nothing that the tests and the proofs do not say themselves.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the Python dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      # The version comes from formal/lean/lean-toolchain.
+      - name: Install Lean
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build the proofs
+        working-directory: formal/lean
+        run: lake build
+
+      # lake build accepts sorry with a warning, and a theorem can rest on a new axiom.
+      - name: Refuse shortcuts in the proofs
+        working-directory: formal/lean
+        run: |
+          if grep -rnE '\b(sorry|admit|axiom|opaque|native_decide)\b' PSystem PSystem.lean; then
+            echo "A forbidden keyword is in the proofs" >&2
+            exit 1
+          fi
+          lake env lean AuditPSystem.lean > audit.log
+          grep -c 'depends on axioms' audit.log
+          # Each list of axioms, one name per line, must hold only the three standard ones.
+          if grep 'depends on axioms' audit.log \
+            | sed -E 's/.*\[(.*)\].*/\1/' | tr ',' '\n' | tr -d ' ' \
+            | grep -vE '^(propext|Quot\.sound|Classical\.choice)$'; then
+            echo "A theorem depends on another axiom" >&2
+            exit 1
+          fi
+
+      # The tests that need Lean skip themselves without lake, and a run that skipped them
+      # must not look like a run that passed them.
+      - name: Run the complete suite, differentials and mutations included
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs | tee pytest.log
+          if grep -E '[0-9]+ skipped' pytest.log; then
+            echo "Tests were skipped" >&2
+            exit 1
+          fi
