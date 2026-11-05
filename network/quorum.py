@@ -11,6 +11,7 @@ import os
 import sqlite3
 import threading
 import time
+from bisect import bisect_left
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from core.attestation import (
     EpochReport,
     Governance,
     QuorumCertificate,
+    Snapshot,
+    SnapshotAttestation,
     Vote,
     is_well_formed_event,
 )
@@ -45,6 +48,10 @@ from network.message import (
     decode_epoch_change,
     decode_epoch_closure,
     decode_epoch_report,
+    decode_snapshot,
+    decode_snapshot_body,
+    decode_snapshot_request,
+    decode_snapshot_vote,
     decode_vote,
     decode_vote_request,
     encode_certificate,
@@ -56,6 +63,10 @@ from network.message import (
     encode_epoch_change,
     encode_epoch_closure,
     encode_epoch_report,
+    encode_snapshot,
+    encode_snapshot_body,
+    encode_snapshot_request,
+    encode_snapshot_vote,
     encode_vote,
     encode_vote_request,
 )
@@ -73,7 +84,8 @@ class VoteStoreError(Exception):
     """
 
 
-_SCHEMA_VERSION = "4"
+_SCHEMA_VERSION = "5"
+_SCHEMA_VERSION_4 = "4"
 _SCHEMA_VERSION_3 = "3"
 _SCHEMA_VERSION_2 = "2"
 _PREVIOUS_SCHEMA_VERSION = "1"
@@ -141,6 +153,13 @@ _EPOCH_TABLES = (
     """,
 )
 
+# What schema 5 adds. One snapshot, the last. The floors are what this validator no longer votes under,
+# and are written only when it has pruned locks: `no_double_spend_views` needs the two together.
+_SNAPSHOT_TABLES = (
+    "CREATE TABLE snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL)",
+    "CREATE TABLE floors (sender TEXT PRIMARY KEY, nonce TEXT NOT NULL)",
+)
+
 _SCHEMA = (
     """
     CREATE TABLE meta (
@@ -172,6 +191,7 @@ _SCHEMA = (
     )
     """,
     *_EPOCH_TABLES,
+    *_SNAPSHOT_TABLES,
 )
 
 
@@ -367,10 +387,13 @@ class SqliteVoteStore:
             elif version == _SCHEMA_VERSION_3:
                 # A closure voted under schema 3 has only its digest: nobody can take it over.
                 self._connection.execute("ALTER TABLE closure_votes ADD COLUMN closure TEXT")
-            elif version != _SCHEMA_VERSION:
+            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):
                 raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
 
             if version != _SCHEMA_VERSION:
+                for statement in _SNAPSHOT_TABLES:
+                    self._connection.execute(statement)
+
                 self._connection.execute(
                     "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                     (_SCHEMA_VERSION,),
@@ -430,6 +453,9 @@ class SqliteVoteStore:
 
             self.committee = closure.change.next_committee(self.committee)
             self._chain[self.committee.epoch] = self.committee
+
+    def committee_at(self, epoch: int) -> Committee | None:
+        return self._chain.get(epoch)
 
     def reload_chain(self) -> None:
         """Back to what the file says, after a group that did not commit."""
@@ -564,6 +590,10 @@ class SqliteVoteStore:
                     return False
 
                 if self._is_locked_against(event, canonical):
+                    return False
+
+                # The other half of a pruned lock, and the two are one rule.
+                if self._is_below_floor(event):
                     return False
 
                 existing = {
@@ -790,6 +820,133 @@ class SqliteVoteStore:
                 (event.sender, str(event.nonce)),
             )
         )
+
+    def _is_below_floor(self, event: Transfer) -> bool:
+        row = self._connection.execute(
+            "SELECT nonce FROM floors WHERE sender = ?",
+            (event.sender,),
+        ).fetchone()
+        return row is not None and event.nonce < int(row[0])
+
+    # Snapshots: formal/lean/PSystem/QuorumSnapshot.lean.
+
+    def snapshot(self) -> Snapshot | None:
+        """The last snapshot this node took. The caller checks it: the file may be altered."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                row = self._connection.execute("SELECT body FROM snapshot").fetchone()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ SNAPSHOT: {error}") from error
+
+        if row is None:
+            return None
+
+        try:
+            return decode_snapshot_body(json.loads(row[0]))
+        except (ValueError, KeyError, TypeError, RecursionError) as error:
+            raise VoteStoreError("SNAPSHOT IS UNREADABLE") from error
+
+    def record_snapshot(self, snapshot: Snapshot) -> None:
+        """Keep it, with the locks of its signers. More locks can only refuse more votes."""
+        text = json.dumps(encode_snapshot_body(snapshot), separators=(",", ":"))
+
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.execute(
+                    "INSERT OR REPLACE INTO snapshot (id, body) VALUES (1, ?)",
+                    (text,),
+                )
+                self._add_locks(snapshot.locks())
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"SNAPSHOT NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def _add_locks(self, locks) -> None:
+        self._connection.executemany(
+            "INSERT OR IGNORE INTO locks (sender, nonce, canonical) VALUES (?, ?, ?)",
+            [(event.sender, str(event.nonce), event.canonical().decode()) for event in locks],
+        )
+
+    def locks_over(self, nonces: dict[str, int]) -> list[Transfer]:
+        """The locks this validator holds that a floor at `nonces` keeps."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                rows = self._connection.execute(
+                    "SELECT sender, nonce, canonical FROM locks ORDER BY canonical"
+                ).fetchall()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ LOCKS: {error}") from error
+
+        return [
+            _event_from_canonical(canonical)
+            for sender, nonce, canonical in rows
+            if int(nonce) >= nonces.get(sender, 0)
+        ]
+
+    def forget_certificates(self, event_ids: list[str]) -> None:
+        """Pruning. The caller holds a verified snapshot that covers them."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.executemany(
+                    "DELETE FROM certificates WHERE event_id = ?",
+                    [(event_id,) for event_id in event_ids],
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CERTIFICATES NOT PRUNED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def apply_floor(self, snapshot: Snapshot) -> None:
+        """
+        From now on no vote under this floor, and the locks under it go, in one transaction. Only at
+        the start of an epoch, where the model has it, and never one without the other:
+        `prune_without_floor_lets_conflict_through`. A floor that is too high only refuses more
+        votes. Votes and closure votes of ended epochs go too: nothing reads them.
+        """
+        epoch = self.committee.epoch
+
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.executemany(
+                    "INSERT OR REPLACE INTO floors (sender, nonce) VALUES (?, ?)",
+                    [(sender, str(nonce)) for sender, nonce in snapshot.state.nonces.items()],
+                )
+                stale = [
+                    (sender, nonce)
+                    for sender, nonce in self._connection.execute(
+                        "SELECT DISTINCT sender, nonce FROM locks"
+                    )
+                    if int(nonce) < snapshot.floor(sender)
+                ]
+                self._connection.executemany(
+                    "DELETE FROM locks WHERE sender = ? AND nonce = ?",
+                    stale,
+                )
+
+                for table in ("votes", "vote_evidence", "closure_votes"):
+                    self._connection.execute(f"DELETE FROM {table} WHERE epoch < ?", (epoch,))
+
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"FLOOR NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
 
     def close_epoch(self) -> list[SignedTransfer]:
         """
@@ -1053,11 +1210,29 @@ class QuorumReplica:
         self._identity = identity
         self._store = store
         self._auth = auth
+        self._initial_state = initial_state
         self.state = initial_state.copy()
         self.log: list[QuorumCertificate] = []
         self._executed_ids: set[str] = set()
+        # What the state started from, if not the genesis: signatures over these events are not read
+        # again, which is the whole cost of a restart. `resume_is_derive` says nothing is lost.
+        self.base = store.snapshot()
+
+        if self.base is not None:
+            if not self._snapshot_is_good(self.base):
+                raise VoteStoreError("SNAPSHOT DOES NOT VERIFY")
+
+            self.state = self.base.state.copy()
+            self._executed_ids = set(self.base.ids)
 
         for certificate in store.certificates():
+            if self.is_covered(certificate.event):
+                if certificate.event.event_id() not in self._executed_ids:
+                    raise VoteStoreError("LOG OF CERTIFICATES DOES NOT FIT THE SNAPSHOT")
+
+                self.log.append(certificate)
+                continue
+
             if not self._can_replay(certificate):
                 raise VoteStoreError("LOG OF CERTIFICATES DOES NOT REPLAY")
             self._execute(certificate)
@@ -1066,6 +1241,172 @@ class QuorumReplica:
     def committee(self) -> Committee:
         """The committee in force, which changes when a closure is installed."""
         return self._store.committee
+
+    @property
+    def executed_count(self) -> int:
+        """All it executed, also what it has pruned or got inside a snapshot."""
+        return len(self._executed_ids)
+
+    def is_covered(self, event: Transfer) -> bool:
+        return self.base is not None and event.nonce < self.base.floor(event.sender)
+
+    def has_executed_id(self, event_id: str) -> bool:
+        return event_id in self._executed_ids
+
+    def executed_since_base(self) -> int:
+        start = self._initial_state if self.base is None else self.base.state
+        return sum(self.state.nonces.values()) - sum(start.nonces.values())
+
+    def _snapshot_is_good(self, snapshot: Snapshot) -> bool:
+        committee = self._store.committee_at(snapshot.epoch)
+        return (
+            committee is not None
+            and snapshot.verify(committee)
+            # Each execution moves one nonce by one, so the two counts must agree.
+            and len(snapshot.ids)
+            == sum(snapshot.state.nonces.values()) - sum(self._initial_state.nonces.values())
+        )
+
+    def candidate_snapshot(self) -> Snapshot:
+        return Snapshot(self.committee.epoch, self.state.copy(), tuple(sorted(self._executed_ids)))
+
+    def _derives_snapshot(self, digest: str, nonces: dict[str, int]) -> bool:
+        """
+        What an honest member checks before signing: `Attests` in the model. It holds the events
+        under `nonces` and they come to this digest. A member behind says no and the proposer asks
+        again. One that pruned past `nonces` starts from its base, so it comes to this digest only
+        if this is its base. The state decides by itself, whatever is left out: `ids` count too.
+        """
+        start = self._initial_state if self.base is None else self.base.state
+
+        # What this would come to anyway. It saves a pass over the log for each request sent again.
+        if any(self.state.nonce(sender) < nonce for sender, nonce in nonces.items()):
+            return False
+
+        pending = [
+            certificate.event
+            for certificate in self.log
+            if start.nonce(certificate.event.sender)
+            <= certificate.event.nonce
+            < nonces.get(certificate.event.sender, 0)
+        ]
+        state = start.copy()
+        ids = set() if self.base is None else set(self.base.ids)
+        progress = True
+
+        # A part of a valid order may need another order: funds come from what is left out.
+        while pending and progress:
+            progress = False
+            waiting = []
+
+            for event in pending:
+                if self._runs_on(state, ids, event):
+                    StateDeriver._apply_one(state, event)
+                    ids.add(event.event_id())
+                    progress = True
+                else:
+                    waiting.append(event)
+
+            pending = waiting
+
+        return Snapshot(self.committee.epoch, state, tuple(sorted(ids))).digest == digest
+
+    def attest_snapshot(
+        self,
+        epoch: int,
+        digest: str,
+        nonces: dict[str, int],
+    ) -> SnapshotAttestation | None:
+        if (
+            not self.is_member
+            or self._store.halted()
+            or epoch != self.committee.epoch
+            or not self._derives_snapshot(digest, nonces)
+        ):
+            return None
+
+        try:
+            return SnapshotAttestation.create(
+                self.committee,
+                self._identity,
+                digest,
+                self._store.locks_over(nonces),
+            )
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def install_snapshot(self, snapshot: Snapshot) -> bool:
+        """
+        Start from this snapshot and go on with what this node has beyond it. True if it did. It comes
+        from a committee this node holds, and the one in force unless it is this node's own file: the
+        keys of an ended committee can be stolen. The order of the log does not change. An event still
+        runs after what it ran after, or sooner, with the same debits and more credits.
+        """
+        if (
+            snapshot.epoch != self.committee.epoch
+            or not self._snapshot_is_good(snapshot)
+            or (
+                self.base is not None
+                and self.base.digest == snapshot.digest
+                and self.base.epoch == snapshot.epoch
+            )
+            or (
+                self.base is not None
+                and any(
+                    snapshot.floor(sender) < nonce
+                    for sender, nonce in self.base.state.nonces.items()
+                )
+            )
+        ):
+            return False
+
+        state = snapshot.state.copy()
+        ids = set(snapshot.ids)
+
+        for certificate in self.log:
+            event = certificate.event
+
+            if event.nonce < snapshot.floor(event.sender):
+                if event.event_id() in ids:
+                    continue
+
+                # At most `f` faulty cannot do this: `no_double_spend`. This node keeps what it has.
+                LOG.critical(
+                    "snapshot does not hold an event this node executed",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+                return False
+
+            if not self._runs_on(state, ids, event):
+                LOG.critical(
+                    "the log of this node does not run after a snapshot",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+                return False
+
+            StateDeriver._apply_one(state, event)
+            ids.add(event.event_id())
+
+        self._store.record_snapshot(snapshot)
+        self.base = snapshot
+        self.state = state
+        self._executed_ids = ids
+        return True
+
+    def prune_covered(self) -> list[QuorumCertificate]:
+        """Drop the certificates the snapshot covers, on disk first. Returns what went."""
+        covered = [c for c in self.log if self.is_covered(c.event)]
+
+        if covered:
+            self._store.forget_certificates([c.event.event_id() for c in covered])
+            self.log = [c for c in self.log if not self.is_covered(c.event)]
+
+        return covered
+
+    def apply_floor(self) -> None:
+        if self.base is not None:
+            self._store.apply_floor(self.base)
 
     @property
     def is_member(self) -> bool:
@@ -1220,6 +1561,16 @@ class QuorumReplica:
     def _can_replay(self, certificate: QuorumCertificate) -> bool:
         return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)
 
+    @staticmethod
+    def _runs_on(state: State, ids: set[str], event: Transfer) -> bool:
+        return (
+            event.event_id() not in ids
+            and set(event.parents) <= ids
+            and event.amount > 0
+            and event.sender != event.receiver
+            and StateDeriver._execution_failure(state, event) is None
+        )
+
     def _is_fresh(self, event: Transfer) -> bool:
         return event.event_id() not in self._executed_ids
 
@@ -1252,6 +1603,9 @@ QUORUM_MESSAGE_TYPES = frozenset(
         "CLOSURE_LOCKED",
         "CLOSURE_VOTE",
         "EPOCH_CLOSURE",
+        "SNAPSHOT_REQUEST",
+        "SNAPSHOT_VOTE",
+        "SNAPSHOT",
     }
 )
 
@@ -1276,6 +1630,8 @@ _NOTHING = DriverOutput()
 class QuorumDriver:
     # How long a closure in progress waits before what it needs is sent again.
     EPOCH_RETRY_SECONDS = 10.0
+    # How long a snapshot is asked for before starting another: members behind catch up meanwhile.
+    SNAPSHOT_ASK_SECONDS = 60.0
 
     """
     The protocol around a replica: takes messages, returns messages to send. It
@@ -1313,6 +1669,8 @@ class QuorumDriver:
         require_funds: bool = False,
         max_evidence: int | None = None,
         clock: Callable[[], float] = time.monotonic,
+        snapshot_every: int | None = None,
+        prune: bool = False,
     ) -> None:
         self.replica = replica
         self.governance = governance
@@ -1326,6 +1684,13 @@ class QuorumDriver:
         self.max_nonce_ahead = max_nonce_ahead
         self.require_funds = require_funds
         self.max_evidence = max_evidence
+        # Events between snapshots, None for no snapshots. Pruning is off unless asked for: it
+        # takes away the history, and with it the certificate of an old event.
+        self.snapshot_every = snapshot_every
+        self.prune = prune
+        self._snapshot: Snapshot | None = None
+        self._snapshot_votes: dict[int, SnapshotAttestation] = {}
+        self._snapshot_started = 0.0
         # What this node proposed: the reports, then the votes on the closure.
         self._change: EpochChange | None = None
         self._reports: dict[int, EpochReport] = {}
@@ -1400,6 +1765,15 @@ class QuorumDriver:
         if message_type == "EPOCH_CLOSURE":
             return self._handle_epoch_closure(decode_epoch_closure(message))
 
+        if message_type == "SNAPSHOT_REQUEST":
+            return self._handle_snapshot_request(*decode_snapshot_request(message))
+
+        if message_type == "SNAPSHOT_VOTE":
+            return self._handle_snapshot_vote(*decode_snapshot_vote(message))
+
+        if message_type == "SNAPSHOT":
+            return self._handle_snapshot(decode_snapshot(message))
+
         raise ValueError("NOT A QUORUM MESSAGE")
 
     def sync_request(self) -> dict | None:
@@ -1413,6 +1787,12 @@ class QuorumDriver:
         self._refresh_log_index()
         state = self.replica.state
         frontier = {sender: state.nonce(sender) for sender in self._log_by_sender}
+
+        # Otherwise a peer that pruned would take this node for one behind its snapshot, every time.
+        if self.replica.base is not None:
+            frontier.update(
+                (sender, state.nonce(sender)) for sender in self.replica.base.state.nonces
+            )
 
         # What waits in the buffer counts as known. Otherwise a batch that cannot run
         # yet would come back unchanged, and asking again would never reach the rest.
@@ -1445,27 +1825,58 @@ class QuorumDriver:
             for closure in self.replica.closures(epoch)
         )
         self._refresh_log_index()
+        snapshot = self._snapshot_for(frontier)
         batch = []
         size = 0
 
         for sender in sorted(self._log_by_sender):
             certificates = self._log_by_sender[sender]
-            start = max(0, frontier.get(sender, 0) - certificates[0].event.nonce)
+            # By nonce and not by position: after a snapshot the log of a sender can have holes.
+            start = bisect_left(
+                certificates,
+                frontier.get(sender, 0),
+                key=lambda certificate: certificate.event.nonce,
+            )
 
             for certificate in certificates[start:]:
                 size += len(json.dumps(encode_certificate(certificate)))
 
                 if batch and size > SYNC_BATCH_BYTES:
                     return DriverOutput(
-                        replies=(*closures, encode_certificate_sync(batch)),
+                        replies=(*closures, *snapshot, encode_certificate_sync(batch)),
                     )
 
                 batch.append(certificate)
 
         if not batch:
-            return DriverOutput(replies=closures)
+            return DriverOutput(replies=(*closures, *snapshot))
 
-        return DriverOutput(replies=(*closures, encode_certificate_sync(batch)))
+        return DriverOutput(replies=(*closures, *snapshot, encode_certificate_sync(batch)))
+
+    def _snapshot_for(self, frontier: dict[str, int]) -> tuple[dict, ...]:
+        """The snapshot, if this peer needs what this node holds only inside it."""
+        base = self.replica.base
+
+        if base is None:
+            return ()
+
+        initial = self.replica._initial_state
+
+        for sender, floor in base.state.nonces.items():
+            needed = max(frontier.get(sender, 0), initial.nonce(sender))
+
+            if needed < floor:
+                held = self._log_by_sender.get(sender, [])
+                nonce_of = lambda certificate: certificate.event.nonce
+                count = bisect_left(held, floor, key=nonce_of) - bisect_left(
+                    held, needed, key=nonce_of
+                )
+
+                # Not only the start: a snapshot can leave holes anywhere in this log.
+                if count != floor - needed:
+                    return (encode_snapshot(base),)
+
+        return ()
 
     def _handle_certificate_sync(
         self,
@@ -1482,6 +1893,9 @@ class QuorumDriver:
 
             # No signature to check, so that sending the log again costs nothing.
             if known is not None and known.event.canonical() == event.canonical():
+                continue
+
+            if self.replica.is_covered(event) and self.replica.has_executed_id(event.event_id()):
                 continue
 
             # No honest node sends this. Stopping here means that a frame full of bad
@@ -1557,8 +1971,14 @@ class QuorumDriver:
         return DriverOutput(broadcasts=(encode_closure_vote_request(closure),))
 
     def retry(self) -> DriverOutput:
+        """Call it now and then: what is in progress goes on."""
+        epoch = self._retry_epoch()
+        snapshot = self._snapshot_tick()
+        return DriverOutput(broadcasts=(*epoch.broadcasts, *snapshot.broadcasts))
+
+    def _retry_epoch(self) -> DriverOutput:
         """
-        Call it now and then. A closure in progress sends again what may have been lost, and
+        A closure in progress sends again what may have been lost, and
         a member that voted for a closure and never saw it finish works for it itself, since
         whoever proposed it may be dead. Several nodes doing this for one closure is harmless:
         they ask for the same votes. So this adds no way to split the votes.
@@ -1585,6 +2005,139 @@ class QuorumDriver:
             return DriverOutput(broadcasts=(encode_closure_vote_request(self._candidate),))
 
         return DriverOutput(broadcasts=(encode_epoch_change(self._change),))
+
+    def _snapshot_is_due(self) -> bool:
+        replica = self.replica
+        index = self.committee.index_of(replica._identity.public_key)
+
+        if index is None:
+            return False
+
+        # A snapshot by another member does as well, so members start at different points and most
+        # of the time only one asks.
+        if replica.executed_since_base() >= self.snapshot_every * (1 + index / self.committee.n):
+            return True
+
+        # A snapshot of an ended committee is good for this node and for no other.
+        return self.prune and replica.base is not None and replica.base.epoch != self.committee.epoch
+
+    def _snapshot_tick(self) -> DriverOutput:
+        if self.snapshot_every is None or self.halted:
+            return _NOTHING
+
+        if (
+            self._snapshot is not None
+            and self._clock() - self._snapshot_started < self.SNAPSHOT_ASK_SECONDS
+        ):
+            return DriverOutput(broadcasts=(self._snapshot_request(),))
+
+        self._snapshot = None
+
+        if not self._snapshot_is_due():
+            return _NOTHING
+
+        return self.propose_snapshot()
+
+    def _snapshot_request(self) -> dict:
+        return encode_snapshot_request(
+            self._snapshot.epoch,
+            self._snapshot.digest,
+            self._snapshot.state.nonces,
+        )
+
+    def propose_snapshot(self) -> DriverOutput:
+        """Ask the committee to sign the state of this node. Two at once do no harm: both are true."""
+        candidate = self.replica.candidate_snapshot()
+        attestation = self.replica.attest_snapshot(
+            candidate.epoch,
+            candidate.digest,
+            candidate.state.nonces,
+        )
+
+        if attestation is None:
+            return _NOTHING
+
+        self._snapshot = candidate
+        self._snapshot_votes = {attestation.validator: attestation}
+        self._snapshot_started = self._clock()
+        return DriverOutput(broadcasts=(self._snapshot_request(),))
+
+    def _handle_snapshot_request(
+        self,
+        epoch: int,
+        digest: str,
+        nonces: dict[str, int],
+    ) -> DriverOutput:
+        attestation = self.replica.attest_snapshot(epoch, digest, nonces)
+
+        if attestation is None:
+            return _NOTHING
+
+        return DriverOutput(replies=(encode_snapshot_vote(digest, attestation),))
+
+    def _handle_snapshot_vote(
+        self,
+        digest: str,
+        attestation: SnapshotAttestation,
+    ) -> DriverOutput:
+        candidate = self._snapshot
+
+        if (
+            candidate is None
+            or digest != candidate.digest
+            or candidate.epoch != self.committee.epoch
+            or not attestation.verify(self.committee, digest)
+        ):
+            return _NOTHING
+
+        self._snapshot_votes[attestation.validator] = attestation
+
+        if len(self._snapshot_votes) < self.committee.quorum:
+            return _NOTHING
+
+        snapshot = Snapshot(
+            candidate.epoch,
+            candidate.state,
+            candidate.ids,
+            tuple(self._snapshot_votes[v] for v in sorted(self._snapshot_votes)),
+        )
+        self._snapshot = None
+        self._snapshot_votes = {}
+        self._take_snapshot(snapshot)
+        return DriverOutput(broadcasts=(encode_snapshot(snapshot),))
+
+    def _handle_snapshot(self, snapshot: Snapshot) -> DriverOutput:
+        if self.halted or not self._take_snapshot(snapshot):
+            return _NOTHING
+
+        request = self.sync_request()
+        return _NOTHING if request is None else DriverOutput(replies=(request,))
+
+    def _take_snapshot(self, snapshot: Snapshot) -> bool:
+        replica = self.replica
+
+        if not replica.install_snapshot(snapshot):
+            return False
+
+        LOG.info(
+            "snapshot taken",
+            extra={"epoch": snapshot.epoch, "digest": snapshot.digest, "events": len(snapshot.ids)},
+        )
+
+        if self.prune:
+            for certificate in replica.prune_covered():
+                self._known.pop((certificate.event.sender, certificate.event.nonce), None)
+
+        self._log_by_sender = {}
+        self._indexed = 0
+
+        # What was waiting and is now inside the snapshot will never run: it already did.
+        for event_id, certificate in list(self._buffer.items()):
+            if replica.is_covered(certificate.event):
+                del self._buffer[event_id]
+
+        self._retry_buffer()
+        return True
 
     def _handle_epoch_change(self, change: EpochChange) -> DriverOutput:
         if (
@@ -1734,6 +2287,12 @@ class QuorumDriver:
         self._candidate = None
         self._closure_votes = {}
         self._epoch_activity = self._clock()
+        self._snapshot = None
+        self._snapshot_votes = {}
+
+        if self.prune:
+            self.replica.apply_floor()
+
         self._retry_buffer()
 
     def submit(self, signed: SignedTransfer) -> DriverOutput:
@@ -1863,6 +2422,17 @@ class QuorumDriver:
             self._aggregating.clear()
             return
 
+        if known is None and self.replica.is_covered(event):
+            # Pruned, or never held. Nothing can run under the snapshot in any case. Without the
+            # other certificate there is no proof to halt on, and this is the limit of pruning.
+            if not self.replica.has_executed_id(event.event_id()):
+                LOG.critical(
+                    "valid certificate conflicts with a snapshot",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+
+            return
+
         if known is None:
             self._known[key] = certificate
             self._buffer[event.event_id()] = certificate
@@ -1939,6 +2509,9 @@ class QuorumConfig:
     max_nonce_ahead: int | None = None
     require_funds: bool = False
     max_evidence: int | None = None
+    # Events between snapshots, and whether to drop what they cover: see `QuorumDriver`.
+    snapshot_every: int | None = None
+    prune: bool = False
 
 
 class QuorumRuntime:
@@ -2058,6 +2631,8 @@ class QuorumRuntime:
             self._config.max_nonce_ahead,
             self._config.require_funds,
             self._config.max_evidence,
+            snapshot_every=self._config.snapshot_every,
+            prune=self._config.prune,
         )
 
     def submit_group(self, events: list[SignedTransfer]) -> DriverOutput:

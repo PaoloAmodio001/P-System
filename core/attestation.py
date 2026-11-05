@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 from hashlib import sha256
 import json
 import re
@@ -666,5 +667,132 @@ class EpochClosure:
             signed.transfer.canonical(): signed.transfer
             for report in self.reports
             for signed in report.votes
+        }
+        return tuple(events[canonical] for canonical in sorted(events))
+
+
+# Snapshots: formal/lean/PSystem/QuorumSnapshot.lean. A snapshot says that with these events the state
+# is this. It is a fact and not a choice, so there is no vote lock on it, and two of them can both be
+# true. Which events: under `state.nonces` for each sender, which `no_double_spend` makes one set.
+
+SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
+
+
+def _locks_digest(locks: tuple[Transfer, ...]) -> bytes:
+    digest = sha256()
+
+    for event in locks:
+        canonical = event.canonical()
+        digest.update(len(canonical).to_bytes(4, "big"))
+        digest.update(canonical)
+
+    return digest.digest()
+
+
+@dataclass(frozen=True)
+class SnapshotAttestation:
+    """A member says: I derived this state from these events, and these are my locks over its floor."""
+
+    validator: int
+    locks: tuple[Transfer, ...]
+    signature: bytes
+
+    @staticmethod
+    def _payload(committee: Committee, digest: str, locks: tuple[Transfer, ...]) -> bytes:
+        return (
+            SNAPSHOT_DOMAIN
+            + bytes.fromhex(committee.committee_id)
+            + bytes.fromhex(digest)
+            + _locks_digest(locks)
+        )
+
+    @classmethod
+    def create(
+        cls,
+        committee: Committee,
+        identity: Identity,
+        digest: str,
+        locks,
+    ) -> "SnapshotAttestation":
+        ordered = tuple(sorted(locks, key=lambda event: event.canonical()))
+        validator = committee.index_of(identity.public_key)
+
+        if validator is None:
+            raise ValueError("SIGNER IS NOT A COMMITTEE MEMBER")
+
+        return cls(validator, ordered, identity.sign(cls._payload(committee, digest, ordered)))
+
+    def verify(self, committee: Committee, digest: str) -> bool:
+        return (
+            committee.has_validator(self.validator)
+            and type(self.locks) is tuple
+            and all(is_well_formed_event(event) for event in self.locks)
+            and verify_signature(
+                committee.members[self.validator],
+                self.signature,
+                self._payload(committee, digest, self.locks),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """
+    A state and the ids of the events behind it, with the signatures of a quorum of the committee of
+    `epoch`. Without them it is only a candidate. The ids stay because a parent can name any past event:
+    `resume_without_ids_loses_children`.
+    """
+
+    epoch: int
+    state: State
+    ids: tuple[str, ...]
+    attestations: tuple[SnapshotAttestation, ...] = ()
+
+    @cached_property
+    def digest(self) -> str:
+        """The content, with no committee: another committee can sign the same state."""
+        ids = sha256()
+
+        for event_id in self.ids:
+            ids.update(bytes.fromhex(event_id))
+
+        return sha256(bytes.fromhex(self.state.root()) + ids.digest()).hexdigest()
+
+    def floor(self, sender: str) -> int:
+        return self.state.nonce(sender)
+
+    def has_ordered_ids(self) -> bool:
+        return (
+            type(self.ids) is tuple
+            and all(type(i) is str and _ROOT_PATTERN.fullmatch(i) is not None for i in self.ids)
+            and list(self.ids) == sorted(set(self.ids))
+        )
+
+    def verify(self, committee: Committee) -> bool:
+        """
+        A quorum of distinct members signed it. `attested_snapshot_matches_node`: with at most `f`
+        faulty, one of them is honest and derived it. False, never an exception.
+        """
+        if type(self.epoch) is not int or self.epoch != committee.epoch or not self.has_ordered_ids():
+            return False
+
+        if type(self.attestations) is not tuple or not all(
+            type(attestation) is SnapshotAttestation for attestation in self.attestations
+        ):
+            return False
+
+        signers = [attestation.validator for attestation in self.attestations]
+
+        if len(set(signers)) != len(signers) or len(signers) < committee.quorum:
+            return False
+
+        return all(attestation.verify(committee, self.digest) for attestation in self.attestations)
+
+    def locks(self) -> tuple[Transfer, ...]:
+        """The union of the locks of the signers: `union_locks_cover`. The lists need not be equal."""
+        events = {
+            event.canonical(): event
+            for attestation in self.attestations
+            for event in attestation.locks
         }
         return tuple(events[canonical] for canonical in sorted(events))

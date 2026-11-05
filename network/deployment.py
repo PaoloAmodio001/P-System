@@ -146,6 +146,8 @@ class NodeConfig:
     max_nonce_ahead: int = 1024
     require_funds: bool = True
     max_evidence: int = 100_000
+    snapshot_every: int | None = None
+    prune: bool = False
 
     def quorum(self, create: bool) -> QuorumConfig:
         return QuorumConfig(
@@ -159,6 +161,8 @@ class NodeConfig:
             max_nonce_ahead=self.max_nonce_ahead,
             require_funds=self.require_funds,
             max_evidence=self.max_evidence,
+            snapshot_every=self.snapshot_every,
+            prune=self.prune,
         )
 
 
@@ -180,6 +184,7 @@ _TOP_LEVEL = {
     "sync_interval",
     "joining",
     "limits",
+    "snapshots",
 }
 
 
@@ -327,6 +332,22 @@ def read_node_config(path: Path) -> NodeConfig:
     if limits.keys() - {"max_nonce_ahead", "require_funds", "max_evidence"}:
         raise DeploymentError("UNKNOWN SETTINGS IN limits")
 
+    snapshots = _optional(data, "snapshots", dict, {}, "configuration")
+
+    if snapshots.keys() - {"every", "prune"}:
+        raise DeploymentError("UNKNOWN SETTINGS IN snapshots")
+
+    every = snapshots.get("every")
+
+    if every is not None and (type(every) is not int or every < 1):
+        raise DeploymentError("snapshots: every MUST BE A POSITIVE INTEGER")
+
+    prune = _optional(snapshots, "prune", bool, False, "snapshots")
+
+    # Pruning without snapshots would have nothing to prune by, and it would say nothing.
+    if prune and every is None:
+        raise DeploymentError("snapshots: prune NEEDS every")
+
     interval = _optional(data, "sync_interval", (int, float), 5.0, "configuration")
 
     if interval <= 0:
@@ -365,4 +386,6 @@ def read_node_config(path: Path) -> NodeConfig:
         max_nonce_ahead=_optional(limits, "max_nonce_ahead", int, 1024, "limits"),
         require_funds=_optional(limits, "require_funds", bool, True, "limits"),
         max_evidence=_optional(limits, "max_evidence", int, 100_000, "limits"),
+        snapshot_every=every,
+        prune=prune,
     )
