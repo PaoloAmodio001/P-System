@@ -386,3 +386,35 @@ import PSystem
 #print axioms PSystem.Quorum.too_few_reports_miss_a_certificate
 
 #print axioms PSystem.Quorum.closures_can_differ
+
+#print axioms PSystem.Quorum.mem_thresholdLocks
+
+#print axioms PSystem.Quorum.honest_common_length
+
+#print axioms PSystem.Quorum.certified_passes_threshold
+
+#print axioms PSystem.Quorum.unlocked_key_has_no_certificate
+
+#print axioms PSystem.Quorum.no_double_spend_with_unlock
+
+#print axioms PSystem.Quorum.unlock_frees_the_nonce
+
+#print axioms PSystem.Quorum.threshold_above_2f1_fails
+
+#print axioms PSystem.Quorum.too_few_reports_fail
+
+#print axioms PSystem.Quorum.forgetting_old_locks_fails
+
+#print axioms PSystem.Quorum.membersBy_length
+
+#print axioms PSystem.Quorum.membersBy_nodup
+
+#print axioms PSystem.Quorum.split_fits_the_first
+
+#print axioms PSystem.Quorum.split_fits_the_second
+
+#print axioms PSystem.Quorum.split_lock_ambiguous_general
+
+#print axioms PSystem.Quorum.certified_can_have_one_report
+
+#print axioms PSystem.Quorum.threshold_rule_loses_a_certificate_3f1
