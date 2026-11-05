@@ -9,9 +9,15 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 
 - Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 20 s to 0.9 s, 0.1 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
 - **A closure no longer takes votes.** It is an order of governance and any quorum of reports, and a member reports for one order per epoch. Two proposers at once, or one that dies, can no longer block an epoch: only a governance that signs two orders can. `QuorumReports.lean`, `tests/test_quorum_reports.py`. This replaces the closure votes and their retries of the earlier passage. `CLOSURE_VOTE_REQUEST`, `CLOSURE_LOCKED` and `CLOSURE_VOTE` are gone. Stores migrate to schema 5.
+- Limits against saturation: `tests/test_saturation.py`, `docs/proposte/passo-4.md`.
 - `scripts/install_hooks.sh`: a pre-commit hook that runs the fast tests and the proofs.
 
 ### Fixed
+
+- Whoever reached the port, with no certificate, could keep every honest peer out with 70 silent connections. The one waiting longest now gives way.
+- A request for synchronization cost 28 ms under the lock of the node with 3000 certificates, at up to 5000 requests per second. A peer now pays for what it asks.
+- Each new certificate tried every one in the buffer, with a read of the disk for each, and the buffer had no limit.
+- With 100 000 proofs in memory each message cost 1.75 ms, because they were copied each time.
 
 - **Keys of an ended committee, stolen after its closure, could certify a spend the sender never signed, and nodes of later
   epochs executed it.** Changing committee protected nothing against stolen keys. An old certificate now counts only for an event
