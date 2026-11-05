@@ -1,0 +1,22 @@
+#!/bin/sh
+# Refuses a commit unless the fast tests and the proofs pass. Install it with scripts/install_hooks.sh.
+#
+# It checks the working tree, not only what is staged: stage everything you mean to test. To skip it
+# with `git commit --no-verify` is to break rule 7 of CLAUDE.md, and the push must not follow.
+root=$(git rev-parse --show-toplevel) || exit 1
+# Git sets these for a hook, and they would point the tests that use git at this repository.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX
+
+cd "$root" || exit 1
+
+if ! python3 -m pytest -q -m "not slow"; then
+    echo "pre-commit: the fast tests failed, nothing was committed" >&2
+    exit 1
+fi
+
+cd formal/lean || exit 1
+
+if ! lake build; then
+    echo "pre-commit: lake build failed, nothing was committed" >&2
+    exit 1
+fi

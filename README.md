@@ -79,6 +79,9 @@ python scripts/soak.py --minutes 60 --out soak.jsonl   # campaigns of network fa
 cd formal/lean && lake build             # needs Lean: see formal/lean/lean-toolchain
 ```
 
+`sh scripts/install_hooks.sh` installs a pre-commit hook that refuses a commit unless `pytest -q -m "not slow"` and `lake build` pass.
+It checks the working tree, so stage what you mean to test.
+
 Every push runs the proofs and the whole suite in continuous integration (`.github/workflows/ci.yml`). Results describe specific
 runs, not universal guarantees.
 
