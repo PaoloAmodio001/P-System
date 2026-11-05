@@ -2459,9 +2459,9 @@ class QuorumDriver:
             del self._waiting[event.sender]
 
     def _retry_buffer(self) -> None:
-        # Always the smallest id that can run, so that the order depends on the certificates and not on
-        # how they arrived. Only the next nonce of each sender can run, so what waits further on costs
-        # nothing here. One that cannot run yet is tried again after anything else runs, since that may
+        # Always the smallest id that can run, so that what waits here runs in one order however it
+        # arrived. When each certificate arrives can still change the order in the log of a node. Only
+        # the next nonce of each sender can run, so what waits further on costs nothing here. One that cannot run yet is tried again after anything else runs, since that may
         # bring it funds or a parent. A failed write leaves the certificate here, and any later
         # certificate tries it again.
         state = self.replica.state

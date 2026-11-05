@@ -63,31 +63,65 @@ IN_QUORUM = {
         "        return is_well_formed_event(signed.transfer) and signed.verify()\n",
     ),
     "buffer tried only once": (
-        "                    del self._buffer[event_id]\n"
-        "                    progress = True\n",
-        "                    del self._buffer[event_id]\n",
+        "            if following is not None:\n"
+        "                heapq.heappush(ready, following)\n"
+        "\n"
+        "            for waiting in blocked:\n"
+        "                heapq.heappush(ready, waiting)\n"
+        "\n"
+        "            blocked = []\n",
+        "",
     ),
     "buffer tried in another order": (
-        "            for event_id in sorted(self._buffer):\n",
-        "            for event_id in sorted(self._buffer, reverse=True):\n",
+        "            event_id = heapq.heappop(ready)\n",
+        "            ready.sort()\n"
+        "            event_id = ready.pop()\n",
+    ),
+    "buffer tried in order of arrival": (
+        "        heapq.heapify(ready)\n"
+        "        blocked = []\n"
+        "\n"
+        "        while ready:\n"
+        "            event_id = heapq.heappop(ready)\n",
+        "        blocked = []\n"
+        "\n"
+        "        class heapq:\n"
+        "            heappush = list.append\n"
+        "\n"
+        "        while ready:\n"
+        "            event_id = ready.pop(0)\n",
+    ),
+    "what comes next of a sender not tried": (
+        "            if following is not None:\n"
+        "                heapq.heappush(ready, following)\n",
+        "",
+    ),
+    "what could not run not tried again": (
+        "            for waiting in blocked:\n"
+        "                heapq.heappush(ready, waiting)\n",
+        "",
     ),
     "invalid certificate accepted": (
-        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n",
-        "        if not self.halted:\n",
+        "        if self.replica.certificate_is_valid(certificate):\n"
+        "            self._accept(certificate)\n",
+        "        if True:\n"
+        "            self._accept(certificate)\n",
     ),
     "invalid certificate halts the node": (
-        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n"
-        "            self._accept(certificate)\n",
-        "        if not self.halted and self.replica.certificate_is_valid(certificate):\n"
+        "        if self.replica.certificate_is_valid(certificate):\n"
         "            self._accept(certificate)\n"
-        "        elif not self.halted:\n"
+        "        else:\n"
+        "            self._cost += BAD_SIGNATURE_COST\n",
+        "        if self.replica.certificate_is_valid(certificate):\n"
+        "            self._accept(certificate)\n"
+        "        else:\n"
+        "            self._cost += BAD_SIGNATURE_COST\n"
         "            known = self._known.get(\n"
         "                (certificate.event.sender, certificate.event.nonce)\n"
         "            )\n"
-        "            if known is not None and"
-        " known.event.canonical() != certificate.event.canonical():\n"
+        "            if known is not None and known.event.canonical() != certificate.event.canonical():\n"
         "                self.replica._store._connection.execute(\n"
-        '                    "INSERT OR IGNORE INTO halt VALUES (1, ?, ?, ?, ?, 0, 0)",\n'
+        "                    \"INSERT OR IGNORE INTO halt VALUES (1, ?, ?, ?, ?, 0, 0)\",\n"
         "                    (known.event.canonical().decode(),\n"
         "                     _encode_signatures(known),\n"
         "                     certificate.event.canonical().decode(),\n"
@@ -97,10 +131,11 @@ IN_QUORUM = {
     "conflict does not halt": (
         "            self.replica.record_halt(known, certificate)\n"
         "            self._buffer.clear()\n"
+        "            self._waiting.clear()\n"
         "            self._aggregating.clear()\n"
-        "            return\n",
+        "            return False\n",
         "            self._retry_buffer()\n"
-        "            return\n",
+        "            return False\n",
     ),
     "halt on the same event": (
         "        if known is not None and known.event.canonical() != event.canonical():\n",

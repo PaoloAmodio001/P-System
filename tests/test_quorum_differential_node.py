@@ -17,9 +17,11 @@ the model, by the rules of the protocol:
   and `auth` there depends only on the event.
 - An event whose sender is not an identity can never be authorized. That one is a line
   `U` for Lean, so `auth` refuses it there too.
-- After each valid certificate, all those seen since the last restart are tried again in
-  order of id until nothing can change. The model needs no buffer, because delivering an
-  input again is the same as trying again, and this is that delivery.
+- After each valid certificate, those seen since the last restart run one at a time, always
+  the smallest id that can run, until none can. Lean says which that is, so the oracle has no
+  rule of execution of its own. The model needs no buffer: it runs what it is given, and
+  proves nothing about this order. The order is a rule of the node, and this is where it is
+  checked.
 - A restart loses the buffer: only what ran is still known afterwards.
 
 The trace of the replica is a second comparison: run through Lean, it must end in the same
@@ -192,11 +194,22 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
             known[key] = canonical
             seen[canonical] = (event, line)
 
-        for _ in range(len(seen) + 1):
-            for _id, _canonical, retried in sorted(
-                (item[0].event_id(), name, item[1]) for name, item in seen.items()
-            ):
-                plan.inputs.append(retried)
+        ran = _executed_ids(driver, directory, case, plan.inputs)
+        while True:
+            waiting = sorted(
+                (item for item in seen.values() if _event_id_as_nat(item[0]) not in ran),
+                key=lambda item: item[0].event_id(),
+            )
+            if not waiting:
+                return
+            # Offered in order of id, the first that Lean runs is the smallest that can run.
+            # What it refused changed nothing, and what it ran after that one may not be next.
+            offered = plan.inputs + [item[1] for item in waiting]
+            new = _executed_ids(driver, directory, case, offered)[len(ran):]
+            if not new:
+                return
+            plan.inputs.append(seen[by_id[new[0]].canonical()][1])
+            ran.append(new[0])
 
     def vote_for(event: Transfer) -> bool:
         key = (event.sender, event.nonce)
