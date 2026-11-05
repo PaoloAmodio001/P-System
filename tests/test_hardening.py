@@ -840,6 +840,30 @@ def test_a_list_that_cannot_be_read_refuses_everyone(tmp_path):
         right.stop()
 
 
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_connection_closed_during_the_check_does_not_stop_synchronization(tmp_path):
+    revoked = tmp_path / "revoked.txt"
+    revoked.write_text("")
+    left, right = nodes_with_revocation(tmp_path, revoked)
+    try:
+        assert link_ok(left, right)
+        assert wait_until(lambda: left.peer_connections, 10)
+        connection = left.peer_connections[right.node_id]
+        closed = connection.connection
+        closed.close()
+
+        class Stale:
+            connection = closed
+            node_id = "stale"
+
+        left._close_revoked([Stale()])
+        assert left._sync_thread.is_alive()
+    finally:
+        left.stop()
+        right.stop()
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_a_revocation_closes_a_live_connection_with_no_restart(tmp_path):
     revoked = tmp_path / "revoked.txt"
     revoked.write_text("")

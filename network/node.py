@@ -153,14 +153,28 @@ class Node:
         """
         replica = self._quorum.replica
         driver = self._quorum.driver
-        executed = replica.executed
         equivocations = self.equivocations
 
         for proof in driver.equivocations.values():
             equivocations = equivocations.add(proof)
 
-        self.events = list(executed)
-        self.local_events = list(executed)
+        # This runs for every message, so it only adds what is new. The log grows at the end, and
+        # only a rebuild from disk after a failed write can leave it shorter.
+        log = replica.log
+        known = len(self.events)
+
+        if (
+            known > len(log)
+            or len(self.local_events) != known
+            or (known and self.events[known - 1] is not log[known - 1].event)
+        ):
+            known = 0
+            self.events = []
+            self.local_events = []
+
+        added = [certificate.event for certificate in log[known:]]
+        self.events.extend(added)
+        self.local_events.extend(added)
         self.signed_events = dict(driver.signed_events)
         self.equivocations = equivocations
 
@@ -1064,11 +1078,26 @@ class Node:
         # halt are the only way to CONFLICTED, and a simple equivocation is not one.
         known = list(self.events) + self._quorum_halt_events
 
-        for index, first in enumerate(known):
-            for second in known[index + 1:]:
-                if ConflictResolver.conflicting(first, second):
-                    conflict = conflict.add(first)
-                    conflict = conflict.add(second)
+        # Linear in the events, and this runs under the lock of the node: every question about
+        # its status would otherwise stop it for longer and longer as the log grows. It finds what
+        # ConflictResolver.conflicting finds on every pair: tests/test_node_status_scale.py.
+        payload_of_id: dict[str, bytes] = {}
+        events_of_spend: dict[tuple[str, int], dict[str, Transfer]] = {}
+
+        for event in known:
+            event_id = event.event_id()
+            payload = event_payload(event)
+
+            # A later event equal to an earlier one changes nothing, so each id keeps its first.
+            if payload_of_id.setdefault(event_id, payload) != payload:
+                raise ValueError("DUPLICATE EVENT ID WITH DIFFERENT CONTENT")
+
+            events_of_spend.setdefault((event.sender, event.nonce), {}).setdefault(event_id, event)
+
+        for by_id in events_of_spend.values():
+            if len(by_id) > 1:
+                for event in by_id.values():
+                    conflict = conflict.add(event)
 
         return conflict
 
@@ -1367,7 +1396,13 @@ class Node:
             if stream is None or not hasattr(stream, "getpeercert"):
                 continue
 
-            if SecureTransport.is_revoked(stream, self.tls_config):
+            try:
+                revoked = SecureTransport.is_revoked(stream, self.tls_config)
+            except (OSError, ValueError, AttributeError):
+                # The connection closed in the meantime, and there is nothing left to stop.
+                continue
+
+            if revoked:
                 QUORUM_LOG.warning(
                     "peer certificate revoked: connection closed",
                     extra={"peer": connection.node_id},

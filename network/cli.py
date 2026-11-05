@@ -18,6 +18,7 @@ The `psystem` command: create a deployment, run a node, talk to one.
 """
 
 import argparse
+import faulthandler
 import json
 import signal
 import sqlite3
@@ -133,6 +134,8 @@ def _node(args) -> int:
     from network.service import Service, configure_logging
 
     configure_logging()
+    # `kill -USR1` writes where every thread is to stderr: what to look at when a node hangs.
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
     service = Service(read_node_config(Path(args.config)), create=args.create_store)
     stop = threading.Event()
 

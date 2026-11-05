@@ -22,6 +22,9 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 - Certificates of the authority failed strict verification, which is the default in recent Python, because they lacked
   the identifier of their authority.
 
+- `/v1/status` compared every pair of events, holding the lock of the node: 32 seconds with 2000 events, so asking for the
+  status stopped the node. It is linear now. Found by a long campaign of faults.
+
 ### Added
 
 - Keys encrypted at rest, and a signer in another process with its own vote lock (`psystem signer`).
