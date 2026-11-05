@@ -345,3 +345,45 @@ import PSystem
 #print axioms PSystem.leaving_changes_the_sum
 
 #print axioms PSystem.assets_are_separate
+
+#print axioms PSystem.Quorum.agrees_step
+
+#print axioms PSystem.Quorum.agrees_foldl
+
+#print axioms PSystem.Quorum.resume_equals_replay
+
+#print axioms PSystem.Quorum.validSequence_mono
+
+#print axioms PSystem.Quorum.resumeInvariant_step
+
+#print axioms PSystem.Quorum.resumeInvariant_foldl
+
+#print axioms PSystem.Quorum.resume_is_derive
+
+#print axioms PSystem.Quorum.resume_same_state_as_full
+
+#print axioms PSystem.Quorum.attested_snapshot_matches_node
+
+#print axioms PSystem.Quorum.union_locks_cover
+
+#print axioms PSystem.Quorum.votes_pass_auth_foldl
+
+#print axioms PSystem.Quorum.votes_pass_auth
+
+#print axioms PSystem.Quorum.certifiedV_same_epoch
+
+#print axioms PSystem.Quorum.no_double_spend_views
+
+#print axioms PSystem.Quorum.flooredAuth_zero
+
+#print axioms PSystem.Quorum.viewChain_of_chainValid
+
+#print axioms PSystem.Quorum.prune_without_floor_lets_conflict_through
+
+#print axioms PSystem.Quorum.invalid_set_has_no_derivation
+
+#print axioms PSystem.Quorum.attestation_without_honest_signer_proves_nothing
+
+#print axioms PSystem.Quorum.resume_without_ids_loses_children
+
+#print axioms PSystem.Quorum.resume_is_not_vacuous
