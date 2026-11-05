@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "p-system"
+version = "0.2.0"
+description = "A registry of single-owner state with quorum certificates and machine-checked safety on its model."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.14"
+dependencies = ["cryptography>=44"]
+authors = [{ name = "Paolo Amodio" }]
+
+[project.scripts]
+psystem = "network.cli:main"
+
+[tool.setuptools]
+packages = ["core", "crypto", "network", "sdk"]

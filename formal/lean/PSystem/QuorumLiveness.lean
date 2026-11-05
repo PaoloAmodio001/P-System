@@ -138,8 +138,7 @@ theorem certificate_executes {n : Nat} {Sig : Type} (verify : Fin n → Event �
       !(st.executed.map Event.id).contains c.event.id) = true := by
     simp only [hvalid, hexec, hready, hfresh]
     rfl
-  simp only [step]
-  rw [if_pos hcond]
+  simp only [step, hcond, ↓reduceIte]
   simp [NodeState.executed]
 
 end PSystem.Quorum

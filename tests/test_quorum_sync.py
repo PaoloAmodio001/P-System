@@ -408,3 +408,11 @@ def test_sending_the_log_again_checks_no_signature(make_driver, monkeypatch):
 def test_malformed_message_is_a_value_error_for_the_caller(make_driver, message):
     with pytest.raises(ValueError):
         make_driver().handle_message(message)
+
+
+@pytest.mark.parametrize("epoch", [0, -1, True, "1", 2**63, 2**256])
+def test_request_with_a_bad_epoch_is_a_value_error(make_driver, epoch):
+    # 2**63 came from a fuzzer: it raised OverflowError inside SQLite, past every check.
+    message = {"type": "CERTIFICATE_SYNC_REQUEST", "frontier": [], "epoch": epoch}
+    with pytest.raises(ValueError):
+        make_driver().handle_message(message)

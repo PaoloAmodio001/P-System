@@ -149,6 +149,12 @@ def _decode_vote_fields(validator, signature) -> Vote:
     )
 
 
+def _check_epoch(value) -> None:
+    # The bound is what SQLite can compare, which no chain of committees will reach.
+    if type(value) is not int or not 0 < value < 2**63:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+
 def encode_vote_request(event: SignedTransfer) -> dict:
     return {
         "type": "VOTE_REQUEST",
@@ -226,8 +232,8 @@ def decode_certificate(message) -> QuorumCertificate:
     if type(data["votes"]) is not list:
         raise ValueError("INVALID QUORUM MESSAGE")
 
-    if has_epoch and (type(data["epoch"]) is not int or data["epoch"] <= 0):
-        raise ValueError("INVALID QUORUM MESSAGE")
+    if has_epoch:
+        _check_epoch(data["epoch"])
 
     votes = []
 
@@ -297,8 +303,8 @@ def decode_certificate_sync_request(message) -> dict[str, int]:
     if type(data["frontier"]) is not list:
         raise ValueError("INVALID QUORUM MESSAGE")
 
-    if has_epoch and (type(data["epoch"]) is not int or data["epoch"] <= 0):
-        raise ValueError("INVALID QUORUM MESSAGE")
+    if has_epoch:
+        _check_epoch(data["epoch"])
 
     frontier = {}
     previous = None

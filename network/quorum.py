@@ -6,9 +6,11 @@ empirical, not a refinement proof.
 """
 
 import json
+import logging
 import os
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -53,6 +55,9 @@ from network.message import (
     encode_vote,
     encode_vote_request,
 )
+
+
+LOG = logging.getLogger("psystem.quorum")
 
 
 class VoteStoreError(Exception):
@@ -104,6 +109,8 @@ _EPOCH_TABLES = (
     """,
     # An epoch with a row here votes for nothing more.
     "CREATE TABLE closed_epochs (epoch INTEGER PRIMARY KEY)",
+    # This file came from a backup during this epoch: see `mark_restored`.
+    "CREATE TABLE restored_epochs (epoch INTEGER PRIMARY KEY)",
     # The closure this validator voted for in an epoch: one, for good.
     """
     CREATE TABLE closure_votes (
@@ -261,6 +268,9 @@ class SqliteVoteStore:
         self._closed = False
         # True while a group holds the transaction: see `group`.
         self._grouped = False
+        # For the metrics: writes to disk and the time they took.
+        self.commits = 0
+        self.commit_seconds = 0.0
         mode = "rwc" if create else "rw"
 
         try:
@@ -467,9 +477,15 @@ class SqliteVoteStore:
         if not self._grouped:
             self._connection.execute("BEGIN IMMEDIATE")
 
+    def _timed_commit(self) -> None:
+        started = time.perf_counter()
+        self._connection.execute("COMMIT")
+        self.commit_seconds += time.perf_counter() - started
+        self.commits += 1
+
     def _commit(self) -> None:
         if not self._grouped:
-            self._connection.execute("COMMIT")
+            self._timed_commit()
 
     def _rollback_if_open(self) -> None:
         if not self._grouped and self._connection.in_transaction:
@@ -495,7 +511,7 @@ class SqliteVoteStore:
 
             try:
                 yield
-                self._connection.execute("COMMIT")
+                self._timed_commit()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"GROUP NOT RECORDED: {error}") from error
             finally:
@@ -748,6 +764,13 @@ class SqliteVoteStore:
             try:
                 self._begin()
                 epoch = self.committee.epoch
+
+                if self._connection.execute(
+                    "SELECT 1 FROM restored_epochs WHERE epoch = ?",
+                    (epoch,),
+                ).fetchone():
+                    raise VoteStoreError("THIS FILE WAS RESTORED: IT REPORTS NOTHING IN THIS EPOCH")
+
                 rows = self._connection.execute(
                     """
                     SELECT votes.canonical, vote_evidence.public_key, vote_evidence.signature
@@ -781,6 +804,51 @@ class SqliteVoteStore:
             )
             for canonical, public_key, signature in rows
         ]
+
+    def mark_restored(self) -> None:
+        """
+        This file came from a backup, so it may have lost votes this validator signed. Until
+        the next epoch it votes for nothing and reports nothing: a report without those votes
+        could lose a certified event. It executes certificates as usual. A validator that
+        does this breaks no lock, because it signs nothing: `votes_stable_once_closed`.
+        """
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO restored_epochs (epoch) VALUES (?)",
+                    (self.committee.epoch,),
+                )
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)",
+                    (self.committee.epoch,),
+                )
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO closure_votes (epoch, digest) VALUES (?, '')",
+                    (self.committee.epoch,),
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"NOT MARKED AS RESTORED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def is_restored(self) -> bool:
+        with self._lock:
+            self._require_open()
+
+            try:
+                return (
+                    self._connection.execute(
+                        "SELECT 1 FROM restored_epochs WHERE epoch = ?",
+                        (self.committee.epoch,),
+                    ).fetchone()
+                    is not None
+                )
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ EPOCH: {error}") from error
 
     def epoch_is_closed(self) -> bool:
         with self._lock:
@@ -961,6 +1029,10 @@ class QuorumReplica:
         second: QuorumCertificate,
     ) -> None:
         self._store.record_halt(first, second)
+        LOG.critical(
+            "node halted: two valid certificates in conflict",
+            extra={"sender": first.event.sender, "nonce": first.event.nonce},
+        )
 
     def halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
         return self._store.halt_proof()
@@ -994,7 +1066,7 @@ class QuorumReplica:
         Stop voting and report, durably in that order. None if this node has no vote in
         this epoch, because it is not a member of the committee.
         """
-        if not self.is_member or self._store.halted():
+        if not self.is_member or self._store.halted() or self._store.is_restored():
             return None
 
         return EpochReport.create(
@@ -1139,9 +1211,24 @@ class QuorumDriver:
     and then nothing is to be sent.
     """
 
-    def __init__(self, replica: QuorumReplica, governance: Governance | None = None) -> None:
+    def __init__(
+        self,
+        replica: QuorumReplica,
+        governance: Governance | None = None,
+        max_nonce_ahead: int | None = None,
+        require_funds: bool = False,
+        max_evidence: int | None = None,
+    ) -> None:
         self.replica = replica
         self.governance = governance
+        # Limits against who fills a node with events of their own. Refusing a vote cannot
+        # break safety: `no_double_spend` holds for any list of inputs, and a refused request
+        # is one input less. It can delay an honest sender, who sends the event again. So what
+        # these depend on is the state of this node, and that is allowed for a vote: the
+        # first vote already depends on what a node received first.
+        self.max_nonce_ahead = max_nonce_ahead
+        self.require_funds = require_funds
+        self.max_evidence = max_evidence
         # What this node proposed: the reports, then the votes on the closure.
         self._change: EpochChange | None = None
         self._reports: dict[int, EpochReport] = {}
@@ -1442,6 +1529,14 @@ class QuorumDriver:
 
     def _install(self, closure: EpochClosure) -> None:
         self.replica.install_closure(closure)
+        LOG.warning(
+            "new epoch installed",
+            extra={
+                "epoch": self.committee.epoch,
+                "committee_id": self.committee.committee_id,
+                "locks": len(closure.locks()),
+            },
+        )
         # Votes collected so far were signed for the committee that has ended.
         self._aggregating.clear()
         self._change = None
@@ -1456,7 +1551,11 @@ class QuorumDriver:
         certificate, send that instead. If the vote is refused, nobody is asked,
         because an honest node does not ask for what it would not sign.
         """
-        if not self._is_authorized(signed) or self.halted:
+        if (
+            not self._is_authorized(signed)
+            or not self._is_admitted(signed.transfer)
+            or self.halted
+        ):
             return _NOTHING
 
         self._record_signed(signed)
@@ -1493,7 +1592,7 @@ class QuorumDriver:
         return True
 
     def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
-        if not self._is_authorized(signed):
+        if not self._is_authorized(signed) or not self._is_admitted(signed.transfer):
             return _NOTHING
 
         # Before the replica, because a vote refused is when the proof appears.
@@ -1589,7 +1688,27 @@ class QuorumDriver:
             and signed.identity_id == signed.transfer.sender
         )
 
+    def _is_admitted(self, event: Transfer) -> bool:
+        state = self.replica.state
+        expected = state.nonce(event.sender)
+
+        if self.max_nonce_ahead is not None and not (
+            expected <= event.nonce <= expected + self.max_nonce_ahead
+        ):
+            return False
+
+        # A sender with no funds at all is who costs the most for the least. Funds that are
+        # on their way are not refused: only a sender with none now and none known.
+        if self.require_funds and state.balance(event.sender) == 0:
+            return False
+
+        return True
+
     def _record_signed(self, signed: SignedTransfer) -> None:
+        # Evidence in memory, which the protocol does not need. Past the limit it is not kept.
+        if self.max_evidence is not None and len(self.signed_events) >= self.max_evidence:
+            return
+
         event = signed.transfer
         key = (event.sender, event.nonce)
         self.signed_events.setdefault(event.event_id(), signed)
@@ -1616,6 +1735,11 @@ class QuorumConfig:
     governance: Governance | None = None
     # This node is not in `committee`, the first of the chain, and enters later.
     joining: bool = False
+    # What an honest node may refuse before voting: see `QuorumDriver`. Off by default, like
+    # the model. The service turns them on.
+    max_nonce_ahead: int | None = None
+    require_funds: bool = False
+    max_evidence: int | None = None
 
 
 class QuorumRuntime:
@@ -1642,7 +1766,7 @@ class QuorumRuntime:
         self.closed = False
         self._identity = config.identity
         self._initial_state = initial_state
-        self._governance = config.governance
+        self._config = config
         self._lock_file = self._acquire_lock(Path(config.store_path))
 
         try:
@@ -1670,7 +1794,7 @@ class QuorumRuntime:
             os.close(self._lock_file)
             raise
 
-        self.driver = QuorumDriver(self.replica, config.governance)
+        self.driver = self._new_driver()
 
     @staticmethod
     def _acquire_lock(path: Path) -> int:
@@ -1723,6 +1847,15 @@ class QuorumRuntime:
 
         return DriverOutput(tuple(replies), tuple(broadcasts)), error
 
+    def _new_driver(self) -> QuorumDriver:
+        return QuorumDriver(
+            self.replica,
+            self._config.governance,
+            self._config.max_nonce_ahead,
+            self._config.require_funds,
+            self._config.max_evidence,
+        )
+
     def submit_group(self, events: list[SignedTransfer]) -> DriverOutput:
         """Start several events here, with one write for all the votes of this node."""
         replies = []
@@ -1748,7 +1881,7 @@ class QuorumRuntime:
             self._store,
             lambda _event: True,
         )
-        self.driver = QuorumDriver(self.replica, self._governance)
+        self.driver = self._new_driver()
 
     def close(self) -> None:
         if self.closed:

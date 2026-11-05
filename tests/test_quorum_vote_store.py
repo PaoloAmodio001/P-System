@@ -741,7 +741,14 @@ def test_halt_row_removed_by_hand_is_not_detected(path, halt_store):
 def _downgrade_to_v2(path: Path) -> None:
     """The tables as they were, literally: a migration must work on what really existed."""
     connection = sqlite3.connect(path)
-    for table in ("vote_evidence", "closed_epochs", "closure_votes", "closures", "locks"):
+    for table in (
+        "vote_evidence",
+        "closed_epochs",
+        "restored_epochs",
+        "closure_votes",
+        "closures",
+        "locks",
+    ):
         connection.execute(f"DROP TABLE {table}")
     connection.execute("ALTER TABLE votes RENAME TO votes_v3")
     connection.execute(
