@@ -808,6 +808,19 @@ def test_a_revoked_peer_cannot_connect_in_either_direction(tmp_path):
         right.stop()
 
 
+def test_a_fingerprint_with_a_note_and_in_capitals_counts(tmp_path):
+    # Alone in the list: in the test above another line can do the refusing by itself.
+    revoked = tmp_path / "revoked.txt"
+    revoked.write_text("")
+    left, right = nodes_with_revocation(tmp_path, revoked, only_first=True)
+    try:
+        revoked.write_text(f"# note\n  {fingerprint(right).upper()}  # lost laptop\n")
+        assert not link_ok(left, right)
+    finally:
+        left.stop()
+        right.stop()
+
+
 def test_who_dials_checks_the_list_by_itself(tmp_path):
     revoked = tmp_path / "revoked.txt"
     revoked.write_text("")
