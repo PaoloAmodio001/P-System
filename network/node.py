@@ -55,6 +55,7 @@ class Node:
     SIMULTANEOUS_DIAL_SECONDS = 3.0
     RECONNECT_BASE_DELAY = 2.0
     RECONNECT_MAX_DELAY = 60.0
+    STOP_FLUSH_SECONDS = 1.0
 
     def __init__(
         self,
@@ -223,7 +224,16 @@ class Node:
             connections = list(self.peer_connections.values())
             self.peer_connections.clear()
 
+        # What was already decided should leave, but a peer that does not read must not
+        # hold up a stop.
+        deadline = time.monotonic() + self.STOP_FLUSH_SECONDS
+
         for connection in connections:
+            flush = getattr(connection, "flush", None)
+
+            if flush is not None:
+                flush(max(0.0, deadline - time.monotonic()))
+
             connection.close()
 
         self._server = None
@@ -1392,7 +1402,7 @@ class Node:
         for message in output.broadcasts:
             for node_id, target in targets:
                 try:
-                    target.send(message)
+                    target.enqueue(message)
                 except (ConnectionError, OSError, TimeoutError):
                     self._disconnect_peer_connection(node_id, target)
                 except ValueError as error:
@@ -1406,7 +1416,7 @@ class Node:
 
     def _send_quorum_reply(self, connection, message) -> None:
         try:
-            connection.send(message)
+            connection.enqueue(message)
         except (ConnectionError, OSError, TimeoutError):
             self._peer_disconnected(connection)
             connection.close()

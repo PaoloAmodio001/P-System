@@ -82,6 +82,8 @@ that with `n = 3f+1`.
 Two proposers at once can split the votes on the closure, and then that epoch never closes. Only one
 should act: this is an operating rule, since nothing enforces it.
 
-The size of a closure is limited by the frame of 16 MiB. Measured with `n = 4`, three reports holding the
-same events: 1330 bytes per event, so about 12 000 events per epoch. Beyond that the closure cannot be sent and
-the epoch cannot close, so an operator must close epochs earlier. The log says "message too large to send".
+A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `CLOSURE_VOTE_REQUEST` and `EPOCH_CLOSURE`, and only
+those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB, next to each other on the connection, with
+the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between, a piece out of order or a wrong digest closes
+the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
+before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.

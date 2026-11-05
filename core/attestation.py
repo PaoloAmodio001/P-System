@@ -555,17 +555,40 @@ class EpochReport:
             signature=identity.sign(cls._payload(committee, change_id, ordered)),
         )
 
-    def verify(self, committee: Committee, change_id: str) -> bool:
+    def verify(
+        self,
+        committee: Committee,
+        change_id: str,
+        already_checked: set[SignedTransfer] | None = None,
+    ) -> bool:
         """
         One event the sender did not sign invalidates the whole report. Otherwise a
         faulty validator could lock any account by reporting an event nobody signed.
+
+        `already_checked` holds the signed events found good so far, so that the reports of
+        one closure, which mostly hold the same events, check each signature once.
         """
+        checked = set() if already_checked is None else already_checked
+
+        def is_good(signed: SignedTransfer) -> bool:
+            if not is_well_formed_event(signed.transfer):
+                return False
+
+            if signed in checked:
+                return True
+
+            if not _is_signed_by_its_sender(signed):
+                return False
+
+            checked.add(signed)
+            return True
+
         return (
             committee.has_validator(self.validator)
             and type(self.votes) is tuple
             and list(self.votes)
             == sorted(self.votes, key=lambda signed: signed.transfer.canonical())
-            and all(_is_signed_by_its_sender(signed) for signed in self.votes)
+            and all(is_good(signed) for signed in self.votes)
             and verify_signature(
                 committee.members[self.validator],
                 self.signature,
@@ -607,12 +630,13 @@ class EpochClosure:
 
     def is_valid_candidate(self, governance: Governance, committee: Committee) -> bool:
         validators = [report.validator for report in self.reports]
+        checked: set[SignedTransfer] = set()
         return (
             self.change.verify(governance, committee)
             and validators == sorted(set(validators))
             and len(validators) >= committee.quorum
             and all(
-                report.verify(committee, self.change.change_id)
+                report.verify(committee, self.change.change_id, checked)
                 for report in self.reports
             )
         )

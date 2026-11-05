@@ -290,7 +290,7 @@ class SecureTransport:
         }
 
     @staticmethod
-    def send(connection, message: dict) -> None:
+    def encode_payload(message: dict) -> bytes:
         payload = json.dumps(
             message,
             sort_keys=True,
@@ -300,13 +300,34 @@ class SecureTransport:
         if not payload:
             raise ValueError("INVALID EMPTY MESSAGE")
 
+        return payload
+
+    @staticmethod
+    def frame_of_payload(payload: bytes) -> bytes:
         if len(payload) > MAX_MESSAGE_SIZE:
             raise ValueError("MESSAGE TOO LARGE")
 
+        return len(payload).to_bytes(4, "big") + payload
+
+    @staticmethod
+    def send(connection, message: dict) -> None:
         connection.sendall(
-            len(payload).to_bytes(4, "big")
-            + payload
+            SecureTransport.frame_of_payload(SecureTransport.encode_payload(message))
         )
+
+    @staticmethod
+    def decode_payload(payload: bytes) -> dict:
+        try:
+            message = json.loads(
+                payload.decode("utf-8")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("INVALID JSON MESSAGE") from exc
+
+        if not isinstance(message, dict):
+            raise ValueError("INVALID MESSAGE TYPE")
+
+        return message
 
     @staticmethod
     def receive(connection) -> dict:
@@ -323,22 +344,12 @@ class SecureTransport:
         if length <= 0 or length > MAX_MESSAGE_SIZE:
             raise ValueError("INVALID MESSAGE LENGTH")
 
-        payload = SecureTransport._read_exact(
-            connection,
-            length,
-        )
-
-        try:
-            message = json.loads(
-                payload.decode("utf-8")
+        return SecureTransport.decode_payload(
+            SecureTransport._read_exact(
+                connection,
+                length,
             )
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("INVALID JSON MESSAGE") from exc
-
-        if not isinstance(message, dict):
-            raise ValueError("INVALID MESSAGE TYPE")
-
-        return message
+        )
 
     @staticmethod
     def _read_exact(connection, size: int) -> bytes:

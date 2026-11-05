@@ -56,6 +56,17 @@ A profile of real nodes, the same day, with 4 nodes:
 
 ## What these numbers allow you to say
 
-Tens to a few hundred events per second, on this kind of hardware, in this configuration, with a committee on one host. **That is not a claim about production.** Measured separately: an epoch can hold about 12 000 events with `n = 4`, because a closure must fit in a frame.
+Tens to a few hundred events per second, on this kind of hardware, in this configuration, with a committee on one host. **That is not a claim about production.**
+
+## Closing a large epoch
+
+`python -m benchmarks.epoch_capacity 16000 60000`: four nodes in one process on real TLS, on this machine, with the votes written straight into the stores. So all four nodes share one core's worth of Python, and a real committee has a machine each.
+
+| Events in the epoch | Closure | Time to close | Peak memory of the process, for all four nodes |
+|---|---|---|---|
+| 16 000 | 17.7 MB | 47 s | 809 MiB |
+| 60 000 | 66.4 MB | 319 s | 5945 MiB |
+
+Time grows faster than the events, and no node votes in that epoch from the moment it reports. The hard bound of 256 MiB would be near 240 000 events, not run. **Close an epoch before about 50 000 events.** This is advice from these two runs, not a measured limit of the protocol.
 
 The system is in Python, and systems like FastPay in Rust report far more on far more hardware. No comparison has been run, and the guarantees of durability would have to be compared before the numbers. High-volume payments are not its use. Processes with a modest rate and a need for proofs may be, and that remains to be shown with a real user.

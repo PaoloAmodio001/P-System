@@ -328,6 +328,8 @@ class Connection:
                 self.unsigned.append(transfer["sender"])
         self.sent.append(wire)
 
+    enqueue = send
+
     def close(self) -> None:
         self.connected = False
 

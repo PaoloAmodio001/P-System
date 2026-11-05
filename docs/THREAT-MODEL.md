@@ -26,7 +26,7 @@ authors of the code, and it is what an audit should start from and attack.
 | More than `f` members | Sign two certificates | Not stopped. Detected if one node sees both, with the guilty named | `conflict_identifies_faulty` FORMAL (model) |
 | Holder of any node certificate | Claim another node id | Id checked against the certificate | `tests/test_node_tls_config.py` EMPIRICAL |
 | Holder of any node certificate | Send malformed frames or messages | The connection closes and the node goes on | `tests/test_quorum_differential_network.py`, `tests/test_fuzz_inputs.py` EMPIRICAL |
-| Holder of any node certificate | Stop reading | Send deadline, then the connection closes | `tests/test_quorum_differential_network.py` EMPIRICAL |
+| Holder of any node certificate | Stop reading | Each peer has its own queue and writer, so only that peer waits. Send deadline and bound on the queue, then the connection closes | `tests/test_peer_queue_and_fragments.py`, `tests/test_quorum_differential_network.py` EMPIRICAL |
 | Anyone who reaches the port | Hold connections open | Deadline and limit on handshakes. **Reduced, not removed** | `tests/test_node_server_handshake.py` |
 | Holder of any node certificate | Fill a node with signed events | Nonce window, funds check, bound on evidence. **Reduced, not removed** | `tests/test_service.py` |
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
@@ -38,7 +38,7 @@ authors of the code, and it is what an audit should start from and attack.
   break what the model proves. This is the largest gap, and no number of tests closes it.
 - **Denial of service.** A certificate holder can still consume CPU and bandwidth: there is no rate limit per
   connection, and a bad frame costs one signature check. Anyone who reaches the port can keep the 64 handshake places
-  busy. Broadcasts are sequential, so a peer that does not read delays those after it, by up to its deadline.
+  busy. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
 - **Keys** are files with mode 0600. No HSM, no KMS, no encryption at rest. A signer in a separate process, keeping the
   lock durable before the signature, is the next step.
 - **Revocation.** No revocation list for TLS certificates.
