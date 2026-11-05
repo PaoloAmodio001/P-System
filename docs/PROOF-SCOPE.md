@@ -32,6 +32,8 @@ Keys of ended committees: `QuorumOldKeys.lean` (`accepted_complete`, `old_keys_n
 
 Retries of a closure: `QuorumClosureRetry.lean` (`blocking_closure_is_seen`, `retry_gets_every_vote`) is `FORMAL (model)` about counting and picking, with delivery as a hypothesis. `split_closures_block` shows the limit: two closures with votes can block each other for good.
 
+Snapshots and pruning: `QuorumSnapshot.lean` is `FORMAL (model)` for restarting from a snapshot and for floors, with `ViewChain` as a hypothesis about the run. The link with Python is `EMPIRICAL`: differentials A and D take snapshots, prune and apply floors at random points. Nothing is proved about SQLite, or about what a false snapshot does beyond the bound of faulty members.
+
 The configuration `n = 5f+1`, `q = 4f+1` of decision D2 is **not implemented and not offered**. `no_double_spend_5f1` and `unlock_safe_5f1` prove its counting for one `(sender, nonce)`. No protocol uses them, and unlocking has no proof over a chain of epochs.
 
 Epochs in Python follow `QuorumEpochs.lean`: `EMPIRICAL`, by `tests/test_quorum_epochs.py`, `tests/test_quorum_differential_epochs.py` and differential D, `tests/test_epoch_differential.py`. Differential D compares one validator with `runEpoch`, `reportOf` and `lockAllows` after each input, across epochs, with locks from real closures and with restarts. It does not compare the verification of closures or the execution across epochs, which the model leaves to the hypothesis `ChainValid`, so the link is narrower than that of differential A.

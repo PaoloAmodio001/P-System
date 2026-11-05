@@ -44,13 +44,16 @@ All Ed25519.
 | `VOTE_REQUEST` | `transfer`, `public_key`, `signature` | `VOTE`, or nothing if refused |
 | `VOTE` | `transfer`, `validator`, `signature` | |
 | `CERTIFICATE` | `transfer`, `votes`, optional `epoch` | |
-| `CERTIFICATE_SYNC_REQUEST` | `frontier`: sorted `[sender, next_nonce]`; optional `epoch` | `EPOCH_CLOSURE`s, then `CERTIFICATE_SYNC` |
+| `CERTIFICATE_SYNC_REQUEST` | `frontier`: sorted `[sender, next_nonce]`; optional `epoch` | `EPOCH_CLOSURE`s, a `SNAPSHOT` if this node holds what is asked only inside one, then `CERTIFICATE_SYNC` |
 | `CERTIFICATE_SYNC` | `certificates`, at most about 4 MiB | a new request if something new was learned |
 | `EPOCH_CHANGE` | `change` | `EPOCH_REPORT` |
 | `EPOCH_REPORT` | `change_id`, `report` | |
 | `CLOSURE_VOTE_REQUEST` | `closure`, with no votes | `CLOSURE_VOTE` |
 | `CLOSURE_VOTE` | `digest`, `validator`, `signature` | |
 | `EPOCH_CLOSURE` | `closure`, with its votes | |
+| `SNAPSHOT_REQUEST` | `epoch`, `digest`, `nonces` | `SNAPSHOT_VOTE`, or nothing if this member cannot derive it |
+| `SNAPSHOT_VOTE` | `digest`, `attestation` | |
+| `SNAPSHOT` | `snapshot`: `epoch`, `balances`, `nonces`, `ids`, `attestations` | a new request if it was taken |
 
 A message of the right form that is not valid gets no answer and does not close the connection, since
 anyone can send one. A batch of certificates stops at its first invalid one.
@@ -104,6 +107,24 @@ those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB
 the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between, a piece out of order or a wrong digest closes
 the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
 before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.
+
+## Snapshots
+
+A snapshot says that with these events the state is this. It is a fact and not a choice: no vote lock, and two of them can both be true. Which events: those under `nonces` for each sender, and `no_double_spend` makes that one set. Its digest is SHA-256 of the state root and of the SHA-256 of the sorted ids, with no committee in it, so another committee can sign the same state.
+
+A member signs `SNAPSHOT_DOMAIN || committee_id || digest || SHA-256(its locks over the floor)`, and only after deriving that digest from its own log. A member behind says nothing, and the proposer asks again for 60 seconds. A snapshot needs a quorum of signatures. Its locks are the union of those of the signers, which need not be equal.
+
+A node takes a snapshot only from the committee in force. The keys of an ended committee can be stolen, as for an old certificate. So after a change of committee a member that prunes asks for new signatures on its state. Its own file may hold a snapshot of an earlier epoch: that committee was in force when it was taken.
+
+| With `[snapshots] prune = true` | |
+|---|---|
+| Certificates the snapshot covers | Removed at once |
+| Votes of ended epochs | Removed when a closure is installed |
+| Locks under the floor | Removed when a closure is installed, and from then on no vote under the floor: **the two are one rule** |
+| Ids of executed events | Stay, because a parent can name any past event |
+| Closures | Stay |
+
+The floor of a validator is the `nonces` of its last snapshot at the moment a closure is installed. Theorems: `QuorumSnapshot.lean`. A valid certificate under a floor that conflicts with what the snapshot holds can only come from more than `f` faulty members. It stays out, and the log says so at critical level, but with its other half pruned there is no proof to halt on: this is the price of pruning.
 
 ## Assets
 

@@ -5,6 +5,11 @@
 Quorum mode complete on a real network, and a service around it. **Not ready for production**: see
 `docs/VALIDATION-PLAN.md`.
 
+### Added in `verso-1.0`
+
+- Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 20 s to 0.9 s, 0.1 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
+- `scripts/install_hooks.sh`: a pre-commit hook that runs the fast tests and the proofs.
+
 ### Fixed
 
 - **Keys of an ended committee, stolen after its closure, could certify a spend the sender never signed, and nodes of later

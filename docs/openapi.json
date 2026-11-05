@@ -91,7 +91,9 @@
      "conflicted",
      "is_member",
      "peers",
-     "guilty_members"
+     "guilty_members",
+     "snapshot",
+     "certificates_held"
     ],
     "additionalProperties": false,
     "properties": {
@@ -111,7 +113,8 @@
       "type": "string"
      },
      "executed": {
-      "type": "integer"
+      "type": "integer",
+      "description": "All this node executed, also what it has pruned or got inside a snapshot"
      },
      "state_root": {
       "type": "string"
@@ -136,6 +139,38 @@
       "items": {
        "type": "string"
       }
+     },
+     "certificates_held": {
+      "type": "integer",
+      "description": "Certificates still on this node. With pruning, an older one answers 404 here"
+     },
+     "snapshot": {
+      "description": "The last snapshot this node took, if any",
+      "oneOf": [
+       {
+        "type": "null"
+       },
+       {
+        "type": "object",
+        "required": [
+         "epoch",
+         "digest",
+         "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "epoch": {
+          "type": "integer"
+         },
+         "digest": {
+          "type": "string"
+         },
+         "events": {
+          "type": "integer"
+         }
+        }
+       }
+      ]
      }
     }
    },
