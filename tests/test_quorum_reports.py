@@ -517,7 +517,7 @@ def test_a_header_takes_less_room_and_a_node_still_knows_its_locks(tmp_path):
     store.apply_floor(Snapshot(3, State({}, {}), ()))
     after = connection.execute("SELECT length(closure) FROM closures WHERE epoch = 0").fetchone()[0]
     assert after < before
-    old = closures[0].locks()[0]
+    old = closures[0].locks(COMMITTEE)[0]
     assert store.is_locked_event(old)
     store.close()
 

@@ -166,8 +166,9 @@ sender can leave its account blocked.
 | `QuorumAssets` | the total of a set of accounts |
 | `QuorumSnapshot` | restarting from a snapshot, floors, validators with different locks |
 | `QuorumReports` | a closure needs no votes: a lock on the order, and any quorum of reports |
+| `QuorumUnlock` | unlocking with `n = 5f+1` for every `f`, and why it fails with `n = 3f+1` |
 
-- 23 modules, 182 theorem declarations, about 4600 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
+- 24 modules, 198 theorem declarations, about 5000 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
   of the proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
@@ -210,6 +211,10 @@ Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacu
 | `order_unique` | Two orders cannot both have a quorum of reports, so one committee follows each epoch | FORMAL (model) |
 | `no_double_spend_any_closures` | No double spend where each validator installed its own closure of each epoch | FORMAL (model) |
 | `one_order_never_blocks` | With one order, any quorum a proposer reaches can report for it | FORMAL (model), delivery as a hypothesis |
+| `certified_passes_threshold` | For every `f`, with `n = 5f+1`, a certified event has at least `2f+1` reports in every closure | FORMAL (model) |
+| `unlocked_key_has_no_certificate` | A key with no event over that threshold has no certificate, so freeing it loses nothing | FORMAL (model) |
+| `no_double_spend_with_unlock` | No conflict in any two epochs, for every `f`, with each validator holding the threshold locks of a closure of its own, under `UnlockChain` | FORMAL (model) |
+| `split_lock_ambiguous_general`, `threshold_rule_loses_a_certificate_3f1` | For every `f`, with `n = 3f+1`, no rule on the reports works, and any threshold of 2 or more loses a certificate | FORMAL (model) |
 | `two_orders_can_block` | A governance that signs two orders can leave neither with a quorum | FORMAL (model), for `n = 4` |
 | `without_report_lock_two_orders_pass`, `order_unique_needs_the_bound`, `too_few_reports_miss_a_certificate`, `closures_can_differ` | What goes wrong without each hypothesis | FORMAL (model), for those instances |
 | `asset_supply_conserved` | A run of executable events, each inside a set of accounts or outside it, leaves the sum of the set unchanged | FORMAL (model) |

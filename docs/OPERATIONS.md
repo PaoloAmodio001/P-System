@@ -160,6 +160,10 @@ never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same
 operation. Rotating the key of an **account** does not exist: the account is the key.
 
+## Choosing unlocking
+
+`psystem genesis --unlock` gives 5 signatures out of 6 with `f = 1`, against 3 out of 4. With one member down and one faulty, nothing certifies. What you get is that an account that equivocated gets its nonce back at the next change of committee, instead of staying stuck on it for good. It cannot be changed later: it is in the identity of the chain.
+
 ## Snapshots and pruning
 
 A snapshot only shortens a restart: 50 000 certificates in 0.9 s instead of 20 s (`docs/BENCHMARKS.md`). It removes nothing. Set `every` on the members. `psystem_snapshot_events` and `snapshot` in `/v1/status` say how far the last one reaches.

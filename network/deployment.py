@@ -41,6 +41,7 @@ def write_genesis(
     balances: dict[str, int],
     governance_members=(),
     governance_threshold: int | None = None,
+    unlock: bool = False,
 ) -> Genesis:
     """Write a genesis file. It checks what `read_genesis` will check, before it exists."""
     data = {
@@ -49,6 +50,9 @@ def write_genesis(
         "members": sorted(member.hex() for member in members),
         "f": f,
     }
+
+    if unlock:
+        data["unlock"] = True
 
     if governance_threshold is not None:
         data["governance"] = {
@@ -68,7 +72,7 @@ def parse_genesis(text: str) -> Genesis:
     except (ValueError, RecursionError) as error:
         raise DeploymentError(f"GENESIS IS NOT JSON: {error}") from error
 
-    allowed = {"version", "balances", "members", "f", "governance"}
+    allowed = {"version", "balances", "members", "f", "governance", "unlock"}
 
     if type(data) is not dict or not {"version", "balances", "members", "f"} <= data.keys():
         raise DeploymentError("GENESIS MISSES A FIELD")
@@ -93,6 +97,7 @@ def parse_genesis(text: str) -> Genesis:
             [bytes.fromhex(member) for member in data["members"]],
             data["f"],
             state,
+            data.get("unlock", False),
         )
         governance = None
 

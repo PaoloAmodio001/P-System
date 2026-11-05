@@ -222,7 +222,7 @@ class ChainVerifier:
 
             self.current = closure.change.next_committee(self.current)
             self.committees[self.current.epoch] = self.current
-            self._locks.update(event.canonical() for event in closure.locks())
+            self._locks.update(event.canonical() for event in closure.locks(self.current))
 
     def verify(self, certificate) -> bool:
         """

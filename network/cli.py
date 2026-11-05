@@ -117,6 +117,7 @@ def _genesis(args) -> int:
         balances,
         [bytes.fromhex(member) for member in args.governance or []],
         args.governance_threshold,
+        args.unlock,
     )
     print(
         json.dumps(
@@ -307,6 +308,11 @@ def _parser() -> argparse.ArgumentParser:
     genesis.add_argument("--balance", action="append")
     genesis.add_argument("--governance", action="append")
     genesis.add_argument("--governance-threshold", type=int)
+    genesis.add_argument(
+        "--unlock",
+        action="store_true",
+        help="5f+1 members and a quorum of 4f+1, with split nonces free at the end of an epoch",
+    )
     genesis.set_defaults(run=_genesis)
 
     init_store = commands.add_parser("init-store")

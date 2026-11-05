@@ -64,7 +64,7 @@ CHANGES = {
             "",
         ),
         "light client takes no locks": (
-            "            self._locks.update(event.canonical() for event in closure.locks())\n",
+            "            self._locks.update(event.canonical() for event in closure.locks(self.current))\n",
             "",
         ),
         "light client wants a lock for everything": (

@@ -34,7 +34,7 @@ Closures: `QuorumReports.lean` is `FORMAL (model)`. `order_unique` says two orde
 
 Snapshots and pruning: `QuorumSnapshot.lean` is `FORMAL (model)` for restarting from a snapshot and for floors, with `ViewChain` as a hypothesis about the run. The link with Python is `EMPIRICAL`: differentials A and D take snapshots, prune and apply floors at random points. Nothing is proved about SQLite, or about what a false snapshot does beyond the bound of faulty members.
 
-The configuration `n = 5f+1`, `q = 4f+1` of decision D2 is **not implemented and not offered**. `no_double_spend_5f1` and `unlock_safe_5f1` prove its counting for one `(sender, nonce)`. No protocol uses them, and unlocking has no proof over a chain of epochs.
+The configuration `n = 5f+1`, `q = 4f+1` of decision D2 is implemented, off by default, with `psystem genesis --unlock`. `QuorumUnlock.lean` is `FORMAL (model)` for every `f`: a certified event always passes the threshold, and no conflict arises in any two epochs, under `UnlockChain`. The link with Python is `EMPIRICAL`: differential E compares the locks of a closure with `thresholdLocks`, on random reports. Freeing a nonce does not promise that a new vote reaches a quorum.
 
 Epochs in Python follow `QuorumEpochs.lean`: `EMPIRICAL`, by `tests/test_quorum_epochs.py`, `tests/test_quorum_differential_epochs.py` and differential D, `tests/test_epoch_differential.py`. Differential D compares one validator with `runEpoch`, `reportOf` and `lockAllows` after each input, across epochs, with locks from real closures and with restarts. It does not compare the verification of closures or the execution across epochs, which the model leaves to the hypothesis `ChainValid`, so the link is narrower than that of differential A.
 

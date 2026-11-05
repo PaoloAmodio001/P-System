@@ -9,6 +9,7 @@ Quorum mode complete on a real network, and a service around it. **Not ready for
 
 - Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 20 s to 0.9 s, 0.1 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
 - **A closure no longer takes votes.** It is an order of governance and any quorum of reports, and a member reports for one order per epoch. Two proposers at once, or one that dies, can no longer block an epoch: only a governance that signs two orders can. `QuorumReports.lean`, `tests/test_quorum_reports.py`. This replaces the closure votes and their retries of the earlier passage. `CLOSURE_VOTE_REQUEST`, `CLOSURE_LOCKED` and `CLOSURE_VOTE` are gone. Stores migrate to schema 5.
+- The optional configuration `n = 5f+1`, `q = 4f+1`, with split nonces free at the end of an epoch: `psystem genesis --unlock`. `QuorumUnlock.lean` proves it for every `f`, and that it cannot work with `3f+1`.
 - Limits against saturation: `tests/test_saturation.py`, `docs/proposte/passo-4.md`.
 - `scripts/install_hooks.sh`: a pre-commit hook that runs the fast tests and the proofs.
 
