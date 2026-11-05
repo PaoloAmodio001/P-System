@@ -89,3 +89,8 @@ Mutazioni dentro pytest per ogni limite.
 - Un mittente con fondi costa fino a `max_nonce_ahead` voti per epoca. Il numero di mittenti con fondi resta il moltiplicatore, e lo limita solo il denaro.
 - Un peer con certificato tiene occupati fino a 256 MiB per ogni connessione con i pezzi di un messaggio grande.
 - I valori (16, 64, 100, 5 MiB, 100 000) sono scelti a giudizio su una macchina. Non sono tarati su un impiego reale.
+
+## Differenze tra la proposta e il codice
+
+- Il buffer non riprova le teste a passate, ma sempre l'id più piccolo tra quelle che possono girare, con una coda a priorità. La prima versione a passate rendeva l'ordine del log dipendente dal caso: un test esistente lo ha mostrato, fallendo a volte.
+- Una risposta si paga per ciò che pesa davvero in byte, misurato quando entra nella coda, per ogni tipo di messaggio e non solo per la sincronizzazione.

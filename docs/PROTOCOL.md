@@ -95,6 +95,18 @@ the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between
 the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
 before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.
 
+## Limits
+
+None of these changes what an honest sender gets. They delay it at most.
+
+| Limit | Value | Past it |
+|---|---|---|
+| Handshakes in progress | 64, and 16 for each address | The one waiting longest goes |
+| Tokens of a connection | 5000 per second, burst of 10 000. A message 1, a bad signature 100, a KiB of an answer 1 | Its reader waits |
+| Certificates that cannot run yet | 100 000, and up to `max_nonce_ahead` ahead of a sender | Left out, and back with synchronization. The next nonce of a sender always enters |
+| Events being collected | 100 000 | No new one is started. Sending again works |
+| Proofs in memory | `max_evidence` | Not kept: a proof can depend on the order of arrival, and no state does |
+
 ## Snapshots
 
 A snapshot says that with these events the state is this. It is a fact and not a choice: no vote lock, and two of them can both be true. Which events: those under `nonces` for each sender, and `no_double_spend` makes that one set. Its digest is SHA-256 of the state root and of the SHA-256 of the sorted ids, with no committee in it, so another committee can sign the same state.

@@ -108,6 +108,7 @@ Logs go to standard error, one JSON object per line. Metrics at `/metrics`:
 | `psystem_executed_events` | Nodes that fall behind one another |
 | `psystem_peers_connected` | Below `2f` this node cannot get a certificate |
 | `psystem_epoch` | Nodes on different epochs for long |
+| `psystem_certificates_left_out_total` | Growing fast: the buffer is full, or someone sends far ahead. They come back with synchronization |
 | `psystem_certificates_waiting` | Growing: certificates that cannot run yet, usually a missing parent |
 | `psystem_equivocations` | Senders signing two versions: a client bug or an attack |
 | `psystem_store_commit_seconds_total` / `psystem_store_commits_total` | Average write time: disk trouble |

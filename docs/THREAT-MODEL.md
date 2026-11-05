@@ -42,8 +42,11 @@ authors of the code, and it is what an audit should start from and attack.
 
 - **Python is not proved.** The theorems are about the Lean model. The link with Python is tests. A bug in Python can
   break what the model proves. This is the largest gap, and no number of tests closes it.
-- **Denial of service.** A certificate holder can still consume CPU and bandwidth: each connection is paced at 5000 messages per second, by reading less, and a bad frame costs one signature check. Anyone who reaches the port can keep the 64 handshake places
-  busy. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
+- **Denial of service.** Limits are in place, and none has been tuned on a real deployment:
+  - Whoever reaches the port, with no certificate, gets a place among 64 handshakes and 16 for each address, and the one waiting longest gives way. So silent connections do not keep an honest peer out, unless they open all the places within its handshake.
+  - A peer with a certificate pays by cost: 5000 tokens per second, 100 for a bad signature, 1 for each KiB of an answer. The wait is on its own reader.
+  - A certificate that cannot run yet takes room up to 100 000 and up to `max_nonce_ahead` for each sender. One that can run never waits for room. One left out comes back with synchronization, so this delays and does not change a result (`tests/test_saturation.py`).
+  - **What is left:** a volumetric attack on the bandwidth or on the SYN queue of the kernel, which needs a firewall. A TLS handshake costs CPU before knowing who is on the other side. A sender with funds costs up to `max_nonce_ahead` votes per epoch, and what bounds the senders with funds is only money. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
 - **Keys** are files with mode 0600 by default. They can be encrypted, and they can live in a signer in another process that
   keeps its own vote lock (`network/remote_signer.py`, `EMPIRICAL`). That guard does not know the locks of earlier epochs, and
   its last signatures can be forgotten in a power cut. No HSM or KMS has been integrated.
