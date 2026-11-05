@@ -246,7 +246,6 @@ import PSystem
 
 #print axioms PSystem.Quorum.unlock_safe_5f1
 
-
 -- QuorumEpochs.lean
 #print axioms PSystem.Quorum.epoch_voteLock_step
 
@@ -276,9 +275,6 @@ import PSystem
 
 #print axioms PSystem.Quorum.no_double_spend_across_epochs
 
-#print axioms PSystem.Quorum.closure_unique
-
-
 -- QuorumEpochsNonVacuity.lean
 #print axioms PSystem.QuorumExamples.chain_valid
 
@@ -300,7 +296,6 @@ import PSystem
 
 #print axioms PSystem.QuorumExamples.unlock_safe_witness
 
-
 -- QuorumLiveness.lean
 #print axioms PSystem.Quorum.voteAllowed_of_free
 
@@ -321,20 +316,6 @@ import PSystem
 #print axioms PSystem.Quorum.old_keys_no_double_spend
 
 #print axioms PSystem.Quorum.two_versions_in_locks_both_accepted
-
-#print axioms PSystem.Quorum.lists_meet
-
-#print axioms PSystem.Quorum.adopted_some_of_mem
-
-#print axioms PSystem.Quorum.blocking_closure_is_seen
-
-#print axioms PSystem.Quorum.adopted_is_voted
-
-#print axioms PSystem.Quorum.retry_gets_every_vote
-
-#print axioms PSystem.Quorum.split_closures_block
-
-#print axioms PSystem.Quorum.split_votes_are_two_closures
 
 #print axioms PSystem.sumBalance_apply
 
@@ -387,3 +368,21 @@ import PSystem
 #print axioms PSystem.Quorum.resume_without_ids_loses_children
 
 #print axioms PSystem.Quorum.resume_is_not_vacuous
+
+#print axioms PSystem.Quorum.order_unique
+
+#print axioms PSystem.Quorum.one_order_never_blocks
+
+#print axioms PSystem.Quorum.viewChain_of_installed
+
+#print axioms PSystem.Quorum.no_double_spend_any_closures
+
+#print axioms PSystem.Quorum.without_report_lock_two_orders_pass
+
+#print axioms PSystem.Quorum.order_unique_needs_the_bound
+
+#print axioms PSystem.Quorum.two_orders_can_block
+
+#print axioms PSystem.Quorum.too_few_reports_miss_a_certificate
+
+#print axioms PSystem.Quorum.closures_can_differ
