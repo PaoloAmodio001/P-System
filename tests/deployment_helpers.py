@@ -1,6 +1,7 @@
 """A whole deployment on disk, made with the `psystem` command as an operator would make it."""
 
 import json
+import random
 import os
 import signal
 import socket
@@ -24,11 +25,31 @@ def psystem(*args: str) -> str:
     return result.stdout
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+_PORTS_GIVEN: set[int] = set()
 
+
+def free_port() -> int:
+    """
+    A port for a process to bind later. Below the range the kernel takes from for outgoing connections,
+    so that one of those cannot get there first: that killed a node at its start, once, on a busy machine.
+    Never the same one twice in a run.
+    """
+    while True:
+        port = random.randint(20_000, 32_000)
+
+        if port in _PORTS_GIVEN:
+            continue
+
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+
+        _PORTS_GIVEN.add(port)
+        return port
 
 class Deployment:
     def __init__(
@@ -148,7 +169,9 @@ port = {self.api_ports[index]}
             text=True,
         )
         # The line it prints when it is up.
-        assert json.loads(self.processes[index].stdout.readline())["node_id"]
+        line = self.processes[index].stdout.readline()
+        assert line, (self.directory(index) / "node.log").read_text()[-2000:]
+        assert json.loads(line)["node_id"]
 
     def start_all(self) -> None:
         for index in range(self.count):
