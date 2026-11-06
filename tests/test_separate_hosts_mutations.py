@@ -68,8 +68,52 @@ MUTATIONS = {
             "    except (ApiError, OSError):\n        return 10**9\n",
         ),
         "wait for one node only": (
-            "        pending = [c for c in pending if (next_nonce_of(c, account) or 0) < nonce]\n",
-            "        pending = [c for c in pending[:1] if (next_nonce_of(c, account) or 0) < nonce]\n",
+            "        pending = [c for c in pending if (watches[c].see(next_nonce_of(c, account)) or 0) < nonce]\n",
+            "        pending = [c for c in pending[:1] if (watches[c].see(next_nonce_of(c, account)) or 0) < nonce]\n",
+        ),
+        "no answer reads as an event not run": (
+            '        return reading | {"verdict": API_NOT_ANSWERING, "error": repr(error)}\n',
+            '        return reading | {"verdict": EVENT_NOT_RUN, "error": repr(error), "moving": True}\n',
+        ),
+        "an error of the api reads as no answer": (
+            '        return reading | {"verdict": API_ERROR, "error": str(error)}\n',
+            '        return reading | {"verdict": API_NOT_ANSWERING, "error": str(error)}\n',
+        ),
+        "the event is called run with a lower nonce": (
+            '        "verdict": EVENT_RUN if after >= nonce else EVENT_NOT_RUN,\n',
+            '        "verdict": EVENT_RUN,\n',
+        ),
+        "giving up says nothing": (
+            '            raise TimedOut(f"{len(pending)} NODES NOT AT NONCE {nonce}", diagnosis)\n',
+            '            raise TimedOut(f"{len(pending)} NODES NOT AT NONCE {nonce}")\n',
+        ),
+        "a disagreement is not seen": (
+            "        if len({r[\"state_root\"] for r in group}) > 1\n",
+            "        if False\n",
+        ),
+        "nodes at different points are compared": (
+            '        points.setdefault((reading["executed"], reading["next_nonce"]), []).append(reading)\n',
+            '        points.setdefault((0, 0), []).append(reading)\n',
+        ),
+        "a node that moved is compared": (
+            'if r["verdict"] in (EVENT_RUN, EVENT_NOT_RUN) and not r["moving"]]',
+            'if r["verdict"] in (EVENT_RUN, EVENT_NOT_RUN)]',
+        ),
+        "a watch loses the answers not given": (
+            "            self.unanswered += 1\n",
+            "            pass\n",
+        ),
+        "a log that cannot be had stops the rest": (
+            "        except OSError as problem:\n            report[\"logs_missing\"]",
+            "        except ZeroDivisionError as problem:\n            report[\"logs_missing\"]",
+        ),
+        "the command that collects is not told where": (
+            '                env={**os.environ, "PSYSTEM_FAILURE_DIR": str(directory)},\n',
+            "",
+        ),
+        "a failed measure ends like a good one": (
+            "        return MEASURE_FAILED\n",
+            "        return 0\n",
         ),
         "states not compared": (
             '    results["same_state_on_all"] = len(roots) == 1\n',
@@ -80,12 +124,50 @@ MUTATIONS = {
             '            if True:\n',
         ),
         "a measure runs past the window": (
-            "        if allowed > 0:\n            wait_for(clients, account, allowed, 600.0)\n",
+            "        if allowed > 0:\n            wait_for(clients, account, allowed, LONG_WAIT_SECONDS)\n",
             "",
         ),
         "a sender that does not move": (
             "        self.next_nonce += 1\n",
             "",
+        ),
+    },
+    "tests.failure_evidence": {
+        "evidence hides the failure": (
+            "            print(f\"=== EVIDENCE WAS NOT SAVED: {problem!r}\")\n\n        raise\n",
+            "            print(f\"=== EVIDENCE WAS NOT SAVED: {problem!r}\")\n",
+        ),
+        "evidence is written also when all goes well": (
+            "    try:\n        yield\n",
+            "    try:\n        yield\n        raise ValueError(name)\n",
+        ),
+        "the threads are not dumped": (
+            "                process.send_signal(signal.SIGUSR1)\n",
+            "                pass\n",
+        ),
+        "the stores are not copied": (
+            "            copy_store(made.store(index), directory / f\"{node}-votes.sqlite\")\n",
+            "            pass\n",
+        ),
+        "the logs are not kept": (
+            "    report = save_failure(directory, error, diagnosis, logs)\n",
+            "    report = save_failure(directory, error, diagnosis)\n",
+        ),
+        "the report of pytest gets no log": (
+            '        print(f"=== LOG OF {log.parent.name}\\n{tail(log, LOG_LINES_PRINTED)}")\n',
+            "        pass\n",
+        ),
+        "a certificate on all counts as missing": (
+            "        if len(certified_by) < len(stores):\n",
+            "        if True:\n",
+        ),
+        "a nonce that never started passes unseen": (
+            "if not any(nonce in s[\"voted\"] for s in stores.values())]",
+            "if False]",
+        ),
+        "two events for a nonce pass unseen": (
+            "        if len(events) > 1:\n",
+            "        if False:\n",
         ),
     },
 }
@@ -98,7 +180,9 @@ def source_of(module: str) -> str:
 
 
 @pytest.mark.parametrize("module,name", ALL)
-def test_mutation_is_detected(module, name):
+def test_mutation_is_detected(module, name, tmp_path, monkeypatch):
+    # A mutated measure fails, and what it keeps is not worth keeping.
+    monkeypatch.setenv("PSYSTEM_FAILURE_DIR", str(tmp_path))
     old, new = MUTATIONS[module][name]
     source = source_of(module)
     assert source.count(old) == 1, name
