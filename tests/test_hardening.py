@@ -38,6 +38,7 @@ from network.remote_signer import (
 from network.secure_transport import SecureTransport
 from network.service import MAX_TRACKED_CLIENTS, RateLimiter, Service
 from sdk.client import ApiError, Client
+from tests.die_with_parent import command
 from tests.deployment_helpers import ROOT, Deployment, psystem, wait_until
 
 A = Transfer("alice", "bob", 8, 0)
@@ -355,12 +356,12 @@ def test_four_real_nodes_with_signers_certify_and_change_epoch(tmp_path):
             directory = deployment.directory(index)
             sock = directory / "s.sock"
             process = subprocess.Popen(
-                [
-                    sys.executable, "-m", "network.cli", "signer",
+                command(
+                    "-m", "network.cli", "signer",
                     "--key", str(directory / "identity.key"),
                     "--socket", str(sock),
                     "--guard", str(directory / "guard.sqlite"),
-                ],
+                ),
                 cwd=ROOT,
                 stdout=subprocess.PIPE,
                 text=True,

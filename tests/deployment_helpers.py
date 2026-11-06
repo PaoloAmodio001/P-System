@@ -10,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 
+from tests.die_with_parent import command
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -162,10 +164,10 @@ port = {self.api_ports[index]}
         )
 
     def start(self, index: int, create: bool = True) -> None:
-        arguments = [
-            sys.executable, "-m", "network.cli", "node",
+        arguments = command(
+            "-m", "network.cli", "node",
             "--config", str(self.directory(index) / "node.toml"),
-        ]
+        )
 
         if create:
             arguments.append("--create-store")
