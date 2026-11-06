@@ -94,8 +94,9 @@ psystem init-store --config n0/node.toml
 psystem node --config n0/node.toml
 ```
 
-`node` never creates a store: if the file is missing it stops, and it must stay stopped until a person looks. A validator that starts again with no votes
-can sign both versions of a spend, and it counts as faulty. **Known defect, on 2026-11-06:** it stops with exit code 1 and a traceback, and not with the 2 that `deploy/systemd/psystem.service` expects, so under systemd it tries again every 5 seconds, refusing each time, and leaves a `votes.sqlite.lock`. It creates no store, so this is noise and not a danger. Watch for a unit that keeps restarting. See `docs/notte-2026-11-06.md`.
+`node` never creates a store. If the file is missing or cannot be opened it stops with exit code 2, and that must stop
+there: `deploy/systemd/psystem.service` does not restart on it. A validator that starts again with no votes
+can sign both versions of a spend, and it counts as faulty. The store and its backups are created with mode 0600, and a store of an earlier version gets it when opened. A missing store leaves a `votes.sqlite.lock`, which is harmless.
 
 Under systemd: the unit runs `/usr/local/bin/psystem` as the user `psystem`, with the files in `/var/lib/psystem/NAME`. Create the user and the directory, and change `ExecStart` if `psystem` is in a virtual environment. This file has not been tried on a real host in this form.
 
@@ -217,7 +218,7 @@ A node that was away takes a snapshot from a peer that pruned, signed by the com
 psystem backup n0/votes.sqlite --out backup.sqlite
 ```
 
-A consistent copy, safe while the node runs. It is as secret as the key: treat it the same way. Keep the key,
+A consistent copy, safe while the node runs, with mode 0600. It holds no key, but it shows every event, and putting it back by hand makes a validator faulty: protect it like a key. Keep the key,
 the certificate and the genesis file too.
 
 ## Restoring

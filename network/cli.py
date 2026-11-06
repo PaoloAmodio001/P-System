@@ -224,7 +224,10 @@ def _asset_id(args) -> int:
 
 def _backup(args) -> int:
     """A consistent copy of a store. A copy of the file while a node runs may not be one."""
+    from network.remote_signer import make_private
+
     source = sqlite3.connect(f"{Path(args.store).resolve().as_uri()}?mode=ro", uri=True)
+    make_private(Path(args.out), create=True)
     target = sqlite3.connect(args.out)
     source.backup(target)
     target.close()
@@ -240,6 +243,7 @@ def _restore(args) -> int:
     """
     from network.deployment import read_genesis
     from network.quorum import SqliteVoteStore
+    from network.remote_signer import make_private
 
     target = Path(args.to)
 
@@ -248,6 +252,7 @@ def _restore(args) -> int:
         return 2
 
     source = sqlite3.connect(f"{Path(args.backup).resolve().as_uri()}?mode=ro", uri=True)
+    make_private(target, create=True)
     copy = sqlite3.connect(target)
     source.backup(copy)
     copy.close()
@@ -360,11 +365,14 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from network.quorum import VoteStoreError
+
     args = _parser().parse_args(argv)
 
     try:
         return args.run(args)
-    except (ValueError, OSError) as error:
+    # A store missing or damaged also ends here: 2 is what stops systemd from starting it again.
+    except (ValueError, OSError, VoteStoreError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
 

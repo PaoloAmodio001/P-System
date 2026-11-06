@@ -53,6 +53,8 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 
 - Whoever reached the port, with no certificate, could keep every honest peer out with 70 silent connections. The one waiting longest now gives way.
 - A request for synchronization cost a peer nothing and took the lock of the node for its whole length. A peer now pays for what it asks.
+- A node with no store stopped with a traceback and exit code 1, so systemd started it again every 5 seconds, against what `docs/OPERATIONS.md` said. It now exits with 2.
+- A store and its backups could be read by every user of the machine. They now have mode 0600, also an earlier store when opened, and the directories that the deployment scripts make have 0700.
 - An answer cut in half gave the caller of the SDK an exception nobody expected. It is now a failed connection. Found by a soak.
 - Each new certificate tried every one in the buffer, with a read of the disk for each, and the buffer had no limit.
 - With many proofs in memory each message took longer, because they were copied each time.

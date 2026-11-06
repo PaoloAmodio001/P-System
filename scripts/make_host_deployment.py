@@ -88,7 +88,7 @@ def write_deployment(
 
     for name, address in hosts.items():
         directory = base / name
-        directory.mkdir()
+        directory.mkdir(mode=0o700)
         psystem("authority", "issue", str(base / "ca"), "--node-id", name, "--out", str(directory))
         members.append(json.loads(psystem("key", "generate", str(directory / "identity.key"))))
         token = directory / "api.token"

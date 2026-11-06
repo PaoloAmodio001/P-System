@@ -49,7 +49,7 @@ def main() -> None:
 
     for name in names:
         directory = base / name
-        directory.mkdir()
+        directory.mkdir(mode=0o700)
         psystem("authority", "issue", str(base / "ca"), "--node-id", name, "--out", str(directory))
         members.append(json.loads(psystem("key", "generate", str(directory / "identity.key"))))
 

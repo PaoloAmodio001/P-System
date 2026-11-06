@@ -81,7 +81,7 @@ for i in 0 1 2 3; do
 done
 ```
 
-`-p` conserva i permessi: chiave e token devono restare `0600`. Controllalo con `ssh node-0 ls -l psystem/node-0`. Lo store `votes.sqlite` nasce `0644`: portalo a `0600` con `chmod`.
+`-p` conserva i permessi: chiave e token devono restare `0600`. Controllalo con `ssh node-0 ls -l psystem/node-0`. Anche lo store `votes.sqlite` deve restare `0600`.
 
 Annota il `genesis_hash` di ogni nodo nel punto successivo: quattro valori diversi significherebbero quattro reti.
 
@@ -93,7 +93,7 @@ Su ogni macchina, con il `venv` attivo. Per una prova breve:
 cd ~/psystem/node-0 && psystem node --config node.toml 2> node.log
 ```
 
-Per una prova di giorni usa `systemd`, adattando `deploy/systemd/psystem.service` alla cartella `~/psystem/node-i` e al percorso di `psystem` nel `venv`, così un nodo caduto riparte da solo. Conserva `RestartPreventExitStatus=2`. Oggi però un nodo senza store esce con codice 1 e `systemd` lo rilancia ogni 5 secondi, senza creare uno store: se un'unità continua a ripartire, controlla (`docs/notte-2026-11-06.md`).
+Per una prova di giorni usa `systemd`, adattando `deploy/systemd/psystem.service` alla cartella `~/psystem/node-i` e al percorso di `psystem` nel `venv`, così un nodo caduto riparte da solo. Conserva `RestartPreventExitStatus=2`: un nodo senza store esce con quel codice e deve fermarsi lì.
 
 Dal misuratore, controlla ogni nodo:
 
@@ -213,7 +213,7 @@ A fine prova, e anche ogni giorno, dal misuratore:
 ```sh
 for i in 0 1 2 3; do
   scp node-$i:psystem/node-$i/node.log risultati/node-$i.log
-  ssh node-$i "P-System/.venv/bin/psystem backup psystem/node-$i/votes.sqlite --out psystem/backup-fine.sqlite && chmod 600 psystem/backup-fine.sqlite"
+  ssh node-$i "P-System/.venv/bin/psystem backup psystem/node-$i/votes.sqlite --out psystem/backup-fine.sqlite"
   scp node-$i:psystem/backup-fine.sqlite risultati/votes-node-$i.sqlite
 done
 ```
@@ -272,4 +272,4 @@ Il 2026-11-06, sul commit `5012d3a`, **su un solo computer**, con quattro proces
 
 **Non provato:** SSH e `scp`, `ufw`, `block.sh` e `unblock.sh` con `iptables`, `raccogli.sh` e `misura-oraria.sh` per intero, `systemd`, il riavvio di una macchina, il disco pieno, il taglio di corrente, il ripristino e il cambio di comitato con questa procedura. Quei numeri non sono una misura: un computer solo, nessuna rete.
 
-Osservazione durante la prova: `votes.sqlite` e la copia fatta da `psystem backup` nascono con permessi `0644`, mentre `docs/OPERATIONS.md` dice che un backup è segreto quanto la chiave. Fino a una decisione, usa `chmod 600` su entrambi, e mantieni la cartella del nodo non leggibile da altri utenti.
+Quella prova è precedente alla correzione dei permessi: ora store, backup e cartelle dei nodi nascono leggibili solo dal proprietario. Le righe di comando di questa procedura non sono cambiate.

@@ -31,6 +31,22 @@ from pathlib import Path
 
 LOG = logging.getLogger("psystem.signer")
 
+
+def make_private(path: Path, create: bool = False) -> None:
+    """
+    Only the owner can read a store, whatever the umask, and whatever an earlier version left. SQLite
+    gives its journal the mode of the file. A file of someone else stays as it is, with a warning.
+    """
+    if create:
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600))
+
+    try:
+        os.chmod(path, 0o600)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        LOG.warning("cannot make a store private", extra={"reason": str(error)})
+
 # Written here and not imported from core.attestation, whose signatures are what this guards: a
 # change of the format must make the signer refuse, not sign something it no longer understands.
 VOTE_DOMAIN = b"P-SYSTEM/QUORUM-VOTE/v1\0"
@@ -53,6 +69,7 @@ class SignerGuard:
     """What this key has signed. Every refusal is on the record of the signer, in its log."""
 
     def __init__(self, path: Path) -> None:
+        make_private(path, create=True)
         self._connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._connection.execute("PRAGMA journal_mode = WAL")
         self._connection.execute("PRAGMA synchronous = NORMAL")

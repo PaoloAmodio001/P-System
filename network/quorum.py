@@ -38,7 +38,7 @@ from core.equivocation import EquivocationProof
 from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
-from network.remote_signer import SignerUnavailable
+from network.remote_signer import SignerUnavailable, make_private
 from network.message import (
     certificate_sync_request_epoch,
     decode_certificate,
@@ -338,6 +338,7 @@ class SqliteVoteStore:
         mode = "rwc" if create else "rw"
 
         try:
+            make_private(Path(path), create=create)
             self._connection = sqlite3.connect(
                 f"{Path(path).resolve().as_uri()}?mode={mode}",
                 uri=True,
@@ -345,7 +346,7 @@ class SqliteVoteStore:
                 check_same_thread=False,
                 timeout=30.0,
             )
-        except sqlite3.Error as error:
+        except (sqlite3.Error, OSError) as error:
             raise VoteStoreError(f"CANNOT OPEN VOTE STORE: {error}") from error
 
         try:
