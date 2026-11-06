@@ -29,7 +29,7 @@ La modalità quorum è implementata in Python dietro `Node(quorum=...)`, con un 
 
 Le seguenti decisioni costituiscono vincoli architetturali:
 
-- Nessun nodo sceglie autonomamente tra alternative in conflitto. Un evento viene eseguito soltanto quando dispone di un certificato valido di almeno `2f+1` firme.
+- Nessun nodo sceglie autonomamente tra alternative in conflitto. Un evento viene eseguito soltanto quando dispone di un certificato valido con un quorum di firme (`2f+1` nella configurazione standard, `4f+1` in quella opzionale `5f+1`).
 - Un nodo onesto vota la prima alternativa valida che riceve. Il voto non equivale all'esecuzione dell'evento.
 - L'ottenimento del certificato dipende dalle condizioni della rete. È possibile che nessuna alternativa raggiunga il quorum. Questa eventualità deve essere documentata esplicitamente.
 - Il comitato è composto, nella configurazione standard, da `n = 3f+1` nodi con quorum `2f+1`. La decisione D2 di `ROADMAP.md` prevede una configurazione opzionale `n = 5f+1` con quorum `4f+1`: il suo stato reale è in `docs/PROOF-SCOPE.md`.
@@ -128,6 +128,7 @@ Utilizzare rigorosamente le seguenti etichette:
 
 - `FORMAL`: proprietà effettivamente dimostrata.
 - `EMPIRICAL` o `PROPERTY_TESTED`: proprietà verificata sperimentalmente o attraverso test.
+- `CONDITIONAL`: proprietà verificata in Lean, ma con la parte difficile in un'ipotesi esplicita, che va indicata.
 - `OPEN`: proprietà ancora da dimostrare o verificare.
 
 Non dichiarare tolleranza bizantina, liveness, refinement, sicurezza o altre garanzie senza evidenze adeguate.
