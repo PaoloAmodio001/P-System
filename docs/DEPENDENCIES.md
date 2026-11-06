@@ -1,5 +1,7 @@
 # Dependencies
 
+Every dependency, also for development, proofs and containers, with why it is needed: `docs/DIPENDENZE.md`.
+
 A node needs one direct dependency, `cryptography`, plus the standard library (`sqlite3`, `ssl`, `http.server`, `tomllib`).
 
 `requirements.lock` holds exact versions and hashes of everything it installs. `scripts/make_sbom.py` lists them as a
