@@ -68,6 +68,7 @@ client.wait_final(signed.transfer, ChainVerifier(genesis.committee, genesis.gove
 | `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`, `docs/CLAIM-TRACEABILITY.md` | What is proved, tested or open |
 | `docs/openapi.json`, `deploy/prometheus/alerts.yml` | The API for machines, and alerts on its metrics |
 | `docs/paper/preprint.md` | To be read by others. Not submitted and not published |
+| `docs/MACCHINE-SEPARATE.md` | Four nodes on four machines, step by step. Nobody has done it yet |
 | `docs/AUDIT-PACKAGE.md` | For an external auditor: scope, assumptions, surface, how to repeat, questions |
 | `ROADMAP.md`, `docs/piano-bizantino.md`, `CHANGELOG.md` | Where it is going, how it got here |
 

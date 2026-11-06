@@ -164,6 +164,8 @@ operation. Rotating the key of an **account** does not exist: the account is the
 
 To measure on real hosts. **Nobody has done this yet.** This puts all keys on one machine first, which is fine for a measurement and wrong for a real deployment.
 
+The complete procedure, with what to measure, for how long and how to compare: `docs/MACCHINE-SEPARATE.md`.
+
 ```sh
 # On any machine, with the addresses of the four.
 python scripts/make_host_deployment.py out \
