@@ -41,6 +41,7 @@ def write_genesis(
     balances: dict[str, int],
     governance_members=(),
     governance_threshold: int | None = None,
+    unlock: bool = False,
 ) -> Genesis:
     """Write a genesis file. It checks what `read_genesis` will check, before it exists."""
     data = {
@@ -49,6 +50,9 @@ def write_genesis(
         "members": sorted(member.hex() for member in members),
         "f": f,
     }
+
+    if unlock:
+        data["unlock"] = True
 
     if governance_threshold is not None:
         data["governance"] = {
@@ -68,7 +72,7 @@ def parse_genesis(text: str) -> Genesis:
     except (ValueError, RecursionError) as error:
         raise DeploymentError(f"GENESIS IS NOT JSON: {error}") from error
 
-    allowed = {"version", "balances", "members", "f", "governance"}
+    allowed = {"version", "balances", "members", "f", "governance", "unlock"}
 
     if type(data) is not dict or not {"version", "balances", "members", "f"} <= data.keys():
         raise DeploymentError("GENESIS MISSES A FIELD")
@@ -93,6 +97,7 @@ def parse_genesis(text: str) -> Genesis:
             [bytes.fromhex(member) for member in data["members"]],
             data["f"],
             state,
+            data.get("unlock", False),
         )
         governance = None
 
@@ -146,6 +151,8 @@ class NodeConfig:
     max_nonce_ahead: int = 1024
     require_funds: bool = True
     max_evidence: int = 100_000
+    snapshot_every: int | None = None
+    prune: bool = False
 
     def quorum(self, create: bool) -> QuorumConfig:
         return QuorumConfig(
@@ -159,6 +166,8 @@ class NodeConfig:
             max_nonce_ahead=self.max_nonce_ahead,
             require_funds=self.require_funds,
             max_evidence=self.max_evidence,
+            snapshot_every=self.snapshot_every,
+            prune=self.prune,
         )
 
 
@@ -180,6 +189,7 @@ _TOP_LEVEL = {
     "sync_interval",
     "joining",
     "limits",
+    "snapshots",
 }
 
 
@@ -327,6 +337,22 @@ def read_node_config(path: Path) -> NodeConfig:
     if limits.keys() - {"max_nonce_ahead", "require_funds", "max_evidence"}:
         raise DeploymentError("UNKNOWN SETTINGS IN limits")
 
+    snapshots = _optional(data, "snapshots", dict, {}, "configuration")
+
+    if snapshots.keys() - {"every", "prune"}:
+        raise DeploymentError("UNKNOWN SETTINGS IN snapshots")
+
+    every = snapshots.get("every")
+
+    if every is not None and (type(every) is not int or every < 1):
+        raise DeploymentError("snapshots: every MUST BE A POSITIVE INTEGER")
+
+    prune = _optional(snapshots, "prune", bool, False, "snapshots")
+
+    # Pruning without snapshots would have nothing to prune by, and it would say nothing.
+    if prune and every is None:
+        raise DeploymentError("snapshots: prune NEEDS every")
+
     interval = _optional(data, "sync_interval", (int, float), 5.0, "configuration")
 
     if interval <= 0:
@@ -365,4 +391,6 @@ def read_node_config(path: Path) -> NodeConfig:
         max_nonce_ahead=_optional(limits, "max_nonce_ahead", int, 1024, "limits"),
         require_funds=_optional(limits, "require_funds", bool, True, "limits"),
         max_evidence=_optional(limits, "max_evidence", int, 100_000, "limits"),
+        snapshot_every=every,
+        prune=prune,
     )

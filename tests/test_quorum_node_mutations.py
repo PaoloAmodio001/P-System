@@ -53,7 +53,7 @@ MUTATIONS = {
         "        self.local_events = self._quorum.replica.log\n",
     ),
     "evidence not published": (
-        "        self.signed_events = dict(driver.signed_events)\n",
+        "        self.signed_events.update(driver.new_signed_events())\n",
         "",
     ),
     "equivocation not published": (
@@ -189,11 +189,11 @@ MUTATIONS = {
         "                    self._disconnect_peer_connection(node_id, target)\n",
     ),
     "failed reply raises": (
-        "            connection.enqueue(message)\n"
+        "            connection.charge(connection.enqueue(message) // REPLY_BYTES_PER_TOKEN)\n"
         "        except (ConnectionError, OSError, TimeoutError):\n"
         "            self._peer_disconnected(connection)\n"
         "            connection.close()\n",
-        "            connection.enqueue(message)\n"
+        "            connection.charge(connection.enqueue(message) // REPLY_BYTES_PER_TOKEN)\n"
         "        except ZeroDivisionError:\n"
         "            self._peer_disconnected(connection)\n"
         "            connection.close()\n",

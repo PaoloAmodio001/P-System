@@ -26,14 +26,11 @@ from core.state import State
 from crypto.identity import Identity
 from network.message import (
     decode_certificate,
-    decode_closure_vote,
-    decode_closure_vote_request,
     decode_epoch_change,
     decode_epoch_closure,
     decode_epoch_report,
     encode_certificate,
     encode_certificate_sync_request,
-    encode_closure_vote_request,
     encode_epoch_change,
     encode_epoch_closure,
     encode_epoch_report,
@@ -110,38 +107,19 @@ class Cluster:
                 output = proposer_driver.handle_message(wire(reply))
         return output
 
-    def close_epoch(self, change, proposer=0, reporters=None, voters=None):
+    def close_epoch(self, change, proposer=0, reporters=None):
         """The whole end of an epoch. Returns the closure, or None if it did not form."""
         driver = self.drivers[proposer]
         output = driver.propose_epoch_change(change)
-        pending = list(output.broadcasts)
-        request = next(
-            (m for m in pending if m["type"] == "CLOSURE_VOTE_REQUEST"),
-            None,
-        )
+        closure = next((m for m in output.broadcasts if m["type"] == "EPOCH_CLOSURE"), None)
         indexes = reporters if reporters is not None else range(len(self.drivers))
 
         for index in indexes:
-            if index == proposer:
+            if index == proposer or closure is not None:
                 continue
             for reply in self.drivers[index].handle_message(
                 wire(encode_epoch_change(change))
             ).replies:
-                out = driver.handle_message(wire(reply))
-                for message in out.broadcasts:
-                    if message["type"] == "CLOSURE_VOTE_REQUEST":
-                        request = message
-
-        if request is None:
-            return None
-
-        closure = None
-        indexes = voters if voters is not None else range(len(self.drivers))
-
-        for index in indexes:
-            if index == proposer:
-                continue
-            for reply in self.drivers[index].handle_message(wire(request)).replies:
                 out = driver.handle_message(wire(reply))
                 for message in out.broadcasts:
                     if message["type"] == "EPOCH_CLOSURE":
@@ -316,7 +294,7 @@ def test_certificate_with_a_bad_epoch_on_the_wire_is_a_value_error(epoch):
 def test_report_round_trip(cluster):
     change = change_to(COMMITTEE)
     cluster.certify(spend(0), [0, 1, 2])
-    report = cluster.drivers[1].replica.report_epoch(change.change_id)
+    report = cluster.drivers[1].replica.report_epoch(change)
     change_id, decoded = decode_epoch_report(
         wire(encode_epoch_report(change.change_id, report))
     )
@@ -330,7 +308,7 @@ def test_report_holds_every_vote_and_only_those(cluster):
     signed = [spend(0), spend(1)]
     for event in signed:
         driver.handle_message(wire(encode_vote_request(event)))
-    report = driver.replica.report_epoch(change_to(COMMITTEE).change_id)
+    report = driver.replica.report_epoch(change_to(COMMITTEE))
     assert {s.transfer.canonical() for s in report.votes} == {
         s.transfer.canonical() for s in signed
     }
@@ -338,7 +316,7 @@ def test_report_holds_every_vote_and_only_those(cluster):
 
 def test_after_a_report_a_validator_votes_for_nothing(cluster):
     driver = cluster.drivers[1]
-    driver.replica.report_epoch(change_to(COMMITTEE).change_id)
+    driver.replica.report_epoch(change_to(COMMITTEE))
     output = driver.handle_message(wire(encode_vote_request(spend(0))))
     assert output.replies == ()
     assert driver.replica.votes() == []
@@ -348,16 +326,16 @@ def test_the_report_is_the_same_when_asked_again(cluster):
     # So a second proposer can finish what a lost one began.
     driver = cluster.drivers[1]
     driver.handle_message(wire(encode_vote_request(spend(0))))
-    change_id = change_to(COMMITTEE).change_id
-    first = driver.replica.report_epoch(change_id)
+    change = change_to(COMMITTEE)
+    first = driver.replica.report_epoch(change)
     driver.handle_message(wire(encode_vote_request(spend(1))))
-    assert driver.replica.report_epoch(change_id) == first
+    assert driver.replica.report_epoch(change) == first
 
 
 def test_closing_survives_a_restart(tmp_path):
     cluster = Cluster(tmp_path)
     driver = cluster.drivers[1]
-    driver.replica.report_epoch(change_to(COMMITTEE).change_id)
+    driver.replica.report_epoch(change_to(COMMITTEE))
     cluster.close()
     reopened = SqliteVoteStore(
         tmp_path / "a1.sqlite",
@@ -423,18 +401,13 @@ def test_whole_epoch_change(cluster):
         assert driver.committee.members == tuple(m.public_key for m in NEXT_MEMBERS)
 
 
-def test_a_quorum_of_reports_and_votes_is_enough(cluster):
-    assert cluster.close_epoch(change_to(COMMITTEE), reporters=[0, 1, 2], voters=[0, 1, 2])
+def test_a_quorum_of_reports_is_enough(cluster):
+    assert cluster.close_epoch(change_to(COMMITTEE), reporters=[0, 1, 2])
     assert cluster.drivers[0].committee.epoch == 1
 
 
 def test_too_few_reports_give_no_closure(cluster):
     assert cluster.close_epoch(change_to(COMMITTEE), reporters=[0, 1]) is None
-    assert cluster.drivers[0].committee.epoch == 0
-
-
-def test_too_few_votes_give_no_closure(cluster):
-    assert cluster.close_epoch(change_to(COMMITTEE), voters=[0, 1]) is None
     assert cluster.drivers[0].committee.epoch == 0
 
 
@@ -454,61 +427,6 @@ def test_a_node_without_governance_never_changes_committee(tmp_path):
     assert driver.handle_message(wire(encode_epoch_change(change))).replies == ()
     assert not store.epoch_is_closed()
     store.close()
-
-
-def test_a_validator_votes_for_one_closure_per_epoch(cluster):
-    change = change_to(COMMITTEE)
-    change_id = change.change_id
-    reports = [
-        cluster.drivers[i].replica.report_epoch(change_id)
-        for i in range(4)
-    ]
-    first = EpochClosure(change, tuple(reports[:3]))
-    second = EpochClosure(change, tuple(reports[1:]))
-    assert first.digest != second.digest
-    driver = cluster.drivers[3]
-
-    assert driver.handle_message(wire(encode_closure_vote_request(first))).replies
-    # No vote for the second: it tells which one it voted for, so that a retry can finish it.
-    answer = driver.handle_message(wire(encode_closure_vote_request(second))).replies
-    assert [message["type"] for message in answer] == ["CLOSURE_LOCKED"]
-    # The same one again is the same answer.
-    assert driver.handle_message(wire(encode_closure_vote_request(first))).replies
-
-
-def test_candidate_with_too_few_or_repeated_reports_gets_no_vote(cluster):
-    change = change_to(COMMITTEE)
-    reports = [cluster.drivers[i].replica.report_epoch(change.change_id) for i in range(3)]
-    driver = cluster.drivers[3]
-    few = EpochClosure(change, tuple(reports[:2]))
-    repeated = EpochClosure(change, (reports[0], reports[0], reports[1]))
-    backwards = EpochClosure(change, tuple(reversed(reports)))
-
-    for candidate in (few, repeated, backwards):
-        assert driver.handle_message(wire(encode_closure_vote_request(candidate))).replies == ()
-
-
-def test_closure_without_its_votes_does_not_install(cluster):
-    change = change_to(COMMITTEE)
-    reports = [cluster.drivers[i].replica.report_epoch(change.change_id) for i in range(3)]
-    candidate = EpochClosure(change, tuple(reports))
-    cluster.drivers[3].handle_message(wire(encode_epoch_closure(candidate)))
-    assert cluster.drivers[3].committee.epoch == 0
-
-
-def test_forged_votes_on_a_closure_do_not_install(cluster):
-    change = change_to(COMMITTEE)
-    reports = [cluster.drivers[i].replica.report_epoch(change.change_id) for i in range(3)]
-    candidate = EpochClosure(change, tuple(reports))
-    event = candidate.event(GOVERNANCE, COMMITTEE)
-    one = Vote.create(COMMITTEE, MEMBERS[0], event)
-    forged = EpochClosure(
-        change,
-        tuple(reports),
-        tuple(Vote(index, one.signature) for index in range(3)),
-    )
-    cluster.drivers[3].handle_message(wire(encode_epoch_closure(forged)))
-    assert cluster.drivers[3].committee.epoch == 0
 
 
 def test_closure_of_another_epoch_is_ignored(cluster):
@@ -549,9 +467,9 @@ def test_a_certified_event_is_in_the_locks_of_any_quorum_of_reports(cluster):
     # Signed by 0, 1, 2. Whichever 3 report, one of the signers is among them.
     signed = spend(0)
     cluster.certify(signed, [0, 1, 2])
-    closure = cluster.close_epoch(_same_members_change(), proposer=3, reporters=[3, 1, 0], voters=[3, 1, 0])
+    closure = cluster.close_epoch(_same_members_change(), proposer=3, reporters=[3, 1, 0])
     assert closure is not None
-    assert signed.transfer.canonical() in {e.canonical() for e in closure.locks()}
+    assert signed.transfer.canonical() in {e.canonical() for e in closure.locks(COMMITTEE)}
 
 
 def test_the_alternative_of_a_certified_event_gets_no_vote_after_the_closure(cluster):
@@ -603,7 +521,7 @@ def test_locks_are_carried_through_several_epochs(cluster):
     second = change_to(cluster.drivers[0].committee, keys=[m.public_key for m in MEMBERS])
     # Nothing was voted in epoch 1, so the reports are empty: the lock must still hold.
     closure = cluster.close_epoch(second)
-    assert closure is not None and closure.locks() == ()
+    assert closure is not None and closure.locks(COMMITTEE) == ()
     assert cluster.drivers[0].committee.epoch == 2
 
     for driver in cluster.drivers:
@@ -665,7 +583,7 @@ def test_store_with_a_closure_that_does_not_verify_does_not_open(tmp_path):
     connection = sqlite3.connect(path)
     text = connection.execute("SELECT closure FROM closures").fetchone()[0]
     data = json.loads(text)
-    data["votes"] = data["votes"][:2]
+    data["reports"] = data["reports"][:2]
     connection.execute("UPDATE closures SET closure = ?", (json.dumps(data),))
     connection.commit()
     connection.close()
@@ -800,10 +718,6 @@ def test_change_round_trip():
 def test_closure_round_trip(cluster):
     closure = cluster.close_epoch(change_to(COMMITTEE))
     assert decode_epoch_closure(wire(encode_epoch_closure(closure))) == closure
-    candidate = EpochClosure(closure.change, closure.reports)
-    assert (
-        decode_closure_vote_request(wire(encode_closure_vote_request(candidate))) == candidate
-    )
 
 
 @pytest.mark.parametrize(
@@ -812,9 +726,7 @@ def test_closure_round_trip(cluster):
         ({"type": "EPOCH_CHANGE"}, decode_epoch_change),
         ({"type": "EPOCH_CHANGE", "change": 1}, decode_epoch_change),
         ({"type": "EPOCH_REPORT", "change_id": "x", "report": {}}, decode_epoch_report),
-        ({"type": "CLOSURE_VOTE", "digest": "x", "validator": 0, "signature": "x"}, decode_closure_vote),
-        ({"type": "CLOSURE_VOTE_REQUEST", "closure": []}, decode_closure_vote_request),
-        ({"type": "EPOCH_CLOSURE", "closure": {"change": 1, "reports": [], "votes": []}}, decode_epoch_closure),
+        ({"type": "EPOCH_CLOSURE", "closure": {"change": 1, "reports": []}}, decode_epoch_closure),
     ],
 )
 def test_malformed_epoch_messages_are_value_errors(message, decode):
@@ -869,14 +781,14 @@ def test_report_signed_with_votes_out_of_order_is_refused():
     assert not EpochReport(0, backwards, signature).verify(COMMITTEE, change_id)
 
 
-def test_candidate_with_a_forged_report_gets_no_vote(cluster):
+def test_a_closure_with_a_forged_report_is_not_taken(cluster):
     change = change_to(COMMITTEE)
-    reports = [cluster.drivers[i].replica.report_epoch(change.change_id) for i in range(3)]
+    reports = [cluster.drivers[i].replica.report_epoch(change) for i in range(3)]
     other = EpochReport(reports[0].validator, reports[0].votes, b"\0" * 64)
     forged = EpochClosure(change, (other, reports[1], reports[2]))
-    assert not forged.is_valid_candidate(GOVERNANCE, COMMITTEE)
-    output = cluster.drivers[3].handle_message(wire(encode_closure_vote_request(forged)))
-    assert output.replies == ()
+    assert not forged.verify(GOVERNANCE, COMMITTEE)
+    cluster.drivers[3].handle_message(wire(encode_epoch_closure(forged)))
+    assert cluster.drivers[3].committee.epoch == 0
 
 
 def test_a_vote_with_no_proof_of_its_sender_stops_the_report(cluster):
@@ -884,5 +796,5 @@ def test_a_vote_with_no_proof_of_its_sender_stops_the_report(cluster):
     replica = cluster.drivers[1].replica
     assert replica.handle_vote_request(spend(0).transfer) is not None
     with pytest.raises(VoteStoreError):
-        replica.report_epoch(change_to(COMMITTEE).change_id)
+        replica.report_epoch(change_to(COMMITTEE))
     assert not replica._store.epoch_is_closed()

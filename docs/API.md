@@ -24,7 +24,7 @@ proves something: see "Proof" below.
 | `GET /metrics` | Text format of Prometheus |
 | `GET /v1/status` | `node_id`, `epoch`, `committee_id`, `genesis_hash`, `executed`, `state_root`, `halted`, `conflicted`, `is_member`, `peers`, `guilty_members` |
 | `GET /v1/accounts/{account}` | `balance`, `next_nonce`. An account of an asset holds a slash: write it `%2F` |
-| `GET /v1/certificates/{event_id}` | The certificate, or `404` if this node has not executed it |
+| `GET /v1/certificates/{event_id}` | The certificate, or `404` if this node has not executed it or has pruned it |
 | `GET /v1/closures` | The closures of the chain, in order |
 
 ## Writes

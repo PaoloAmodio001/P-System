@@ -1,5 +1,6 @@
 """The fast suite must leave out what it claims to leave out, and nothing else."""
 
+import os
 import re
 import subprocess
 import sys
@@ -47,6 +48,8 @@ def fast_selection(directory: Path, conftest: str) -> set[str]:
             "no:cacheprovider",
         ],
         cwd=directory,
+        # The conftest imports from this repository.
+        env={**os.environ, "PYTHONPATH": str(CONFTEST.parent.parent)},
         capture_output=True,
         text=True,
         timeout=60,

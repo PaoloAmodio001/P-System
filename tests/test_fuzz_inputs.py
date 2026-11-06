@@ -55,28 +55,12 @@ VALID = {
         {"type": "EPOCH_REPORT", "change_id": "ab" * 32, "report": REPORT_BASE},
         wire.decode_epoch_report,
     ),
-    "CLOSURE_VOTE": (
-        wire.encode_closure_vote("ab" * 32, VOTE),
-        wire.decode_closure_vote,
-    ),
-    "CLOSURE_VOTE_REQUEST": (
-        {
-            "type": "CLOSURE_VOTE_REQUEST",
-            "closure": {
-                "change": wire.encode_epoch_change(CHANGE)["change"],
-                "reports": [REPORT_BASE],
-                "votes": [],
-            },
-        },
-        wire.decode_closure_vote_request,
-    ),
     "EPOCH_CLOSURE": (
         {
             "type": "EPOCH_CLOSURE",
             "closure": {
                 "change": wire.encode_epoch_change(CHANGE)["change"],
                 "reports": [REPORT_BASE],
-                "votes": [],
             },
         },
         wire.decode_epoch_closure,

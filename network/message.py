@@ -3,6 +3,8 @@ import re
 from core.attestation import (
     EpochChange,
     EpochClosure,
+    Snapshot,
+    SnapshotAttestation,
     EpochReport,
     QuorumCertificate,
     Vote,
@@ -10,6 +12,7 @@ from core.attestation import (
 )
 from core.event import Transfer
 from core.signed_event import SignedTransfer
+from core.state import State
 
 
 def encode_signed_transfer(
@@ -441,58 +444,13 @@ def _encode_closure(closure: EpochClosure) -> dict:
     return {
         "change": _encode_change(closure.change),
         "reports": [_encode_report(report) for report in closure.reports],
-        "votes": [
-            {"validator": vote.validator, "signature": vote.signature.hex()}
-            for vote in closure.votes
-        ],
     }
 
 
 def _decode_closure(value) -> EpochClosure:
-    data = _object_with_fields(value, "change", "reports", "votes")
-    votes = []
-
-    for item in _list_of(data["votes"]):
-        entry = _object_with_fields(item, "validator", "signature")
-        votes.append(_decode_vote_fields(entry["validator"], entry["signature"]))
-
+    data = _object_with_fields(value, "change", "reports")
     reports = tuple(_decode_report(item) for item in _list_of(data["reports"]))
-    return EpochClosure(_decode_change(data["change"]), reports, tuple(votes))
-
-
-def encode_closure_vote_request(closure: EpochClosure) -> dict:
-    return {"type": "CLOSURE_VOTE_REQUEST", "closure": _encode_closure(closure)}
-
-
-def decode_closure_vote_request(message) -> EpochClosure:
-    return _decode_closure(
-        _message_of_type(message, "CLOSURE_VOTE_REQUEST", "closure")["closure"]
-    )
-
-
-def encode_closure_locked(closure: EpochClosure) -> dict:
-    return {"type": "CLOSURE_LOCKED", "closure": _encode_closure(closure)}
-
-
-def decode_closure_locked(message) -> EpochClosure:
-    return _decode_closure(_message_of_type(message, "CLOSURE_LOCKED", "closure")["closure"])
-
-
-def encode_closure_vote(digest: str, vote: Vote) -> dict:
-    return {
-        "type": "CLOSURE_VOTE",
-        "digest": digest,
-        "validator": vote.validator,
-        "signature": vote.signature.hex(),
-    }
-
-
-def decode_closure_vote(message) -> tuple[str, Vote]:
-    data = _message_of_type(message, "CLOSURE_VOTE", "digest", "validator", "signature")
-    return (
-        _hex_bytes(data["digest"], _ID_PATTERN).hex(),
-        _decode_vote_fields(data["validator"], data["signature"]),
-    )
+    return EpochClosure(_decode_change(data["change"]), reports)
 
 
 def encode_epoch_closure(closure: EpochClosure) -> dict:
@@ -501,3 +459,96 @@ def encode_epoch_closure(closure: EpochClosure) -> dict:
 
 def decode_epoch_closure(message) -> EpochClosure:
     return _decode_closure(_message_of_type(message, "EPOCH_CLOSURE", "closure")["closure"])
+
+
+# Snapshots.
+
+
+def _encode_attestation(attestation: SnapshotAttestation) -> dict:
+    return {
+        "validator": attestation.validator,
+        "locks": [_encode_quorum_event(event) for event in attestation.locks],
+        "signature": attestation.signature.hex(),
+    }
+
+
+def _decode_attestation(value) -> SnapshotAttestation:
+    data = _object_with_fields(value, "validator", "locks", "signature")
+    vote = _decode_vote_fields(data["validator"], data["signature"])
+    return SnapshotAttestation(
+        vote.validator,
+        tuple(_decode_quorum_event(event) for event in _list_of(data["locks"])),
+        vote.signature,
+    )
+
+
+def _decode_amounts(value) -> dict[str, int]:
+    if type(value) is not dict or not all(type(key) is str for key in value):
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+    return {key: _natural(amount) for key, amount in value.items()}
+
+
+def encode_snapshot_request(epoch: int, digest: str, nonces: dict[str, int]) -> dict:
+    """Only what a member needs to recompute it: the floor, and what it must come to."""
+    return {
+        "type": "SNAPSHOT_REQUEST",
+        "epoch": epoch,
+        "digest": digest,
+        "nonces": dict(sorted(nonces.items())),
+    }
+
+
+def decode_snapshot_request(message) -> tuple[int, str, dict[str, int]]:
+    data = _message_of_type(message, "SNAPSHOT_REQUEST", "epoch", "digest", "nonces")
+    return (
+        _natural(data["epoch"]),
+        _hex_bytes(data["digest"], _ID_PATTERN).hex(),
+        _decode_amounts(data["nonces"]),
+    )
+
+
+def encode_snapshot_vote(digest: str, attestation: SnapshotAttestation) -> dict:
+    return {
+        "type": "SNAPSHOT_VOTE",
+        "digest": digest,
+        "attestation": _encode_attestation(attestation),
+    }
+
+
+def decode_snapshot_vote(message) -> tuple[str, SnapshotAttestation]:
+    data = _message_of_type(message, "SNAPSHOT_VOTE", "digest", "attestation")
+    return _hex_bytes(data["digest"], _ID_PATTERN).hex(), _decode_attestation(data["attestation"])
+
+
+def encode_snapshot(snapshot: Snapshot) -> dict:
+    return {"type": "SNAPSHOT", "snapshot": encode_snapshot_body(snapshot)}
+
+
+def encode_snapshot_body(snapshot: Snapshot) -> dict:
+    return {
+        "epoch": snapshot.epoch,
+        "balances": dict(sorted(snapshot.state.balances.items())),
+        "nonces": dict(sorted(snapshot.state.nonces.items())),
+        "ids": list(snapshot.ids),
+        "attestations": [_encode_attestation(item) for item in snapshot.attestations],
+    }
+
+
+def decode_snapshot_body(value) -> Snapshot:
+    data = _object_with_fields(value, "epoch", "balances", "nonces", "ids", "attestations")
+    ids = _list_of(data["ids"])
+
+    for event_id in ids:
+        _hex_bytes(event_id, _ID_PATTERN)
+
+    return Snapshot(
+        _natural(data["epoch"]),
+        State(_decode_amounts(data["balances"]), _decode_amounts(data["nonces"])),
+        tuple(ids),
+        tuple(_decode_attestation(item) for item in _list_of(data["attestations"])),
+    )
+
+
+def decode_snapshot(message) -> Snapshot:
+    return decode_snapshot_body(_message_of_type(message, "SNAPSHOT", "snapshot")["snapshot"])

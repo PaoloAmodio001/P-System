@@ -402,6 +402,40 @@ def test_a_log_line_is_one_json_object_with_its_fields():
 # --- Limits on what a node takes ---------------------------------------------------------
 
 
+def test_snapshots_are_off_unless_asked_for(layout):
+    base = layout[0] if isinstance(layout, tuple) else layout
+    config = read_node_config(write_config(base))
+    assert config.snapshot_every is None
+    assert config.prune is False
+    assert config.quorum(False).snapshot_every is None
+
+
+def test_snapshot_settings_reach_the_node(layout):
+    base = layout[0] if isinstance(layout, tuple) else layout
+    config = read_node_config(write_config(base, extra="[snapshots]\nevery = 100\nprune = true"))
+    assert config.snapshot_every == 100
+    assert config.prune is True
+    quorum = config.quorum(False)
+    assert quorum.snapshot_every == 100
+    assert quorum.prune is True
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "[snapshots]\nnope = 1",
+        "[snapshots]\nevery = 0",
+        "[snapshots]\nevery = \"10\"",
+        "[snapshots]\nprune = true",
+        "[snapshots]\nevery = 5\nprune = 1",
+    ],
+)
+def test_bad_snapshot_settings_are_refused(layout, extra):
+    base = layout[0] if isinstance(layout, tuple) else layout
+    with pytest.raises(DeploymentError):
+        read_node_config(write_config(base, extra=extra))
+
+
 def limited(tmp_path, **limits):
     from network.quorum import QuorumRuntime
 
@@ -455,7 +489,8 @@ def test_evidence_kept_in_memory_has_a_limit(tmp_path):
 
 
 def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
-    # A certified event must run on every node, whatever each one would have voted.
+    # A certified event must run on every node, whatever each one would have voted. A certificate
+    # beyond the window is left out for now, and it runs when it comes back: as synchronization does.
     from core.attestation import QuorumCertificate, Vote
     from network.message import encode_certificate
     from network.quorum import QuorumRuntime
@@ -478,7 +513,7 @@ def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
         ),
         genesis,
     )
-    for nonce in (1, 0):
+    for nonce in (1, 0, 1):
         event = spend(sender, nonce).transfer
         run.driver.handle_message(
             encode_certificate(
@@ -489,6 +524,7 @@ def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
             )
         )
     assert [event.nonce for event in run.replica.executed] == [0, 1]
+    assert run.driver.certificates_left_out == 1
     run.close()
 
 

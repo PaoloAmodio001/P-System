@@ -163,10 +163,12 @@ sender can leave its account blocked.
 | `QuorumEpochsNonVacuity` | witnesses for thresholds and epochs |
 | `QuorumLiveness` | an honest sender gets a certificate, given delivery |
 | `QuorumOldKeys` | what keys of ended committees can still do |
-| `QuorumClosureRetry` | why a retry finishes a closure, and when it cannot |
 | `QuorumAssets` | the total of a set of accounts |
+| `QuorumSnapshot` | restarting from a snapshot, floors, validators with different locks |
+| `QuorumReports` | a closure needs no votes: a lock on the order, and any quorum of reports |
+| `QuorumUnlock` | unlocking with `n = 5f+1` for every `f`, and why it fails with `n = 3f+1` |
 
-- 22 modules, 160 theorem declarations, about 3900 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
+- 24 modules, 199 theorem declarations, about 5000 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
   of the proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
@@ -197,7 +199,7 @@ Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacu
 | `closure_preserves_certified` | What has a certificate in an epoch is in the locks of the next | FORMAL (model) |
 | `locks_carried` | A lock stays in every later epoch | FORMAL (model) |
 | `no_double_spend_across_epochs` | No two different events with one `(sender, nonce)` have a certificate, in any two epochs | FORMAL (model) |
-| `closure_unique` | At most one certified closure for each epoch, as an event of governance with the epoch as nonce | FORMAL (model) |
+| `order_unique` | At most one certified closure for each epoch, as an event of governance with the epoch as nonce | FORMAL (model) |
 | `chain_satisfies_hypotheses`, `fork_without_carrying_locks`, `equivocation_run_6_satisfies_hypotheses`, `unlock_safe_witness` | The hypotheses can hold together, and without carrying the locks there is a fork | FORMAL (witnesses, one instance each) |
 
 | `honest_sender_certifies` | If `q` honest validators receive one version of an event and see no conflicting request that passes their check, each votes for it and their signatures form a valid certificate | FORMAL (model), with delivery as a hypothesis; not unconditional liveness |
@@ -206,9 +208,22 @@ Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacu
 | `old_certificate_outside_locks_refused`, `accepted_complete` | A node takes a certificate of an ended committee only for an event in its locks, and every real one is there | FORMAL (model) |
 | `old_keys_no_double_spend` | With all keys of ended committees stolen, two accepted events of a sender that signed one version are the same event | FORMAL (model) |
 | `two_versions_in_locks_both_accepted` | The limit of the above: a sender that signed two versions | FORMAL (model) |
-| `blocking_closure_is_seen`, `retry_gets_every_vote` | Any `q` reporters include a voter of a closure that could block others; with one closure voted, each of them can vote for what the proposer picks | FORMAL (model), given delivery |
-| `split_closures_block` | With `n = 4`, two votes for each of two closures leave none able to reach three | FORMAL (model), for that instance |
+| `order_unique` | Two orders cannot both have a quorum of reports, so one committee follows each epoch | FORMAL (model) |
+| `no_double_spend_any_closures` | No double spend where each validator installed its own closure of each epoch | FORMAL (model) |
+| `one_order_never_blocks` | With one order, any quorum a proposer reaches can report for it | FORMAL (model), delivery as a hypothesis |
+| `certified_passes_threshold` | For every `f`, with `n = 5f+1`, a certified event has at least `2f+1` reports in every closure | FORMAL (model) |
+| `unlocked_key_has_no_certificate` | A key with no event over that threshold has no certificate, so freeing it loses nothing | FORMAL (model) |
+| `no_double_spend_with_unlock` | No conflict in any two epochs, for every `f`, with each validator holding the threshold locks of a closure of its own, under `UnlockChain` | FORMAL (model) |
+| `split_lock_ambiguous_general`, `threshold_rule_loses_a_certificate_3f1` | For every `f`, with `n = 3f+1`, no rule on the reports works, and any threshold of 2 or more loses a certificate | FORMAL (model) |
+| `two_orders_can_block` | A governance that signs two orders can leave neither with a quorum | FORMAL (model), for `n = 4` |
+| `without_report_lock_two_orders_pass`, `order_unique_needs_the_bound`, `too_few_reports_miss_a_certificate`, `closures_can_differ` | What goes wrong without each hypothesis | FORMAL (model), for those instances |
 | `asset_supply_conserved` | A run of executable events, each inside a set of accounts or outside it, leaves the sum of the set unchanged | FORMAL (model) |
+| `resume_equals_replay` | A node restarted from the snapshot of its own past goes on as if it had replayed everything: same state, ids and votes | FORMAL (model) |
+| `resume_is_derive`, `resume_same_state_as_full` | From a snapshot of any set `derive` accepts, the state reached is what `derive` computes on all the events, and what a node that ran them all holds | FORMAL (model) |
+| `attested_snapshot_matches_node` | With fewer faulty than a quorum needs, a snapshot with a quorum of signatures is the state of any honest node with those events | FORMAL (model). What an honest member checks is `Attests` |
+| `union_locks_cover` | The union of the locks of a quorum of signers holds what every honest member holds over the floor | FORMAL (model) |
+| `no_double_spend_views` | No double spend in any two epochs, where each validator has its own locks and its own floor, under `ViewChain` | FORMAL (model). `viewChain_of_chainValid`: the uniform chain is an instance |
+| `prune_without_floor_lets_conflict_through`, `invalid_set_has_no_derivation`, `attestation_without_honest_signer_proves_nothing`, `resume_without_ids_loses_children` | What goes wrong without each hypothesis | FORMAL (model), for those instances |
 
 Hypotheses that remain, in `no_double_spend_across_epochs`:
 

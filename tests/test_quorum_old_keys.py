@@ -14,7 +14,7 @@ from crypto.identity import Identity
 from network.message import encode_certificate, encode_certificate_sync, encode_epoch_closure, encode_vote_request
 from network.quorum import VoteStoreError
 from sdk.client import ChainVerifier
-from tests.test_quorum_epoch_retry import (
+from tests.test_quorum_reports import (
     CHANGE,
     COMMITTEE,
     GENESIS,

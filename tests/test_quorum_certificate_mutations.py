@@ -93,13 +93,13 @@ MUTATIONS = {
         "        if self.f < 0:\n",
     ),
     "committee of any size": (
-        "            or len(self.members) != 3 * self.f + 1\n",
+        "            or len(self.members) != (5 if self.unlock else 3) * self.f + 1\n",
         "",
     ),
     "members that are not a tuple": (
         "            type(self.members) is not tuple\n"
-        "            or len(self.members) != 3 * self.f + 1\n",
-        "            len(self.members) != 3 * self.f + 1\n",
+        "            or len(self.members) != (5 if self.unlock else 3) * self.f + 1\n",
+        "            len(self.members) != (5 if self.unlock else 3) * self.f + 1\n",
     ),
     "member that is not bytes": (
         "                type(member) is not bytes\n"
@@ -139,7 +139,7 @@ MUTATIONS = {
         "",
     ),
     "quorum of f + 1": (
-        "        return 2 * self.f + 1\n",
+        "        return (4 if self.unlock else 2) * self.f + 1\n",
         "        return self.f + 1\n",
     ),
     "committee id without f": (
@@ -173,8 +173,9 @@ MUTATIONS = {
         "        bytes.fromhex(committee.committee_id)\n",
     ),
     "no committee id": (
+        "        VOTE_DOMAIN\n"
         "        + bytes.fromhex(committee.committee_id)\n",
-        "",
+        "        VOTE_DOMAIN\n",
     ),
     "the id is signed instead of the canonical form": (
         "        + event.canonical()\n",

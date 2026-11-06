@@ -8,6 +8,7 @@ Each run is a separate process, because the failure can be a crash or a hang.
 """
 
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -58,9 +59,17 @@ def test_reader_and_writer_on_one_tls_connection(count, size, runs):
 # --- Deadlines and closing, in this process --------------------------------------------
 
 
-def _tls_stream_pair():
+def _tls_stream_pair(buffer_bytes: int | None = None):
+    """With `buffer_bytes`, sockets that hold that much, whatever the system would allow."""
     listener = socket.create_server(("127.0.0.1", 0))
     accepted = {}
+    raw_client = socket.socket()
+
+    if buffer_bytes is not None:
+        # Before connecting: accept inherits them from the listener.
+        for sock in (listener, raw_client):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, buffer_bytes)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buffer_bytes)
 
     def accept():
         raw, _ = listener.accept()
@@ -71,8 +80,10 @@ def _tls_stream_pair():
 
     thread = threading.Thread(target=accept)
     thread.start()
+    raw_client.settimeout(5)
+    raw_client.connect(listener.getsockname())
     client = SecureTransport.wrap_client(
-        socket.create_connection(listener.getsockname(), timeout=5),
+        raw_client,
         SecureTransport.create_client_context(get_node_tls_config("duplex-a")),
         "duplex-b",
     )
@@ -116,24 +127,69 @@ def test_send_to_a_peer_that_does_not_read_times_out(streams, monkeypatch):
     assert time.monotonic() - started < 5
 
 
-def test_a_long_frame_gets_more_time(streams, monkeypatch):
-    # A deadline fixed in seconds would cut a long frame to a peer that is reading.
-    left, right = streams
+def test_a_long_frame_gets_more_time(monkeypatch):
+    # A deadline fixed in seconds would cut a long frame to a peer that is reading. Only a send
+    # that has to wait can show it, so the frame must not fit in the buffers of the sockets. Those
+    # depend on the machine: with the defaults of a large one the whole frame fits at once.
+    frame = b"y" * 512_000
+    left, right = _tls_stream_pair(buffer_bytes=8192)
+
+    try:
+        for stream in (left, right):
+            for option in (socket.SO_SNDBUF, socket.SO_RCVBUF):
+                # The kernel doubles what it is given, and that is all it may hold.
+                assert stream._sock.getsockopt(socket.SOL_SOCKET, option) < len(frame) / 4
+
+        monkeypatch.setattr(DuplexTLSStream, "SEND_TIMEOUT", 0.0)
+        monkeypatch.setattr(DuplexTLSStream, "SEND_BYTES_PER_SECOND", 1)
+        received = bytearray()
+
+        def read():
+            while len(received) < len(frame):
+                time.sleep(0.002)
+                received.extend(right.recv(65536))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        left.sendall(frame)
+        reader.join(timeout=30)
+        assert bytes(received) == frame
+    finally:
+        left.close()
+        right.close()
+
+
+class _SocketThatMakesYouWait:
+    """Refuses every other send, as a full buffer does, whatever the machine."""
+
+    def __init__(self) -> None:
+        self.accepted = bytearray()
+        self.refuse = True
+
+    def send(self, chunk) -> int:
+        self.refuse = not self.refuse
+
+        if not self.refuse:
+            raise ssl.SSLWantWriteError()
+
+        self.accepted.extend(chunk)
+        return len(chunk)
+
+
+def test_the_deadline_of_a_send_counts_the_length_of_the_frame(monkeypatch):
+    # No socket, so no buffer and no machine: the same rule with nothing left to chance.
     monkeypatch.setattr(DuplexTLSStream, "SEND_TIMEOUT", 0.0)
     monkeypatch.setattr(DuplexTLSStream, "SEND_BYTES_PER_SECOND", 1)
-    frame = b"y" * 3_000_000
-    received = bytearray()
+    monkeypatch.setattr(DuplexTLSStream, "_wait", lambda self, error, seconds=0.0: None)
+    stream = DuplexTLSStream.__new__(DuplexTLSStream)
+    stream._sock = _SocketThatMakesYouWait()
+    stream._io_lock = threading.Lock()
+    stream._closed = False
+    frame = b"w" * 200_000
 
-    def read():
-        while len(received) < len(frame):
-            time.sleep(0.002)
-            received.extend(right.recv(65536))
+    stream.sendall(frame)
 
-    reader = threading.Thread(target=read, daemon=True)
-    reader.start()
-    left.sendall(frame)
-    reader.join(timeout=30)
-    assert bytes(received) == frame
+    assert bytes(stream._sock.accepted) == frame
 
 
 def test_close_wakes_a_reader_in_another_thread(streams):

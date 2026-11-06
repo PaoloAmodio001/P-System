@@ -1,28 +1,105 @@
 # P-System: dal prototipo di ricerca alla piattaforma
 
-Del 2026-11-04, aggiornata il 2026-11-05. Punto di partenza allora: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
+Del 2026-11-04, aggiornata il 2026-11-06. Punto di partenza allora: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
 
 Niente di questo documento è un risultato. I teoremi elencati sono **da dimostrare**, e i nomi sono provvisori. Le stime di tempo sono giudizi a occhio, non misure: valgono come ordine di grandezza, in mesi-persona a tempo pieno.
 
 ## Dove siamo
 
 - **Dimostrato sul modello:** `no_double_spend` e la sua forma per soglie qualsiasi, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, `conflict_identifies_faulty`, `no_double_spend_across_epochs` su una catena di comitati, `honest_sender_certifies` con la consegna come ipotesi. Crittografia idealizzata.
-- **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche non c'è un differenziale con Lean. Non è un refinement.
-- **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti e asset multipli.
+- **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche, il differenziale D confronta un validatore con `runEpoch`, `reportOf` e `lockAllows`; la verifica delle chiusure resta fuori, perché nel modello è l'ipotesi `ChainValid`. Non è un refinement.
+- **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti con stato proprio. Il passaggio a macchine separate ha gli script, ma non è stato misurato.
+
+## Che cosa manca dopo la 1.0
+
+Elenco del 2026-11-06, scritto per essere usato: da qui si sceglie che cosa fare. Il numero 1.0 non soddisfa i criteri della fase H: **tutto ciò che segue è ancora da fare, e nulla è una promessa.** Le stime di costo non ci sono perché nessuno ha chiesto un preventivo.
+
+### Richiede codice
+
+Si può fare da soli, ma nessuna di queste voci sostituisce le verifiche della sezione dopo.
+
+| Cosa | Perché conta | Note |
+|---|---|---|
+| Ridurre la distanza tra modello e Python: più funzioni estratte o controllate, o un refinement parziale di `QuorumReplica` | È la lacuna maggiore: oggi il legame è solo `EMPIRICAL` | Ricerca, esito incerto. Una revisione esterna dovrebbe scegliere la strada prima |
+| Rafforzare i cinque enunciati di `docs/LEAN-REVISIONE.md`, sezione 1. **Epoche:** dall'eseguito al certificato, per due nodi, e con le firme invece di `Certified` | Oggi `no_double_spend_across_epochs` parla di certificazione, e i documenti lo dicono | Solo Lean, ma il modello delle epoche deve avere un'esecuzione. Il più importante dei cinque |
+| **Mittente onesto:** raccolta delle firme e consegna del certificato, su un modello di rete con equità | `honest_sender_certifies` costruisce il certificato nell'enunciato | Fase B: sarebbe il primo vero teorema di liveness |
+| **Chiavi vecchie:** ricavare `SingleVersion` dalla firma del mittente, invece di assumerla | Oggi è tutto il caso di due certificati vecchi | Il modello deve avere le firme del mittente |
+| **Chiusure:** un teorema che dica che con un ordine solo e la consegna la chiusura si forma | `one_order_never_blocks` è solo un conteggio. Che soltanto il governo possa bloccare è un argomento a mano | Modello di consegna, come sopra |
+| **Asset:** ricavare l'ipotesi di `asset_supply_conserved` da `auth`, per ottenere "la quantità di un asset non cresce" | Oggi il passaggio è a mano | Piccolo |
+| Testimoni non banali per `InstalledClosures`, `UnlockChain`, `Attests` e catene finite | Vedi `docs/LEAN-REVISIONE.md` | Solo Lean |
+| Generatore di traffico da più mittenti e più client, su più macchine | Oggi si misura un mittente alla volta, e nessun traffico continuo | Prerequisito di una prova seria su macchine separate |
+| Id degli eventi eseguiti che crescono anche con la potatura | Limite dichiarato alla durata di una rete | Cambia store e istantanee, e forse il modello |
+| Oggetti con stato proprio, operazioni su più oggetti | Fase C. Cambia gli id e tutte le prove | **Solo con un caso d'uso reale** |
+| Aggiornamenti a rotazione, versione del protocollo legata all'epoca | Oggi un cambio di versione ferma tutti i nodi insieme | Fase G |
+| Integrazione di un HSM o KMS dietro `network/remote_signer.py` | Le chiavi oggi stanno in file o in un altro processo | Serve anche hardware: vedi sotto |
+| CRL o OCSP, tracciamento, immagini firmate, build riproducibili | Oggi: elenco di revoca a mano, nessun tracciamento | Fasi E e G |
+| Analisi delle vulnerabilità note in CI | Non esiste: `docs/DEPENDENCIES.md` | Piccolo |
+| Politica di compatibilità di formato e protocollo | Criterio della fase H. Esiste solo per l'API (`docs/API.md`) | Soprattutto scrittura |
+| Ridurre `core/` | 75 file, molti servono solo la modalità storica senza garanzie | Da valutare insieme alla rimozione di quella modalità |
+| Verifica parallela delle firme, raggruppamento dei messaggi in uscita | Solo se un profilo su macchine separate lo chiede | Fase D |
+
+**Fuori da questo elenco, e non promesso:** stato condiviso tra più proprietari, scambi atomici tra due proprietari e riservatezza tra i membri. I primi due richiedono consenso (vincolo 1). La riservatezza richiederebbe un progetto a sé.
+
+### Richiede persone
+
+Nessun test scritto qui può sostituirle. **Oggi nessuna di queste è iniziata.** Il testo per chiedere una revisione è in `docs/AUDIT-RICHIESTA.md`.
+
+| Chi | Per fare cosa | Bloccato da |
+|---|---|---|
+| Ricercatore di sistemi distribuiti | Revisione del protocollo, a partire da chiusure senza voti e sblocco con `5f+1` | Trovarlo. Era indicato come necessario **prima** dell'implementazione, e non è avvenuto |
+| Esperto di Lean o di metodi formali | Verifica di ipotesi ed enunciati | Trovarlo |
+| Revisori di sicurezza e di crittografia, test di penetrazione | Fase E | Trovarli, e pagarli |
+| Revisore esterno del preprint | Prima di una pubblicazione | Decisione di Paolo sul preprint |
+| Tre o quattro operatori indipendenti | Guasti davvero indipendenti, esercitazioni | Trovarli |
+| Sviluppatori che provino API e SDK senza aiuto | Fase F. Il loro primo errore è il dato utile | Trovarli |
+| Un utente potenziale con un caso a proprietario singolo | Capire se il modello serve, **prima** di investire nella fase C | Parlarci |
+| Partner di un pilota | `docs/VALIDATION-PLAN.md`: almeno tre mesi con traffico vero | È il rischio maggiore, e non è tecnico |
+| Legale | MiCA, PSD2, DORA, GDPR secondo il caso d'uso. Collisione di nome con `p-org/P` | Prima di una release pubblica |
+| Qualcuno che riproduca i risultati da zero | Criterio della fase H | Trovarlo |
+
+### Richiede macchine
+
+| Cosa | Per quanto | Procedura |
+|---|---|---|
+| Quattro nodi su quattro macchine, più un misuratore | Almeno 19 giorni la prima volta | `docs/MACCHINE-SEPARATE.md`. Mai fatto |
+| Stessa prova su reti e fornitori diversi | Settimane | Dopo la prima |
+| Comitati di 7 e 13 nodi, e `5f+1` con 6 nodi, su macchine separate | Giorni per ciascuno | Stessi script, con più nodi |
+| Taglio reale di corrente su una macchina con un disco vero | Giorni | `kill -9` è provato, il taglio di corrente no |
+| Confronto con il prototipo di FastPay | Giorni | Stesse macchine e stessa dimensione degli eventi. Va confrontata prima la durabilità |
+| Prova su settimane con un'epoca di grandi dimensioni e potatura | Settimane | Mai fatta |
+
+### Richiede soldi
+
+Importi non stimati: vanno chiesti preventivi.
+
+| Voce | Note |
+|---|---|
+| Audit del codice, audit crittografico, test di penetrazione | Il tempo di revisione stimato è in `docs/AUDIT-RICHIESTA.md` |
+| Analisi di tipo Jepsen | Da chiedere a chi la fa |
+| Macchine e rete per le prove | Quattro o più macchine, per settimane. Il costo dipende dal fornitore |
+| HSM o KMS | Solo se serve un impiego reale |
+| Consulenza legale, eventuali certificazioni | Dipende dal settore: `docs/VALIDATION-PLAN.md` |
+| Tempo a pieno regime di altre persone | La stima del quadro d'insieme resta 2,5-6 anni-persona in tutto |
+
+### Decisioni di Paolo, prima di tutto questo
+
+1. Unire la PR di `verso-1.0` e creare il tag `v1.0.0`? Il numero 1.0 non rispetta la fase H: si può tenerlo, dichiarandolo, o usare un numero più basso.
+2. Se e quando rendere pubblici repository e preprint.
+3. Da chi iniziare: consiglio la revisione del protocollo e i quattro nodi insieme, perché entrambi possono cambiare ciò che viene dopo. Un utente potenziale subito dopo.
 
 ## Stato rispetto agli ambiti di `CLAUDE.md`, sezione 3.1
 
-Valutazione del 2026-11-05, dopo il lavoro di A, B (senza consenso sullo sblocco), D, E, F e G in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**: si può installare, far girare e valutare, ma mancano le verifiche di terzi. Le fasi sono quelle qui sotto.
+Valutazione del 2026-11-05, dopo il lavoro di A, B, D, E, F, G e del programma verso la 1.0 in `docs/piano-bizantino.md`. **Il sistema non è pronto per l'industrializzazione**: si può installare, far girare e valutare, ma mancano le verifiche di terzi. Le fasi sono quelle qui sotto.
 
 | Ambito | Stato | Cosa manca | Fase |
 |---|---|---|---|
-| Core e motore di esecuzione | Modalità quorum con epoche; trasferimenti di più asset come conti distinti, con quantità fissa | Oggetti con stato proprio: serve un caso d'uso reale. Scambi tra due proprietari: serve il consenso. Istantanee e potatura del log. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
+| Core e motore di esecuzione | Modalità quorum con epoche; trasferimenti di più asset come conti distinti, con quantità fissa | Oggetti con stato proprio: serve un caso d'uso reale. Scambi tra due proprietari: serve il consenso. Con la potatura gli id degli eventi eseguiti crescono ancora. `core/` ha 75 file, molti della modalità storica, non ridotti | C |
 | Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, firmatario separato con un proprio blocco, chiavi cifrate, revoca a elenco, regola sulle chiavi delle epoche finite, limiti di frequenza, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS integrati, CRL o OCSP | E |
 | Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, una coda e uno scrittore per peer, messaggi oltre il frame, scrittura a gruppi | Prove su reti vere | E |
 | Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL`, 4 container e campagne di guasti di rete iniettati | Prove su macchine separate. Liveness incondizionata | G |
-| Formal verification | 160 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
+| Formal verification | 199 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
 | Prestazioni | Misure riproducibili su una macchina in `docs/BENCHMARKS.md` | Macchine separate; riproduzione esterna; confronto con FastPay | D |
-| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000 | Misure con nodi separati e carichi lunghi. Chiudere un'epoca prima di circa 50 000 eventi. Log senza potatura | D |
+| Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000, con istantanee e potatura | Misure con nodi separati e carichi lunghi | D |
 | Interoperabilità | API HTTP `/v1` con TLS opzionale, descrizione OpenAPI verificata da un test, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
 | Osservabilità | Log JSON, metriche Prometheus, allarmi pronti e validati con `promtool`, health, stack dei thread con `SIGUSR1` | Tracciamento. Soglie degli allarmi non tarate su un impiego reale | G |
 | Affidabilità operativa | Backup coerenti, ripristino che si astiene fino all'epoca dopo, manuali per ogni guasto noto | Prove lunghe settimane, esercitazioni con operatori veri | G |
@@ -59,7 +136,7 @@ Controesempio verificato a mano, non in Lean, con `n = 4`, `f = 1`. Per chiudere
 
 Il rapporto non permette di distinguerle, e in entrambe un nodo onesto può già aver eseguito. Sbloccare il conto, o scegliere una delle due, può quindi creare un fork. Sono proprio questi i conti da sbloccare: un mittente onesto con voti incompleti non ha bisogno dello sblocco, gli basta rinviare lo stesso evento.
 
-Con `n = 3f+1` e un solo giro, un'enumerazione esaustiva dei rapporti per `f = 1` e `f = 2` conferma che i casi ambigui esistono. **Vedi la decisione D2.**
+Con `n = 3f+1` e un solo giro, un'enumerazione esaustiva dei rapporti per `f = 1` e `f = 2` conferma che i casi ambigui esistono. **Vedi la decisione D2.** Ora è `FORMAL (model)`: `split_lock_ambiguous_general` per ogni `f` in `QuorumUnlock.lean`, dove `no_double_spend_with_unlock` dimostra lo sblocco con la configurazione opzionale `n = 5f+1`.
 
 ### 3. Il metodo finora non scala da solo
 
@@ -81,11 +158,11 @@ Risultati profondi e piattaforma sono obiettivi diversi, e il secondo dipende da
 | Latenza | Un solo giro, come oggi | Un solo giro, ma si attendono 5 risposte su 6 invece di 3 su 4 |
 | Guasti tollerati | `f` su `3f+1`, circa un terzo | `f` su `5f+1`, circa un quinto |
 | Costo con `f = 1` | 4 organizzazioni, 3 firme per certificato | 6 organizzazioni, 5 firme per certificato |
-| Stato | Il protocollo esiste già con comitato fisso | **Schizzo, non promessa** |
+| Stato | Implementata | **Implementata, spenta per impostazione predefinita, dimostrata sul modello per ogni `f`** |
 
 **Standard.** Un conto equivocato resta bloccato per sempre, e questo va detto. La difesa è la prevenzione nell'SDK (fase F), che riduce il rischio senza eliminarlo: Lutris osserva che spesso l'equivocazione è un errore del client.
 
-**Opzionale: la strada 3 è uno schizzo controllato solo per `f` piccoli, da dimostrare prima di essere promessa.** Con certificati da `4f+1` firme e chiusura su `4f+1` rapporti, un evento certificato compare in almeno `2f+1` rapporti, e nessuna alternativa può raggiungere quella soglia. La regola sarebbe quindi deterministica: un'alternativa con almeno `2f+1` rapporti resta bloccata su quell'evento, e se nessuna la raggiunge non esiste un certificato e il conto si sblocca. Nessuno sceglie. L'unico controllo fatto è un'enumerazione esaustiva con `f` = 1 e 2, su un solo `(sender, nonce)` con due alternative. Lo script non è nel repository, e dipendenze causali e sincronizzazione non sono esaminate. Nessun documento e nessuna API può offrire questa configurazione prima del teorema della fase B. La forma dei quorum ricorda i protocolli BFT veloci, come FaB: il legame va controllato.
+**Opzionale: la strada 3, ora dimostrata per ogni `f` in `QuorumUnlock.lean` e implementata.** Con certificati da `4f+1` firme e chiusura su `4f+1` rapporti, un evento certificato compare in almeno `2f+1` rapporti, e nessuna alternativa può raggiungere quella soglia. La regola sarebbe quindi deterministica: un'alternativa con almeno `2f+1` rapporti resta bloccata su quell'evento, e se nessuna la raggiunge non esiste un certificato e il conto si sblocca. Nessuno sceglie. L'unico controllo fatto è un'enumerazione esaustiva con `f` = 1 e 2, su un solo `(sender, nonce)` con due alternative. Lo script non è nel repository, e dipendenze causali e sincronizzazione non sono esaminate. Nessun documento e nessuna API può offrire questa configurazione prima del teorema della fase B. La forma dei quorum ricorda i protocolli BFT veloci, come FaB: il legame va controllato.
 
 **Scartate.**
 - **S, come Sui.** Lì lo sblocco a fine epoca non sostituisce il secondo giro, lo presuppone: dal paper di Lutris, una transazione è finale quando 2f+1 validatori accettano il suo certificato, entro 2 round trip; la chiusura passa dal consenso, e i validatori annullano le esecuzioni rimaste fuori dai checkpoint. Richiede consenso.
@@ -134,7 +211,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase B. Liveness e recupero
 
-**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `closure_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); sblocco con `n = 5f+1`, dimostrato solo nel conteggio; `new_key_old_epoch` come teorema.
+**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `order_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Fatto dopo: sblocco con `n = 5f+1`, dimostrato per ogni `f` e implementato (decisione D2). Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); `new_key_old_epoch` come teorema.
 
 **Obiettivo.** Un sistema che può cambiare comitato, ruotare le chiavi e riprendersi, senza perdere la proprietà di sicurezza. È **la fase più difficile e la più interessante**: è il punto in cui FastPay si ferma e Sui ricorre al consenso.
 
@@ -153,7 +230,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 - `conflict_identifies_faulty`: da due certificati validi in conflitto si ricavano almeno f+1 firmatari colpevoli. Utile e ben delimitato.
 - `no_double_spend_across_epochs`: due nodi onesti, anche in epoche diverse. L'ipotesi su ogni comitato (al massimo `f` difettosi) è esplicita.
 - `closure_preserves_executed`: un evento eseguito da un nodo onesto appare in ogni chiusura valida.
-- `closure_unique`: al massimo una chiusura per epoca.
+- `order_unique`: al massimo un ordine per epoca con un quorum di rapporti. Le chiusure di un'epoca possono essere più d'una, senza danno (`no_double_spend_any_closures`).
 - `locks_carried`: nella configurazione standard, un blocco resta valido oltre l'epoca.
 - `honest_sender_certifies`: mittente onesto, una sola versione, consegna equa tra 2f+1 nodi onesti: il certificato si forma. **Richiede un modello di rete con equità**, che oggi non esiste, e sarebbe il primo vero teorema di liveness.
 - `new_key_old_epoch`: una chiave compromessa dopo la chiusura non produce certificati accettati nelle epoche successive.
@@ -318,7 +395,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase H. Versione 1.0 e paper
 
-**Stato: non raggiungibile da qui.** Tutti i suoi criteri richiedono persone esterne. `docs/VALIDATION-PLAN.md` dice come iniziare.
+**Stato: non raggiungibile da qui.** Tutti i suoi criteri richiedono persone esterne. `docs/VALIDATION-PLAN.md` dice come iniziare. **Il numero 1.0 delle note di rilascio in `CHANGELOG.md` non soddisfa questi criteri, e le note lo dicono.** Se usarlo lo decide Paolo.
 
 **Obiettivo.** Una versione stabile, con affermazioni che reggono a una verifica esterna.
 

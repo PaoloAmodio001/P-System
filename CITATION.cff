@@ -4,7 +4,7 @@ title: "P-System: Deterministic Event Processing for Distributed Systems"
 authors:
   - family-names: "Amodio"
     given-names: "Paolo"
-version: "0.1.0"
+version: "1.0.0"
 license: "Apache-2.0"
 type: software
 abstract: >-

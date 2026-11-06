@@ -19,9 +19,9 @@ authors of the code, and it is what an audit should start from and attack.
 
 | Attacker | Attack | What stops it | Evidence |
 |---|---|---|---|
-| Sender | Signs two versions of a spend | Vote lock: at most one is certified, maybe none | `no_double_spend` FORMAL (model); differentials A, B, C EMPIRICAL |
+| Sender | Signs two versions of a spend | Vote lock: at most one is certified, maybe none | `no_double_spend` FORMAL (model), and `no_double_spend_across_epochs` for certification across epochs; differentials A, B, C EMPIRICAL |
 | Up to `f` members | Vote for everything, forge, withhold | Quorum intersection | Same |
-| Thief of keys of an ended committee, all of them | Certify a spend nobody signed, or a second one | An old certificate counts only for an event in the locks | `old_keys_no_double_spend`, `accepted_complete` FORMAL (model); `tests/test_quorum_old_keys.py` EMPIRICAL |
+| Thief of keys of an ended committee, all of them | Certify a spend nobody signed, or a second one | An old certificate counts only for an event in the locks | `old_certificate_outside_locks_refused`, `accepted_complete` FORMAL (model), `old_keys_no_double_spend` CONDITIONAL (model), since it assumes that the locks hold one version of each spend; `tests/test_quorum_old_keys.py` EMPIRICAL |
 | Same, and of governance | Show a joining node or a light client another chain from the genesis | **Not stopped.** Compare the id of a recent committee out of band before trusting one | None |
 | Up to `f` members | Lie in a report to lose a certified event | An honest signer among any quorum of reports | `closure_preserves_certified` FORMAL (model) |
 | Up to `f` members | Report events nobody signed, to lock accounts | A report with one such event is refused | `tests/test_quorum_epochs.py` EMPIRICAL |
@@ -36,14 +36,17 @@ authors of the code, and it is what an audit should start from and attack.
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
 | Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
-| Crash | A proposer dies during a closure | Members keep the closure they voted for, and finish it | `tests/test_quorum_epoch_retry.py` EMPIRICAL |
+| Crash | A proposer dies during a closure | Any quorum of reports is a closure, and a member that reported collects them itself | `tests/test_quorum_reports.py` EMPIRICAL. No theorem says that the closure completes: `one_order_never_blocks` only counts who can still report |
 
 ## Known gaps
 
 - **Python is not proved.** The theorems are about the Lean model. The link with Python is tests. A bug in Python can
   break what the model proves. This is the largest gap, and no number of tests closes it.
-- **Denial of service.** A certificate holder can still consume CPU and bandwidth: each connection is paced at 5000 messages per second, by reading less, and a bad frame costs one signature check. Anyone who reaches the port can keep the 64 handshake places
-  busy. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
+- **Denial of service.** Limits are in place, and none has been tuned on a real deployment:
+  - Whoever reaches the port, with no certificate, gets a place among 64 handshakes and 16 for each address, and the one waiting longest gives way. So silent connections do not keep an honest peer out, unless they open all the places within its handshake.
+  - A peer with a certificate pays by cost: 5000 tokens per second, 100 for a bad signature, 1 for each KiB of an answer. The wait is on its own reader.
+  - A certificate that cannot run yet takes room up to 100 000 and up to `max_nonce_ahead` for each sender. One that can run never waits for room. One left out comes back with synchronization, so this delays and does not change a result (`tests/test_saturation.py`).
+  - **What is left:** a volumetric attack on the bandwidth or on the SYN queue of the kernel, which needs a firewall. A TLS handshake costs CPU before knowing who is on the other side. A sender with funds costs up to `max_nonce_ahead` votes per epoch, and what bounds the senders with funds is only money. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
 - **Keys** are files with mode 0600 by default. They can be encrypted, and they can live in a signer in another process that
   keeps its own vote lock (`network/remote_signer.py`, `EMPIRICAL`). That guard does not know the locks of earlier epochs, and
   its last signatures can be forgotten in a power cut. No HSM or KMS has been integrated.
@@ -52,8 +55,9 @@ authors of the code, and it is what an audit should start from and attack.
   tokens beyond `hmac.compare_digest`.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
-- **Liveness.** `honest_sender_certifies` assumes delivery. Nothing promises progress against an adversarial network,
-  and proposers acting at once can still split the votes on a closure, which stops that epoch from closing for good.
+- **Liveness.** `honest_sender_certifies` assumes delivery, and says that the signatures make a valid certificate, not that anyone gathers them. Nothing promises progress against an adversarial network,
+  and a governance that signs two orders for one epoch can split the reports, which stops that epoch from closing for good.
+- **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. A signer can add locks nobody signed to a snapshot: that can only stop the node that takes it from voting on those nonces. A node that pruned cannot prove a conflict under its floor.
 - **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.
 - **Power loss.** `kill -9` is tested. Power loss is not, and `fsync` calls were traced by hand once.
 

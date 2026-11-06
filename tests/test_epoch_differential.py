@@ -17,6 +17,9 @@ Correspondence between the two sides:
   validator could send them. An event no sender signed is refused by Python before it is a lock, and
   that lock would only block a nonce: see the limits in `QuorumEpochs.lean`.
 - A restart exists only on the Python side: the store is reopened, and the model must not notice.
+- A floor is applied in some epochs. Python removes the locks under it and refuses votes under it; Lean
+  runs `pruneLocks` and `flooredAuth` from `QuorumSnapshot.lean`. The floors here are random, higher or
+  lower than anything executed: the theorem does not need them to be true.
 
 PSYSTEM_DIFF_SEEDS sets the number of seeds, as for the other differentials.
 """
@@ -30,7 +33,14 @@ from pathlib import Path
 
 import pytest
 
-from core.attestation import Committee, EpochChange, EpochClosure, EpochReport, Governance, Vote
+from core.attestation import (
+    Committee,
+    EpochChange,
+    EpochClosure,
+    EpochReport,
+    Governance,
+    Snapshot,
+)
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.state import State
@@ -106,6 +116,7 @@ class Stats:
         self.refused_closed = 0
         self.refused_in_epoch = 0
         self.refused_by_auth = 0
+        self.refused_by_floor = 0
 
 
 def signed_pool(rng: random.Random) -> list[SignedTransfer]:
@@ -137,7 +148,7 @@ def open_replica(path: Path, committee: Committee, refused: set, create: bool, i
 
 def closure_for(committee: Committee, replica_report, pool, rng) -> EpochClosure:
     change = EpochChange.create(committee, MEMBER_KEYS, 1, GOVERNANCE, SIGNERS[:2])
-    reports = [replica_report(change.change_id)]
+    reports = [replica_report(change)]
 
     # Faulty or honest, others report whatever signed events they like, each event once a nonce
     # or not: the union is what counts.
@@ -153,10 +164,7 @@ def closure_for(committee: Committee, replica_report, pool, rng) -> EpochClosure
         )
 
     reports.sort(key=lambda report: report.validator)
-    candidate = EpochClosure(change, tuple(reports))
-    event = candidate.event(GOVERNANCE, committee)
-    votes = tuple(Vote.create(committee, MEMBERS[v], event) for v in range(3))
-    closure = EpochClosure(change, tuple(reports), votes)
+    closure = EpochClosure(change, tuple(reports))
     assert closure.verify(GOVERNANCE, committee)
     return closure
 
@@ -176,10 +184,19 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
         initial = committee
         replica, store = open_replica(path, committee, refused, True, initial)
         locks: list[Transfer] = []
+        floors: dict[str, int] = {}
 
-        for _ in range(EPOCHS):
+        for epoch in range(EPOCHS):
+            if epoch and rng.random() < 0.5:
+                for sender in rng.sample(SENDERS, rng.randint(1, 2)):
+                    name = sender.identity_id
+                    floors[name] = max(floors.get(name, 0), rng.randint(1, 2))
+
+                store.apply_floor(Snapshot(epoch, State({}, dict(floors)), ()))
+
             lines = [event_line("L", event) for event in locks]
             lines += [f"U {int(item, 16)}" for item in sorted(refused)]
+            lines += [f"F {name} {nonce}" for name, nonce in sorted(floors.items())]
             closed_with: list[Transfer] | None = None
 
             def snapshot() -> str:
@@ -195,7 +212,7 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
                 action = rng.random()
 
                 if action < 0.10:
-                    report = replica.report_epoch(change.change_id)
+                    report = replica.report_epoch(change)
                     assert report.verify(committee, change.change_id)
                     if closed_with is None:
                         closed_with = [signed.transfer for signed in report.votes]
@@ -223,6 +240,8 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
                         stats.refused_by_auth += 1
                     elif closed_with is not None:
                         stats.refused_closed += 1
+                    elif signed.transfer.nonce < floors.get(signed.transfer.sender, 0):
+                        stats.refused_by_floor += 1
                     elif conflict_with_lock:
                         stats.refused_by_lock += 1
                     elif before:
@@ -231,8 +250,8 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
 
                 python.append(snapshot())
 
-            def report_now(change_id: str) -> EpochReport:
-                return replica.report_epoch(change_id)
+            def report_now(order: EpochChange) -> EpochReport:
+                return replica.report_epoch(order)
 
             closure = closure_for(committee, report_now, [*pool], rng)
             lean_input.extend(lines)
@@ -281,3 +300,4 @@ def test_one_validator_across_epochs_matches_the_model(epoch_check, tmp_path, se
     assert stats.refused_closed >= MIN_DECISIVE
     assert stats.refused_in_epoch >= MIN_DECISIVE
     assert stats.refused_by_auth >= 1
+    assert stats.refused_by_floor >= MIN_DECISIVE

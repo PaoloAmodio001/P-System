@@ -87,15 +87,18 @@ def metrics_text(node: Node) -> str:
             return ""
 
         values = [
-            ("psystem_executed_events", "gauge", "Events executed by this node", len(replica.log)),
+            ("psystem_executed_events", "gauge", "Events executed by this node, also those pruned", replica.executed_count),
             ("psystem_epoch", "gauge", "Epoch in force", replica.committee.epoch),
             ("psystem_halted", "gauge", "1 if this node has halted on a conflict", int(driver.halted)),
             ("psystem_is_member", "gauge", "1 if this node votes in this epoch", int(replica.is_member)),
             ("psystem_certificates_waiting", "gauge", "Valid certificates that cannot run yet", len(driver._buffer)),
+            ("psystem_certificates_left_out_total", "counter", "Certificates not kept for lack of room: they come back with synchronization", driver.certificates_left_out),
             ("psystem_equivocations", "gauge", "Proofs of equivocation seen, in memory", len(driver.equivocations)),
             ("psystem_peers_connected", "gauge", "Connected peers", len(node.peer_connections)),
             ("psystem_store_commits_total", "counter", "Durable writes", store.commits),
             ("psystem_store_commit_seconds_total", "counter", "Time spent in durable writes", round(store.commit_seconds, 6)),
+            ("psystem_snapshot_events", "gauge", "Events the last snapshot covers", 0 if replica.base is None else len(replica.base.ids)),
+            ("psystem_certificates_held", "gauge", "Certificates this node still holds", len(replica.log)),
             ("psystem_epoch_votes", "gauge", "Votes of this node in this epoch: close an epoch before about 50000", store.epoch_vote_count()),
         ]
 
@@ -287,13 +290,23 @@ class _Handler(BaseHTTPRequestHandler):
                 "epoch": replica.committee.epoch,
                 "committee_id": replica.committee.committee_id,
                 "genesis_hash": self.server.genesis_hash,
-                "executed": len(replica.log),
+                "executed": replica.executed_count,
                 "state_root": replica.state.root(),
                 "halted": node._quorum.driver.halted,
                 "conflicted": node.status() == DecisionStatus.CONFLICTED,
                 "is_member": replica.is_member,
                 "peers": sorted(node.peer_connections),
                 "guilty_members": [key.hex() for key in node.guilty_members()],
+                "snapshot": (
+                    None
+                    if replica.base is None
+                    else {
+                        "epoch": replica.base.epoch,
+                        "digest": replica.base.digest,
+                        "events": len(replica.base.ids),
+                    }
+                ),
+                "certificates_held": len(replica.log),
             }
 
     def _closures(self) -> dict:

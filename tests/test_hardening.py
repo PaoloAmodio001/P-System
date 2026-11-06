@@ -38,6 +38,7 @@ from network.remote_signer import (
 from network.secure_transport import SecureTransport
 from network.service import MAX_TRACKED_CLIENTS, RateLimiter, Service
 from sdk.client import ApiError, Client
+from tests.die_with_parent import command
 from tests.deployment_helpers import ROOT, Deployment, psystem, wait_until
 
 A = Transfer("alice", "bob", 8, 0)
@@ -188,9 +189,10 @@ def test_a_report_is_one_per_order(guard):
     assert not guard.permit(report_bytes(digest=b"\x55" * 32))
 
 
-def test_a_report_of_another_order_or_committee_is_separate(guard):
+def test_one_order_for_each_committee(guard):
     assert guard.permit(report_bytes())
-    assert guard.permit(report_bytes(digest=b"\x55" * 32, change=b"\x66" * 32))
+    # Another order of one committee: two orders with a quorum could mean two next committees.
+    assert not guard.permit(report_bytes(digest=b"\x55" * 32, change=b"\x66" * 32))
     assert guard.permit(report_bytes(digest=b"\x55" * 32, committee=OTHER_COMMITTEE))
 
 
@@ -354,12 +356,12 @@ def test_four_real_nodes_with_signers_certify_and_change_epoch(tmp_path):
             directory = deployment.directory(index)
             sock = directory / "s.sock"
             process = subprocess.Popen(
-                [
-                    sys.executable, "-m", "network.cli", "signer",
+                command(
+                    "-m", "network.cli", "signer",
                     "--key", str(directory / "identity.key"),
                     "--socket", str(sock),
                     "--guard", str(directory / "guard.sqlite"),
-                ],
+                ),
                 cwd=ROOT,
                 stdout=subprocess.PIPE,
                 text=True,
@@ -923,3 +925,33 @@ def test_the_fingerprint_of_the_command_is_what_a_connection_sees(tmp_path):
     finally:
         left.stop()
         right.stop()
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        b"HTTP/1.1 200 OK\r\nContent-Length: 101\r\n\r\n",
+        b"HTTP/1.1 500 Error\r\nContent-Length: 101\r\n\r\n",
+        b"not http at all\r\n\r\n",
+    ],
+)
+def test_a_node_that_dies_halfway_through_an_answer_is_a_failed_connection(start):
+    # A long campaign of faults lost its traffic to this: what http.client raises is no OSError.
+    listener = socket.create_server(("127.0.0.1", 0))
+
+    def answer():
+        connection, _ = listener.accept()
+        connection.recv(65536)
+        connection.sendall(start)
+        connection.close()
+
+    thread = threading.Thread(target=answer, daemon=True)
+    thread.start()
+
+    try:
+        client = Client(f"http://127.0.0.1:{listener.getsockname()[1]}", timeout=5)
+        with pytest.raises(OSError):
+            client.status()
+    finally:
+        thread.join(5)
+        listener.close()

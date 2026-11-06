@@ -45,7 +45,7 @@ CHANGES = {
             "                    \"conflicting certificate of an ended committee ignored\",\n"
             "                    extra={\"sender\": event.sender, \"nonce\": event.nonce, \"epoch\": certificate.epoch},\n"
             "                )\n"
-            "                return\n",
+            "                return False\n",
             "",
         ),
         "no conflict halts": (
@@ -64,7 +64,7 @@ CHANGES = {
             "",
         ),
         "light client takes no locks": (
-            "            self._locks.update(event.canonical() for event in closure.locks())\n",
+            "            self._locks.update(event.canonical() for event in closure.locks(self.current))\n",
             "",
         ),
         "light client wants a lock for everything": (

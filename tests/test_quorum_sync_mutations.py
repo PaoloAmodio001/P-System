@@ -58,17 +58,25 @@ DRIVER = {
         "        self._indexed = 10**9\n",
     ),
     "answer ignores the frontier": (
-        "            start = max(0, frontier.get(sender, 0) - certificates[0].event.nonce)\n",
+        "            start = bisect_left(\n"
+        "                certificates,\n"
+        "                frontier.get(sender, 0),\n"
+        "                key=lambda certificate: certificate.event.nonce,\n"
+        "            )\n",
         "            start = 0\n",
     ),
     "answer assumes nonces start at zero": (
-        "            start = max(0, frontier.get(sender, 0) - certificates[0].event.nonce)\n",
+        "            start = bisect_left(\n"
+        "                certificates,\n"
+        "                frontier.get(sender, 0),\n"
+        "                key=lambda certificate: certificate.event.nonce,\n"
+        "            )\n",
         "            start = frontier.get(sender, 0)\n",
     ),
     "answer without a limit": (
         "                if batch and size > SYNC_BATCH_BYTES:\n"
         "                    return DriverOutput(\n"
-        "                        replies=(*closures, encode_certificate_sync(batch)),\n"
+        "                        replies=(*closures, *snapshot, encode_certificate_sync(batch)),\n"
         "                    )\n",
         "",
     ),
@@ -78,7 +86,7 @@ DRIVER = {
     ),
     "empty answer sent": (
         "        if not batch:\n"
-        "            return DriverOutput(replies=closures)\n",
+        "            return DriverOutput(replies=(*closures, *snapshot))\n",
         "",
     ),
     "batch runs after a halt": (
@@ -101,24 +109,19 @@ DRIVER = {
     ),
     "batch not checked": (
         "            if not self.replica.certificate_is_valid(certificate):\n"
-        "                return _NOTHING\n"
-        "\n"
-        "            self._accept(certificate)\n"
-        "            learned = True\n",
-        "            self._accept(certificate)\n"
-        "            learned = True\n",
+        "                self._cost += BAD_SIGNATURE_COST\n"
+        "                return _NOTHING\n",
+        "",
     ),
     "bad certificate only skipped": (
-        "            if not self.replica.certificate_is_valid(certificate):\n"
+        "                self._cost += BAD_SIGNATURE_COST\n"
         "                return _NOTHING\n"
         "\n"
-        "            self._accept(certificate)\n"
-        "            learned = True\n",
-        "            if not self.replica.certificate_is_valid(certificate):\n"
+        "            # One left out teaches nothing.",
+        "                self._cost += BAD_SIGNATURE_COST\n"
         "                continue\n"
         "\n"
-        "            self._accept(certificate)\n"
-        "            learned = True\n",
+        "            # One left out teaches nothing.",
     ),
     "always asks again": (
         "        request = self.sync_request() if learned else None\n",

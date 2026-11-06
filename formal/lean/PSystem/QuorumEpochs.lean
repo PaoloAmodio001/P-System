@@ -22,12 +22,6 @@ Main results:
 - `closure_preserves_certified`: what has a certificate in an epoch is in the locks of the
   next one, whichever quorum reported and whatever faulty validators reported;
 - `locks_carried`: a lock stays in every later epoch;
-- `closure_unique`: a closure is an event of the identity of governance with the epoch as
-  nonce, so `no_double_spend_across_epochs` leaves at most one for each epoch. Python votes
-  on closures after `close`, which refuses every other vote: that is a second instance of
-  `Epoch` over the same validators, with its own vote lock and no `close` input. The theorem
-  applies to that instance. Two votes on one closure lock cannot go through the first.
-
 Limits, to be stated wherever these are used:
 
 - Each committee needs its own bound on faulty validators, as a hypothesis. It is what the
@@ -285,16 +279,5 @@ theorem no_double_spend_across_epochs {E : Nat → Epoch} {locks : Nat → List 
   · exact later hij h₁ h₂ hs hn
   · exact certified_same_epoch h₁ h₂ hs hn
   · exact (later hji h₂ h₁ hs.symm hn.symm).symm
-
-/-- At most one closure for each epoch: closures are events of one sender, with the epoch as
-nonce. Two identities of governance signing two closures do not make two certificates. -/
-theorem closure_unique {E : Nat → Epoch} {locks : Nat → List Event}
-    (hchain : ChainValid E locks) (governance : Identity) {i j : Nat} {epoch : Nat}
-    {closure₁ closure₂ : Event}
-    (hs₁ : closure₁.sender = governance) (hn₁ : closure₁.nonce = epoch)
-    (hs₂ : closure₂.sender = governance) (hn₂ : closure₂.nonce = epoch)
-    (h₁ : Certified (E i) (locks i) closure₁) (h₂ : Certified (E j) (locks j) closure₂) :
-    closure₁ = closure₂ :=
-  no_double_spend_across_epochs hchain h₁ h₂ (hs₁.trans hs₂.symm) (hn₁.trans hn₂.symm)
 
 end PSystem.Quorum

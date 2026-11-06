@@ -36,6 +36,7 @@ from network.node import Node
 from network.peer import Peer
 from network.quorum import QuorumConfig
 from tests import quorum_store_worker as worker
+from tests.die_with_parent import command
 from tests.signed_helpers import authorize, identity_with_claim, signed_transfer
 from tests.test_quorum_driver import GENESIS as DRIVER_GENESIS
 from tests.test_quorum_driver import _spends
@@ -67,7 +68,16 @@ class Reply:
     def send(self, message):
         self.sent.append(json.loads(json.dumps(message)))
 
-    enqueue = send
+    def enqueue(self, message):
+
+        self.send(message)
+
+        return 0
+
+
+    def charge(self, tokens):
+
+        pass
 
 
 def open_node(path: Path, index: int, committee=COMMITTEE, genesis=GENESIS, create=True):
@@ -362,7 +372,7 @@ def test_certificates_lost_at_a_restart_can_be_delivered_again(tmp_path):
 
 def _spawn_worker(mode: str, path: Path) -> tuple[subprocess.Popen, list[str]]:
     process = subprocess.Popen(
-        [sys.executable, worker.__file__, mode, str(path)],
+        command(worker.__file__, mode, str(path)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

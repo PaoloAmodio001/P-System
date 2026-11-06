@@ -89,8 +89,10 @@ MUTATIONS = {
         '            raise VoteStoreError("HALT PROOF IS UNREADABLE") from error\n',
     ),
     "recursion error not caught when opened": (
-        "        except (ValueError, KeyError, TypeError, RecursionError) as error:\n",
-        "        except (ValueError, KeyError, TypeError) as error:\n",
+        "        except (ValueError, KeyError, TypeError, RecursionError) as error:\n"
+        "            raise VoteStoreError(\"HALT PROOF IS UNREADABLE\") from error\n",
+        "        except (ValueError, KeyError, TypeError) as error:\n"
+        "            raise VoteStoreError(\"HALT PROOF IS UNREADABLE\") from error\n",
     ),
     "proof not checked at all on opening": (
         "            self._check_halt_proof()\n",
@@ -129,7 +131,7 @@ MUTATIONS = {
         "                pass\n",
     ),
     "unknown version accepted": (
-        "            elif version != _SCHEMA_VERSION:\n",
+        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):\n",
         "            elif False:\n",
     ),
     "version 1 refused instead of migrated": (

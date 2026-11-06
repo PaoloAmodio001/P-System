@@ -98,9 +98,11 @@ class Proxy:
 
     def _forward(self, source: socket.socket, target: socket.socket, generation: int) -> None:
         link = self.link
-        source.settimeout(0.2)
 
         try:
+            # In the try: the other direction may have closed this socket already.
+            source.settimeout(0.2)
+
             while self._running and link.generation == generation and not link.blocked:
                 if link.stalled:
                     time.sleep(0.05)

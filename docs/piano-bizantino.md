@@ -1,8 +1,41 @@
 # Piano: sicurezza bizantina con certificati di quorum
 
+## Dopo la 1.0, branch `dopo-1.0`, 2026-11-06
+
+Riepilogo: `docs/notte-2026-11-06.md`. Nessuna modifica a `core/`, `network/`, `formal/`, `sdk/`. **Modifiche:** procedura per quattro macchine, pagina per il revisore, elenco di ciò che manca, revisione delle prove Lean, dipendenze, proposta su `CLAUDE.md`, misure rifatte con i file grezzi, test corretti, nodi dei test che muoiono con il genitore, controllo degli assiomi della CI. **Problemi:** la CI della PR #3 è rossa per un difetto del controllo, non delle prove. Due difetti del prodotto annotati e non corretti. **Aperto:** merge e tag, enunciati Lean deboli. I difetti D1 e D2 sono stati corretti dopo, in `339a6b0`.
+
+**`OPEN`: un evento fermo per 10 minuti in un test su processi veri, una volta in CI, causa non accertata.** `tests/test_separate_hosts.py::test_a_measure_on_real_processes_says_what_happened`, sul commit `858be80`, [log della CI](https://github.com/PaoloAmodio001/P-System/actions/runs/42216234420). Il test ha visto, nella misura di throughput: `scripts.measure_network.TimedOut: 4 NODES NOT AT NONCE 53`, dopo i 600 secondi di `wait_for`. `1 failed, 3241 passed`.
+
+- **Progresso, per quanto si è visto.** Per tutti i 600 secondi nessuno dei quattro nodi ha riportato il nonce 53. Nessun disaccordo è stato osservato. **Il test però non lo esclude:** l'eccezione arriva prima del confronto `same_state_on_all`, e i log dei nodi di quel giro non esistono. Inoltre `next_nonce_of` conta come 0 anche un nodo la cui API non risponde, quindi "non eseguito" e "API ferma" non si distinguono.
+- **Riproduzione: non riuscita.** 60 esecuzioni su 60 passate su `339a6b0`, in un clone pulito, su 2 CPU con 2 processi che le occupano, con i log conservati in caso di fallimento. Le CI di `339a6b0` sono verdi.
+- **Ipotesi, non dimostrata:** quando un nodo sostituisce una connessione, `PeerConnection.close()` svuota la coda dei messaggi, nessuno li rinvia, e un evento può non raggiungere il quorum.
+- **Non corretto:** né il test né il prodotto, finché la causa non è capita. Per capirla servono i log dei nodi al prossimo fallimento: la CI oggi non li conserva.
+
 ## Stato al 2026-11-04: da leggere per riprendere
 
-**Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.
+**Vedi anche il riepilogo del programma verso la 1.0, qui sotto. Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.
+
+### Programma verso la 1.0, branch `verso-1.0`: riepilogo per passo
+
+Le soste del programma sono diventate proposte in `docs/proposte/`, ciascuna in un commit prima del codice, su richiesta di Paolo. **Il branch è partito da `hardening-2` prima del merge della PR #2, contro quanto chiedeva il programma**. Dopo il merge della PR #2 è stato ribasato su `main` (`6aad963`), senza conflitti.
+
+- **Passo 1, fatto.** Hook di pre-commit. `test_a_long_frame_gets_more_time` non dipende più dai buffer della macchina. Corrette tre incoerenze di `CLAUDE.md`, con il testo vecchio e nuovo nel commit. Il piano diceva che `48a1d72` non era stato pushato: è nella storia di `main`, e ora lo dice.
+- **Passo 2, fatto.** Istantanee firmate da un quorum e potatura opzionale. Riavvio di 50 000 certificati da 20 s a 0,9 s, 0,1 s con potatura. `QuorumSnapshot.lean`. Gli id degli eventi eseguiti crescono ancora.
+- **Passo 3, fatto, con una scelta che il programma non elencava.** Nessun voto sulle chiusure: un blocco sull'ordine del governo e qualsiasi quorum di rapporti. Toglie il blocco tra due proponenti. Resta quello di un governo che firma due ordini. `QuorumReports.lean`. **È la parte più nuova e meno esaminata.**
+- **Passo 4, fatto.** Connessioni mute, inondazioni di firme e di richieste, buffer senza limite, prove ricopiate: ognuna con un attaccante che prima vinceva. I valori dei limiti sono scelti a giudizio.
+- **Passo 5, in parte.** Script per macchine separate e laboratorio con `tc netem`. Misurato su container su **una** macchina. Le macchine separate restano **non misurate**.
+- **Passo 6, fatto.** `n = 5f+1` con sblocco, dimostrato per ogni `f`, con il controesempio per `3f+1` per ogni `f`. Implementato, spento per impostazione predefinita, con il differenziale E.
+- **Passi 7, 8.** Preprint pronto da leggere, non pubblicato né inviato: la decisione è di Paolo. Pacchetto per l'audit scritto.
+- **Passo 9, verifica finale.** La prima suite completa dopo il passo 4, su `a9edb19`, ha dato 21 fallimenti: 3 divergenze con Lean e un controllo collegato, 17 mutazioni disallineate. Mostrata la divergenza a Paolo, che ha scelto l'opzione A: il differenziale ora segue la regola del nodo, il più piccolo id eseguibile. Prova di resistenza su `a9edb19`: 3 ore e 5 minuti, 55 campagne, 0 insicure. **È precedente alla correzione dell'SDK `9b97548`.** Commit di suite completa e differenziali a 15 seed: nella descrizione della PR, perché un commit non può contenere il proprio esito. La ricerca non ha trovato chiavi o token nel codice o nella cronologia. I documenti sono stati confrontati con codice e prove con i controlli di `tests/test_documents.py` e a mano sulle parti di stato, non frase per frase.
+
+**Problemi.**
+
+- La CI della PR #2 è stata rossa tre volte, e ogni giro completo ha trovato un test diverso: due mutazioni che dipendevano dal carico, una porta occupata all'avvio, un thread che moriva sotto carico (questo era un difetto del prodotto, corretto con un test), una mutazione sulle note dell'elenco di revoca. Il primo giro era una parola vietata in un commento Lean, che il mio controllo locale non vedeva.
+- Le mutazioni si sono disallineate di nuovo dopo i refactor dei passi 2-4: 11 fallimenti alla prima suite su `04a8cc7`, poi 17 su `a9edb19`. Riallineate e rieseguite. L'hook lancia solo i test veloci, quindi tra il passo 4 e `a9edb19` nessuno ha visto la divergenza sull'ordine del buffer: è il limite di quel controllo.
+- La prova di resistenza ha trovato un difetto dell'SDK: una risposta troncata sollevava un'eccezione che nessuno si aspettava. Corretto in `9b97548`, con un test che fallisce prima e passa dopo.
+- Una prima versione del buffer rendeva casuale l'ordine del log: un test esistente l'ha mostrato, fallendo a volte.
+- Uno script di misura è fallito perché zsh non divide i parametri come pensavo, e una misura si è fermata perché superava la finestra di `max_nonce_ahead`: era un limite reale del sistema, ora scritto nei documenti.
+- Il riferimento "Guerraoui DISC 2021" del programma non esiste con quel primo autore. Il lavoro di DISC 2021 sul tema è di Kuznetsov, Pignolet, Ponomarev e Tonkikh (Pastro), e il preprint citerà quello. Va confermato che fosse quello inteso.
 
 ### Secondo passo del 2026-11-05, branch `hardening-2`: modifiche
 
@@ -33,7 +66,8 @@ Paolo ha autorizzato il merge della PR #1 e ha dato autonomia di decisione.
 
 ### Problemi del passo
 
-- **Un commit (`48a1d72`) è stato fatto con un test veloce fallito**, perché il comando non si fermava sull'errore. Non è stato pushato, e il test è corretto nel commit dopo.
+- **Un commit (`48a1d72`) è stato fatto con un test veloce fallito**, perché il comando non si fermava sull'errore. Il test è corretto nel commit dopo. **Correzione del 2026-11-05:** qui c'era scritto "non è stato pushato". Il commit era fermo in locale quando è stato scritto, ma è poi arrivato su GitHub ed è nella storia di `main` con la PR #1. La storia non si riscrive: l'hook di pre-commit impedisce che si ripeta.
+- **Differenziali con 15 seed non eseguiti prima del merge della PR #1**, come la regola chiedeva. Una revisione esterna li ha eseguiti dopo il merge, il 2026-11-05: 30 passati (dato riferito dalla revisione, non rifatto qui su quel commit). Per la PR #2 sono stati eseguiti prima del merge: 45 passati su `c621828`.
 - **Le prime due esecuzioni dell'integrazione continua sono fallite** su test legati all'ambiente: una profondità di JSON insufficiente per lo stack di quel runner, e una mutazione probabilistica sui 2 core. Corretti entrambi, il secondo con test deterministici.
 - La prima ipotesi sulla latenza, Nagle, era sbagliata: `TCP_NODELAY` è giusto ma non cambiava la misura. Il limite era `fsync`.
 

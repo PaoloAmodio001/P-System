@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 from hashlib import sha256
 import json
 import re
@@ -119,6 +120,10 @@ class Committee:
     # the id of the previous one binds a committee to its whole history.
     epoch: int = 0
     previous_id: str = ""
+    # The optional configuration of decision D2: 5f+1 members, a quorum of 4f+1, and a closure that
+    # locks only what at least 2f+1 reported, so a nonce with its votes split is free again.
+    # formal/lean/PSystem/QuorumUnlock.lean. A next committee keeps it.
+    unlock: bool = False
 
     def __post_init__(self) -> None:
         if type(self.epoch) is not int or self.epoch < 0:
@@ -136,11 +141,14 @@ class Committee:
         if type(self.f) is not int or self.f < 0:
             raise ValueError("INVALID COMMITTEE FAULT BOUND")
 
+        if type(self.unlock) is not bool:
+            raise ValueError("INVALID COMMITTEE CONFIGURATION")
+
         if (
             type(self.members) is not tuple
-            or len(self.members) != 3 * self.f + 1
+            or len(self.members) != (5 if self.unlock else 3) * self.f + 1
         ):
-            raise ValueError("COMMITTEE SIZE MUST BE 3F+1")
+            raise ValueError("COMMITTEE SIZE MUST BE 5F+1" if self.unlock else "COMMITTEE SIZE MUST BE 3F+1")
 
         for member in self.members:
             if (
@@ -164,6 +172,7 @@ class Committee:
         public_keys,
         f: int,
         initial_state: State,
+        unlock: bool = False,
     ) -> "Committee":
         keys = list(public_keys)
 
@@ -175,6 +184,7 @@ class Committee:
             members=tuple(sorted(keys)),
             f=f,
             genesis_root=initial_state.root(),
+            unlock=unlock,
         )
 
     @property
@@ -183,7 +193,7 @@ class Committee:
 
     @property
     def quorum(self) -> int:
-        return 2 * self.f + 1
+        return (4 if self.unlock else 2) * self.f + 1
 
     @property
     def committee_id(self) -> str:
@@ -192,6 +202,10 @@ class Committee:
             "genesis_root": self.genesis_root,
             "members": [member.hex() for member in self.members],
         }
+
+        # Only if set, so that the id of a standard committee stays what it was.
+        if self.unlock:
+            data["unlock"] = True
 
         # Only from epoch 1, so that the id of a first committee stays what it was.
         if self.epoch > 0:
@@ -358,9 +372,9 @@ def guilty_members(
     return tuple(committee.members[validator] for validator in sorted(common))
 
 
-# A chain of committees: formal/lean/PSystem/QuorumEpochs.lean. An epoch ends in three steps,
+# A chain of committees: formal/lean/PSystem/QuorumEpochs.lean. An epoch ends in two steps,
 # all of them signed: governance orders it, a quorum of the committee reports its votes and
-# stops voting, and the committee certifies one closure. Governance can only order: what the
+# stops voting, and those reports are the closure. Governance can only order: what the
 # next committee must respect comes from the reports, and nobody chooses it.
 
 EPOCH_CHANGE_DOMAIN = b"P-SYSTEM/EPOCH-CHANGE/v1\0"
@@ -465,6 +479,7 @@ class EpochChange:
             genesis_root=current.genesis_root,
             epoch=current.epoch + 1,
             previous_id=current.committee_id,
+            unlock=current.unlock,
         )
 
     def verify(self, governance: Governance, current: Committee) -> bool:
@@ -533,16 +548,21 @@ class EpochReport:
     signature: bytes
 
     @staticmethod
+    def _payload_of_digest(committee: Committee, change_id: str, digest: bytes) -> bytes:
+        return (
+            EPOCH_REPORT_DOMAIN + bytes.fromhex(committee.committee_id)
+            + bytes.fromhex(change_id)
+            + digest
+        )
+
+    @classmethod
     def _payload(
+        cls,
         committee: Committee,
         change_id: str,
         votes: tuple[SignedTransfer, ...],
     ) -> bytes:
-        return (
-            EPOCH_REPORT_DOMAIN + bytes.fromhex(committee.committee_id)
-            + bytes.fromhex(change_id)
-            + _votes_digest(votes)
-        )
+        return cls._payload_of_digest(committee, change_id, _votes_digest(votes))
 
     @classmethod
     def create(
@@ -609,15 +629,14 @@ class EpochReport:
 @dataclass(frozen=True)
 class EpochClosure:
     """
-    An order of governance, the reports of a quorum, and the votes of the committee on
-    this closure. Without the votes it is only a candidate. The votes make it unique for
-    the epoch, as `closure_unique` says: different quorums of reports would otherwise give
-    different locks to different nodes.
+    An order of governance and the reports of a quorum. Nothing else: two nodes can hold different
+    closures of one epoch, with different locks and the same next committee. `order_unique` says
+    one order can have a quorum of reports, and `no_double_spend_any_closures` that the locks need
+    not agree: formal/lean/PSystem/QuorumReports.lean.
     """
 
     change: EpochChange
     reports: tuple[EpochReport, ...]
-    votes: tuple[Vote, ...] = ()
 
     @property
     def digest(self) -> str:
@@ -630,14 +649,7 @@ class EpochClosure:
 
         return data.hexdigest()
 
-    def event(self, governance: Governance, committee: Committee) -> Transfer:
-        """
-        The closure as an event of governance, with the epoch as nonce. Its amount is 0,
-        so no state can ever execute it: it exists to be voted on.
-        """
-        return Transfer(governance.account, self.digest, 0, committee.epoch)
-
-    def is_valid_candidate(self, governance: Governance, committee: Committee) -> bool:
+    def verify(self, governance: Governance, committee: Committee) -> bool:
         validators = [report.validator for report in self.reports]
         checked: set[SignedTransfer] = set()
         return (
@@ -650,21 +662,192 @@ class EpochClosure:
             )
         )
 
-    def verify(self, governance: Governance, committee: Committee) -> bool:
-        return (
-            self.is_valid_candidate(governance, committee)
-            and QuorumCertificate(
-                self.event(governance, committee),
-                self.votes,
-                committee.epoch,
-            ).verify(committee)
+    def locks(self, committee: Committee) -> tuple[Transfer, ...]:
+        """
+        What this closure of `committee` locks, each event once, in a fixed order. All that was
+        reported, or with `unlock` what at least 2f+1 of the reporters reported, each counted once
+        however many times it repeats itself: `thresholdLocks` in the model.
+        """
+        events: dict[bytes, Transfer] = {}
+        reporters: dict[bytes, int] = {}
+
+        for report in self.reports:
+            for canonical in {signed.transfer.canonical() for signed in report.votes}:
+                reporters[canonical] = reporters.get(canonical, 0) + 1
+
+            for signed in report.votes:
+                events[signed.transfer.canonical()] = signed.transfer
+
+        threshold = 2 * committee.f + 1 if committee.unlock else 1
+        return tuple(
+            events[canonical]
+            for canonical in sorted(events)
+            if reporters[canonical] >= threshold
         )
 
+
+@dataclass(frozen=True)
+class ClosureHeader:
+    """
+    A closure without the votes in its reports: what a node that has pruned keeps of an old epoch, to
+    know its own chain when it restarts. Its locks are already in the file. It proves the order and
+    that a quorum reported for it, and it says nothing of what they voted for, so it is never
+    sent to anyone: a node that took one from a peer would hold no locks for that epoch.
+    """
+
+    change: EpochChange
+    reports: tuple[tuple[int, bytes, bytes], ...]
+
+    @classmethod
+    def of(cls, closure: EpochClosure) -> "ClosureHeader":
+        return cls(
+            closure.change,
+            tuple(
+                (report.validator, _votes_digest(report.votes), report.signature)
+                for report in closure.reports
+            ),
+        )
+
+    def verify(self, governance: Governance, committee: Committee) -> bool:
+        validators = [validator for validator, _, _ in self.reports]
+        return (
+            self.change.verify(governance, committee)
+            and validators == sorted(set(validators))
+            and len(validators) >= committee.quorum
+            and all(
+                committee.has_validator(validator)
+                and verify_signature(
+                    committee.members[validator],
+                    signature,
+                    EpochReport._payload_of_digest(committee, self.change.change_id, digest),
+                )
+                for validator, digest, signature in self.reports
+            )
+        )
+
+
+# Snapshots: formal/lean/PSystem/QuorumSnapshot.lean. A snapshot says that with these events the state
+# is this. It is a fact and not a choice, so there is no vote lock on it, and two of them can both be
+# true. Which events: under `state.nonces` for each sender, which `no_double_spend` makes one set.
+
+SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
+
+
+def _locks_digest(locks: tuple[Transfer, ...]) -> bytes:
+    digest = sha256()
+
+    for event in locks:
+        canonical = event.canonical()
+        digest.update(len(canonical).to_bytes(4, "big"))
+        digest.update(canonical)
+
+    return digest.digest()
+
+
+@dataclass(frozen=True)
+class SnapshotAttestation:
+    """A member says: I derived this state from these events, and these are my locks over its floor."""
+
+    validator: int
+    locks: tuple[Transfer, ...]
+    signature: bytes
+
+    @staticmethod
+    def _payload(committee: Committee, digest: str, locks: tuple[Transfer, ...]) -> bytes:
+        return (
+            SNAPSHOT_DOMAIN
+            + bytes.fromhex(committee.committee_id)
+            + bytes.fromhex(digest)
+            + _locks_digest(locks)
+        )
+
+    @classmethod
+    def create(
+        cls,
+        committee: Committee,
+        identity: Identity,
+        digest: str,
+        locks,
+    ) -> "SnapshotAttestation":
+        ordered = tuple(sorted(locks, key=lambda event: event.canonical()))
+        validator = committee.index_of(identity.public_key)
+
+        if validator is None:
+            raise ValueError("SIGNER IS NOT A COMMITTEE MEMBER")
+
+        return cls(validator, ordered, identity.sign(cls._payload(committee, digest, ordered)))
+
+    def verify(self, committee: Committee, digest: str) -> bool:
+        return (
+            committee.has_validator(self.validator)
+            and type(self.locks) is tuple
+            and all(is_well_formed_event(event) for event in self.locks)
+            and verify_signature(
+                committee.members[self.validator],
+                self.signature,
+                self._payload(committee, digest, self.locks),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """
+    A state and the ids of the events behind it, with the signatures of a quorum of the committee of
+    `epoch`. Without them it is only a candidate. The ids stay because a parent can name any past event:
+    `resume_without_ids_loses_children`.
+    """
+
+    epoch: int
+    state: State
+    ids: tuple[str, ...]
+    attestations: tuple[SnapshotAttestation, ...] = ()
+
+    @cached_property
+    def digest(self) -> str:
+        """The content, with no committee: another committee can sign the same state."""
+        ids = sha256()
+
+        for event_id in self.ids:
+            ids.update(bytes.fromhex(event_id))
+
+        return sha256(bytes.fromhex(self.state.root()) + ids.digest()).hexdigest()
+
+    def floor(self, sender: str) -> int:
+        return self.state.nonce(sender)
+
+    def has_ordered_ids(self) -> bool:
+        return (
+            type(self.ids) is tuple
+            and all(type(i) is str and _ROOT_PATTERN.fullmatch(i) is not None for i in self.ids)
+            and list(self.ids) == sorted(set(self.ids))
+        )
+
+    def verify(self, committee: Committee) -> bool:
+        """
+        A quorum of distinct members signed it. `attested_snapshot_matches_node`: with at most `f`
+        faulty, one of them is honest and derived it. False, never an exception.
+        """
+        if type(self.epoch) is not int or self.epoch != committee.epoch or not self.has_ordered_ids():
+            return False
+
+        if type(self.attestations) is not tuple or not all(
+            type(attestation) is SnapshotAttestation for attestation in self.attestations
+        ):
+            return False
+
+        signers = [attestation.validator for attestation in self.attestations]
+
+        if len(set(signers)) != len(signers) or len(signers) < committee.quorum:
+            return False
+
+        return all(attestation.verify(committee, self.digest) for attestation in self.attestations)
+
     def locks(self) -> tuple[Transfer, ...]:
-        """The events of all the reports, each once, in a fixed order."""
+        """The union of the locks of the signers: `union_locks_cover`. The lists need not be equal."""
         events = {
-            signed.transfer.canonical(): signed.transfer
-            for report in self.reports
-            for signed in report.votes
+            event.canonical(): event
+            for attestation in self.attestations
+            for event in attestation.locks
         }
         return tuple(events[canonical] for canonical in sorted(events))

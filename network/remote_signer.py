@@ -31,10 +31,27 @@ from pathlib import Path
 
 LOG = logging.getLogger("psystem.signer")
 
+
+def make_private(path: Path, create: bool = False) -> None:
+    """
+    Only the owner can read a store, whatever the umask, and whatever an earlier version left. SQLite
+    gives its journal the mode of the file. A file of someone else stays as it is, with a warning.
+    """
+    if create:
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600))
+
+    try:
+        os.chmod(path, 0o600)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        LOG.warning("cannot make a store private", extra={"reason": str(error)})
+
 # Written here and not imported from core.attestation, whose signatures are what this guards: a
 # change of the format must make the signer refuse, not sign something it no longer understands.
 VOTE_DOMAIN = b"P-SYSTEM/QUORUM-VOTE/v1\0"
 EPOCH_REPORT_DOMAIN = b"P-SYSTEM/EPOCH-REPORT/v1\0"
+SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
 ID_SIZE = 32
 SIGNATURE_SIZE = 64
 MAX_REQUEST = 1024 * 1024
@@ -52,6 +69,7 @@ class SignerGuard:
     """What this key has signed. Every refusal is on the record of the signer, in its log."""
 
     def __init__(self, path: Path) -> None:
+        make_private(path, create=True)
         self._connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._connection.execute("PRAGMA journal_mode = WAL")
         self._connection.execute("PRAGMA synchronous = NORMAL")
@@ -68,11 +86,10 @@ class SignerGuard:
         )
         self._connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS reports (
-                committee TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS report_locks (
+                committee TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
-                digest BLOB NOT NULL,
-                PRIMARY KEY (committee, change_id)
+                digest BLOB NOT NULL
             )
             """
         )
@@ -89,6 +106,12 @@ class SignerGuard:
 
         if payload.startswith(EPOCH_REPORT_DOMAIN):
             return self._permit_report(payload[len(EPOCH_REPORT_DOMAIN):])
+
+        # A snapshot is a claim about a state, with no lock to break: two can both be true. The signer
+        # cannot recompute it, so a node taken over can make it sign a false one, as any faulty
+        # member can. That is what the quorum of signatures on a snapshot is for.
+        if payload.startswith(SNAPSHOT_DOMAIN):
+            return len(payload) == len(SNAPSHOT_DOMAIN) + 3 * ID_SIZE
 
         return False
 
@@ -119,15 +142,17 @@ class SignerGuard:
             return False
 
         committee, change_id, digest = body[:ID_SIZE], body[ID_SIZE:2 * ID_SIZE], body[2 * ID_SIZE:]
-        return self._first_or_same(
-            """
-            INSERT OR IGNORE INTO reports (committee, change_id, digest)
-            VALUES (?, ?, ?)
-            """,
-            "SELECT digest FROM reports WHERE committee = ? AND change_id = ?",
-            (committee.hex(), change_id.hex()),
-            digest,
+        # One order for each committee: two orders with a quorum of reports could mean two next
+        # committees, and only this lock stands against that. Once on the record, the same again.
+        self._connection.execute(
+            "INSERT OR IGNORE INTO report_locks (committee, change_id, digest) VALUES (?, ?, ?)",
+            (committee.hex(), change_id.hex(), digest),
         )
+        row = self._connection.execute(
+            "SELECT change_id, digest FROM report_locks WHERE committee = ?",
+            (committee.hex(),),
+        ).fetchone()
+        return row == (change_id.hex(), digest)
 
     def close(self) -> None:
         self._connection.close()

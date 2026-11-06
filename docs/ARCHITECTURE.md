@@ -9,8 +9,8 @@ why no consensus is needed, and also why shared state cannot be expressed: see "
 | Component | Files | Role |
 |---|---|---|
 | Events and state | `core/event.py`, `core/state.py`, `core/derive.py` | Canonical form, SHA-256 identity, deterministic state |
-| Certificates and epochs | `core/attestation.py` | `Committee`, `Vote`, `QuorumCertificate`, `Governance`, `EpochChange`, `EpochReport`, `EpochClosure` |
-| Durable state of a validator | `network/quorum.py`, `SqliteVoteStore` | Votes, locks, log, closures, proof of a halt |
+| Certificates and epochs | `core/attestation.py` | `Committee`, `Vote`, `QuorumCertificate`, `Governance`, `EpochChange`, `EpochReport`, `EpochClosure`, `Snapshot` |
+| Durable state of a validator | `network/quorum.py`, `SqliteVoteStore` | Votes, locks, log, closures, snapshot and what pruning removed, one order per epoch for each member, proof of a halt |
 | Protocol of an honest node | `network/quorum.py`, `QuorumReplica`, `QuorumDriver` | Turns messages into messages. No network, no threads |
 | Node | `network/node.py`, `network/node_server.py` | Connections, reconnection, synchronization, serialization of calls |
 | Transport | `network/secure_transport.py`, `network/peer_connection.py` | Mutual TLS 1.3, framing, send deadlines, full-duplex |

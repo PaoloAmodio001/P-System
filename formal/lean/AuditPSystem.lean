@@ -246,7 +246,6 @@ import PSystem
 
 #print axioms PSystem.Quorum.unlock_safe_5f1
 
-
 -- QuorumEpochs.lean
 #print axioms PSystem.Quorum.epoch_voteLock_step
 
@@ -276,9 +275,6 @@ import PSystem
 
 #print axioms PSystem.Quorum.no_double_spend_across_epochs
 
-#print axioms PSystem.Quorum.closure_unique
-
-
 -- QuorumEpochsNonVacuity.lean
 #print axioms PSystem.QuorumExamples.chain_valid
 
@@ -299,7 +295,6 @@ import PSystem
 #print axioms PSystem.QuorumExamples.equivocation_run_6_satisfies_hypotheses
 
 #print axioms PSystem.QuorumExamples.unlock_safe_witness
-
 
 -- QuorumLiveness.lean
 #print axioms PSystem.Quorum.voteAllowed_of_free
@@ -322,20 +317,6 @@ import PSystem
 
 #print axioms PSystem.Quorum.two_versions_in_locks_both_accepted
 
-#print axioms PSystem.Quorum.lists_meet
-
-#print axioms PSystem.Quorum.adopted_some_of_mem
-
-#print axioms PSystem.Quorum.blocking_closure_is_seen
-
-#print axioms PSystem.Quorum.adopted_is_voted
-
-#print axioms PSystem.Quorum.retry_gets_every_vote
-
-#print axioms PSystem.Quorum.split_closures_block
-
-#print axioms PSystem.Quorum.split_votes_are_two_closures
-
 #print axioms PSystem.sumBalance_apply
 
 #print axioms PSystem.sumBalance_apply_closed
@@ -345,3 +326,95 @@ import PSystem
 #print axioms PSystem.leaving_changes_the_sum
 
 #print axioms PSystem.assets_are_separate
+
+#print axioms PSystem.Quorum.agrees_step
+
+#print axioms PSystem.Quorum.agrees_foldl
+
+#print axioms PSystem.Quorum.resume_equals_replay
+
+#print axioms PSystem.Quorum.validSequence_mono
+
+#print axioms PSystem.Quorum.resumeInvariant_step
+
+#print axioms PSystem.Quorum.resumeInvariant_foldl
+
+#print axioms PSystem.Quorum.resume_is_derive
+
+#print axioms PSystem.Quorum.resume_same_state_as_full
+
+#print axioms PSystem.Quorum.attested_snapshot_matches_node
+
+#print axioms PSystem.Quorum.union_locks_cover
+
+#print axioms PSystem.Quorum.votes_pass_auth_foldl
+
+#print axioms PSystem.Quorum.votes_pass_auth
+
+#print axioms PSystem.Quorum.certifiedV_same_epoch
+
+#print axioms PSystem.Quorum.no_double_spend_views
+
+#print axioms PSystem.Quorum.flooredAuth_zero
+
+#print axioms PSystem.Quorum.viewChain_of_chainValid
+
+#print axioms PSystem.Quorum.prune_without_floor_lets_conflict_through
+
+#print axioms PSystem.Quorum.invalid_set_has_no_derivation
+
+#print axioms PSystem.Quorum.attestation_without_honest_signer_proves_nothing
+
+#print axioms PSystem.Quorum.resume_without_ids_loses_children
+
+#print axioms PSystem.Quorum.resume_is_not_vacuous
+
+#print axioms PSystem.Quorum.order_unique
+
+#print axioms PSystem.Quorum.one_order_never_blocks
+
+#print axioms PSystem.Quorum.viewChain_of_installed
+
+#print axioms PSystem.Quorum.no_double_spend_any_closures
+
+#print axioms PSystem.Quorum.without_report_lock_two_orders_pass
+
+#print axioms PSystem.Quorum.order_unique_needs_the_bound
+
+#print axioms PSystem.Quorum.two_orders_can_block
+
+#print axioms PSystem.Quorum.too_few_reports_miss_a_certificate
+
+#print axioms PSystem.Quorum.closures_can_differ
+
+#print axioms PSystem.Quorum.mem_thresholdLocks
+
+#print axioms PSystem.Quorum.honest_common_length
+
+#print axioms PSystem.Quorum.certified_passes_threshold
+
+#print axioms PSystem.Quorum.unlocked_key_has_no_certificate
+
+#print axioms PSystem.Quorum.no_double_spend_with_unlock
+
+#print axioms PSystem.Quorum.unlock_frees_the_nonce
+
+#print axioms PSystem.Quorum.threshold_above_2f1_fails
+
+#print axioms PSystem.Quorum.too_few_reports_fail
+
+#print axioms PSystem.Quorum.forgetting_old_locks_fails
+
+#print axioms PSystem.Quorum.membersBy_length
+
+#print axioms PSystem.Quorum.membersBy_nodup
+
+#print axioms PSystem.Quorum.split_fits_the_first
+
+#print axioms PSystem.Quorum.split_fits_the_second
+
+#print axioms PSystem.Quorum.split_lock_ambiguous_general
+
+#print axioms PSystem.Quorum.certified_can_have_one_report
+
+#print axioms PSystem.Quorum.threshold_rule_loses_a_certificate_3f1

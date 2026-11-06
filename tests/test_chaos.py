@@ -210,3 +210,18 @@ def test_a_link_that_cuts_closes_the_connection(echo):
     link = Link(random.Random(1))
     link.cut_chance = 1.0
     assert through(echo, link) in (None, b"")
+
+
+def test_a_socket_closed_by_the_other_direction_ends_the_forward_quietly():
+    # The other direction closes both sockets when it ends, and it can do so before this one starts.
+    link = Link(random.Random(1))
+    proxy = Proxy(1, link)
+    source, target = socket.socketpair()
+    source.close()
+
+    try:
+        proxy._forward(source, target, link.generation)
+    finally:
+        proxy.close()
+
+    assert target.fileno() == -1

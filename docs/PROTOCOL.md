@@ -44,13 +44,14 @@ All Ed25519.
 | `VOTE_REQUEST` | `transfer`, `public_key`, `signature` | `VOTE`, or nothing if refused |
 | `VOTE` | `transfer`, `validator`, `signature` | |
 | `CERTIFICATE` | `transfer`, `votes`, optional `epoch` | |
-| `CERTIFICATE_SYNC_REQUEST` | `frontier`: sorted `[sender, next_nonce]`; optional `epoch` | `EPOCH_CLOSURE`s, then `CERTIFICATE_SYNC` |
+| `CERTIFICATE_SYNC_REQUEST` | `frontier`: sorted `[sender, next_nonce]`; optional `epoch` | `EPOCH_CLOSURE`s, a `SNAPSHOT` if this node holds what is asked only inside one, then `CERTIFICATE_SYNC` |
 | `CERTIFICATE_SYNC` | `certificates`, at most about 4 MiB | a new request if something new was learned |
 | `EPOCH_CHANGE` | `change` | `EPOCH_REPORT` |
 | `EPOCH_REPORT` | `change_id`, `report` | |
-| `CLOSURE_VOTE_REQUEST` | `closure`, with no votes | `CLOSURE_VOTE` |
-| `CLOSURE_VOTE` | `digest`, `validator`, `signature` | |
-| `EPOCH_CLOSURE` | `closure`, with its votes | |
+| `EPOCH_CLOSURE` | `closure`: `change`, `reports` | |
+| `SNAPSHOT_REQUEST` | `epoch`, `digest`, `nonces` | `SNAPSHOT_VOTE`, or nothing if this member cannot derive it |
+| `SNAPSHOT_VOTE` | `digest`, `attestation` | |
+| `SNAPSHOT` | `snapshot`: `epoch`, `balances`, `nonces`, `ids`, `attestations` | a new request if it was taken |
 
 A message of the right form that is not valid gets no answer and does not close the connection, since
 anyone can send one. A batch of certificates stops at its first invalid one.
@@ -67,13 +68,13 @@ members. A node stops for good and keeps both: see `docs/OPERATIONS.md`.
 
 1. Governance signs `EpochChange`, `threshold` of `members`, with at least 2 signatures.
 2. Whoever proposes it sends `EPOCH_CHANGE`. Each member stops voting, durably, and answers with its
-   report: all its votes of this epoch, each with the signature of its sender.
-3. With `2f+1` valid reports the proposer asks for votes on the closure: an event with `sender`
-   = account of governance, `receiver` = digest of the closure, `amount` = 0, `nonce` = epoch. It can
-   never execute. A member votes for one closure per epoch, for good.
-4. With `2f+1` votes, `EPOCH_CLOSURE` installs the next committee on every node that verifies it.
-5. The events of the reports become locks, added to the earlier ones. A validator votes for `e` only if
+   report: all its votes of this epoch, each with the signature of its sender. **A member reports for one order per epoch, for good.**
+3. With `2f+1` valid reports the closure exists: the order and those reports. `EPOCH_CLOSURE` installs the next committee on
+   every node that verifies it. No vote on the closure, and no second round.
+4. The events of the reports become locks, added to the earlier ones. A validator votes for `e` only if
    every lock on its `(sender, nonce)` is `e`.
+
+**Two nodes can hold different closures of one epoch**, with different locks. That is safe: any quorum of reports holds every certified event (`closure_preserves_certified`), and the theorem holds with validators that hold different locks (`no_double_spend_any_closures`). The next committee is the same, because it comes from the order, and one order can have a quorum of reports (`order_unique`).
 
 A certificate of an ended committee counts only for an event in the locks. Its keys can be stolen after the closure, and then
 any signature verifies, while everything really certified is in the locks (`closure_preserves_certified`). A conflict over an
@@ -84,26 +85,49 @@ So an event with no certificate and one alternative finishes when sent again in 
 equivocated one stays locked for good. `split_lock_ambiguous` shows no rule on the reports can avoid
 that with `n = 3f+1`.
 
-A proposer can die, and an order can get lost. Each member keeps on disk the closure it voted for, so:
+A proposer can die, and an order can get lost. A member that reported and sees no closure for 10 seconds sends the order again and collects the reports itself. Any number of nodes can do this at once: they gather subsets of the same reports, and each subset is good (`one_order_never_blocks`).
 
-- A member asked for another closure, or given the order again, answers `CLOSURE_LOCKED` with the one it voted for, and a
-  proposer works for that one in place of its own. Any quorum of reporters includes a member of any closure that could block
-  the others, so a retry finds it.
-- A proposer sends again what it asked every 10 seconds, until the closure is installed.
-- A member that voted and sees no closure for 10 seconds asks for the votes on that closure itself. Several doing this ask for
-  one closure, so this splits nothing.
+What remains: **a governance that signs two orders for one epoch** can split the reports, so that neither gets a quorum. That epoch then never closes, and voting has stopped (`two_orders_can_block`). It takes `threshold` keys of governance, and the two signatures are the proof. The protocol has no way out of it.
 
-No member ever signs a second closure for an epoch, so `closure_unique` is not touched.
-
-What remains: **two proposers acting at once before any vote** can still split the votes so that no closure gets a quorum, and a
-faulty member can try the same. That epoch then never closes, and voting has stopped. Preventing it for good would take
-consensus, which this system does not have. So one proposer should act: this is an operating rule, since nothing enforces it.
-
-A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `CLOSURE_VOTE_REQUEST` and `EPOCH_CLOSURE`, and only
+A closure can be larger than the frame of 16 MiB. `EPOCH_REPORT`, `EPOCH_CLOSURE`, `SNAPSHOT_REQUEST` and `SNAPSHOT`, and only
 those, may travel as `FRAGMENT` frames (`network/fragments.py`): pieces of 8 MiB, next to each other on the connection, with
 the SHA-256 of the whole message, up to 256 MiB in all. Anything else in between, a piece out of order or a wrong digest closes
 the connection. With `n = 4` a closure takes about 1100 bytes per event, so the bound is near 240 000 events, and what matters
 before it is time: `docs/BENCHMARKS.md`. Beyond the bound the log says "message too large to send" and the epoch cannot close.
+
+## Unlocking, optional
+
+A genesis with `"unlock": true` has `n = 5f+1` and `q = 4f+1`, and every next committee keeps that. Its id says so, so the two configurations do not take each other's votes. A closure then locks only what at least `2f+1` of its reporters reported, each counted once. Earlier locks stay. So a nonce with its votes split and no event at that threshold is free in the next epoch. Two events can both pass it if neither is certified: both stay locked, and nobody chooses. Why this is safe, and why it cannot work with `3f+1`: `QuorumUnlock.lean`.
+
+## Limits
+
+None of these changes what an honest sender gets. They delay it at most.
+
+| Limit | Value | Past it |
+|---|---|---|
+| Handshakes in progress | 64, and 16 for each address | The one waiting longest goes |
+| Tokens of a connection | 5000 per second, burst of 10 000. A message 1, a bad signature 100, a KiB of an answer 1 | Its reader waits |
+| Certificates that cannot run yet | 100 000, and up to `max_nonce_ahead` ahead of a sender | Left out, and back with synchronization. The next nonce of a sender always enters |
+| Events being collected | 100 000 | No new one is started. Sending again works |
+| Proofs in memory | `max_evidence` | Not kept: a proof can depend on the order of arrival, and no state does |
+
+## Snapshots
+
+A snapshot says that with these events the state is this. It is a fact and not a choice: no vote lock, and two of them can both be true. Which events: those under `nonces` for each sender, and `no_double_spend` makes that one set. Its digest is SHA-256 of the state root and of the SHA-256 of the sorted ids, with no committee in it, so another committee can sign the same state.
+
+A member signs `SNAPSHOT_DOMAIN || committee_id || digest || SHA-256(its locks over the floor)`, and only after deriving that digest from its own log. A member behind says nothing, and the proposer asks again for 60 seconds. A snapshot needs a quorum of signatures. Its locks are the union of those of the signers, which need not be equal.
+
+A node takes a snapshot only from the committee in force. The keys of an ended committee can be stolen, as for an old certificate. So after a change of committee a member that prunes asks for new signatures on its state. Its own file may hold a snapshot of an earlier epoch: that committee was in force when it was taken.
+
+| With `[snapshots] prune = true` | |
+|---|---|
+| Certificates the snapshot covers | Removed at once |
+| Votes of ended epochs | Removed when a closure is installed |
+| Locks under the floor | Removed when a closure is installed, and from then on no vote under the floor: **the two are one rule** |
+| Ids of executed events | Stay, because a parent can name any past event |
+| Closures | The last stays whole. Older ones become a header: the order and the signatures of the reports, which prove the chain and hold no votes. A header never leaves the node |
+
+The floor of a validator is the `nonces` of its last snapshot at the moment a closure is installed. Theorems: `QuorumSnapshot.lean`. A valid certificate under a floor that conflicts with what the snapshot holds can only come from more than `f` faulty members. It stays out, and the log says so at critical level, but with its other half pruned there is no proof to halt on: this is the price of pruning.
 
 ## Assets
 

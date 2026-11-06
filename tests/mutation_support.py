@@ -6,6 +6,8 @@ and 2 a test file that cannot be collected. Those two detect nothing, and treati
 as detections would hide a mutation that broke the wrong thing.
 """
 
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -57,15 +59,22 @@ def run_tests_on(
         "no:cacheprovider",
     ]
 
+    # A group of its own: killing only pytest would leave the nodes of its tests alive for good.
+    process = subprocess.Popen(
+        arguments,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
     try:
-        return subprocess.run(
-            arguments,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=HANG_SECONDS,
-        )
+        stdout, stderr = process.communicate(timeout=HANG_SECONDS)
+        return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
     except subprocess.TimeoutExpired:
         # A test that never ends on the mutation is a test that does not pass. The test
         # that runs the real source has the same limit, so a slow machine fails loudly there.
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
         return subprocess.CompletedProcess(arguments, 1, "HUNG", "")
