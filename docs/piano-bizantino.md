@@ -2,7 +2,14 @@
 
 ## Dopo la 1.0, branch `dopo-1.0`, 2026-11-06
 
-Riepilogo: `docs/notte-2026-11-06.md`. Nessuna modifica a `core/`, `network/`, `formal/`, `sdk/`. **Modifiche:** procedura per quattro macchine, pagina per il revisore, elenco di ciò che manca, revisione delle prove Lean, dipendenze, proposta su `CLAUDE.md`, misure rifatte con i file grezzi, test corretti, nodi dei test che muoiono con il genitore, controllo degli assiomi della CI. **Problemi:** la CI della PR #3 è rossa per un difetto del controllo, non delle prove. Due difetti del prodotto annotati e non corretti. **Aperto:** merge e tag, enunciati Lean deboli, difetti D1 e D2.
+Riepilogo: `docs/notte-2026-11-06.md`. Nessuna modifica a `core/`, `network/`, `formal/`, `sdk/`. **Modifiche:** procedura per quattro macchine, pagina per il revisore, elenco di ciò che manca, revisione delle prove Lean, dipendenze, proposta su `CLAUDE.md`, misure rifatte con i file grezzi, test corretti, nodi dei test che muoiono con il genitore, controllo degli assiomi della CI. **Problemi:** la CI della PR #3 è rossa per un difetto del controllo, non delle prove. Due difetti del prodotto annotati e non corretti. **Aperto:** merge e tag, enunciati Lean deboli. I difetti D1 e D2 sono stati corretti dopo, in `339a6b0`.
+
+**`OPEN`: un evento fermo per 10 minuti in un test su processi veri, una volta in CI, causa non accertata.** `tests/test_separate_hosts.py::test_a_measure_on_real_processes_says_what_happened`, sul commit `858be80`, [log della CI](https://github.com/PaoloAmodio001/P-System/actions/runs/42216234420). Il test ha visto, nella misura di throughput: `scripts.measure_network.TimedOut: 4 NODES NOT AT NONCE 53`, dopo i 600 secondi di `wait_for`. `1 failed, 3241 passed`.
+
+- **Progresso, per quanto si è visto.** Per tutti i 600 secondi nessuno dei quattro nodi ha riportato il nonce 53. Nessun disaccordo è stato osservato. **Il test però non lo esclude:** l'eccezione arriva prima del confronto `same_state_on_all`, e i log dei nodi di quel giro non esistono. Inoltre `next_nonce_of` conta come 0 anche un nodo la cui API non risponde, quindi "non eseguito" e "API ferma" non si distinguono.
+- **Riproduzione: non riuscita.** 60 esecuzioni su 60 passate su `339a6b0`, in un clone pulito, su 2 CPU con 2 processi che le occupano, con i log conservati in caso di fallimento. Le CI di `339a6b0` sono verdi.
+- **Ipotesi, non dimostrata:** quando un nodo sostituisce una connessione, `PeerConnection.close()` svuota la coda dei messaggi, nessuno li rinvia, e un evento può non raggiungere il quorum.
+- **Non corretto:** né il test né il prodotto, finché la causa non è capita. Per capirla servono i log dei nodi al prossimo fallimento: la CI oggi non li conserva.
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
