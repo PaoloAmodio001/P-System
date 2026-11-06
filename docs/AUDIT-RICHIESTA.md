@@ -23,7 +23,7 @@ Da: Paolo Amodio. Stato al 2026-11-06, branch `verso-1.0` (https://github.com/Pa
 | `FORMAL` (solo sul modello) | Con `3f+1` nessuna regola sui rapporti sblocca in sicurezza; con `5f+1` sì | `split_lock_ambiguous_general`, `no_double_spend_with_unlock` |
 | `FORMAL` (con la consegna come ipotesi) | Un mittente onesto ottiene un certificato | `honest_sender_certifies` |
 | `EMPIRICAL` | **Il Python si comporta come il modello.** Non c'è refinement: è la lacuna maggiore | Differenziali A-E, mutazioni |
-| `EMPIRICAL` | Sicurezza con guasti di rete e `kill -9` tra processi reali, su una macchina | `scripts/soak.py`: ultima prova di 3 ore su `a9edb19`, 55 campagne, 0 insicure |
+| `EMPIRICAL` | Sicurezza con guasti di rete e `kill -9` tra processi reali, su una macchina | `scripts/soak.py`: ultima prova di 92 minuti su `25844e1`, 32 campagne, 0 insicure |
 | `EMPIRICAL` | Latenza e throughput su una macchina e su container | `docs/BENCHMARKS.md` |
 | `OPEN` | Liveness senza ipotesi sulla consegna; macchine separate; taglio di corrente; operatori indipendenti; pilota; audit | Nessuna |
 

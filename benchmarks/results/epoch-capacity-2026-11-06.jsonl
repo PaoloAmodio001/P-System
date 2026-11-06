@@ -1,0 +1,2 @@
+{"events": 16000, "members": 4, "closure_bytes": 17679885, "bytes_per_event": 1105, "seconds_to_close": 28.0, "peak_memory_mib": 1017}
+{"events": 60000, "members": 4, "closure_bytes": 66387885, "bytes_per_event": 1106, "seconds_to_close": 248.2, "peak_memory_mib": 5135}

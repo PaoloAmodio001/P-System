@@ -203,7 +203,7 @@ The API is on all interfaces with a token and no TLS: on a network you do not co
 
 ## Snapshots and pruning
 
-A snapshot only shortens a restart: 50 000 certificates in 0.9 s instead of 20 s (`docs/BENCHMARKS.md`). It removes nothing. Set `every` on the members. `psystem_snapshot_events` and `snapshot` in `/v1/status` say how far the last one reaches.
+A snapshot only shortens a restart: 50 000 certificates in 0.83 s instead of 17.91 s (`docs/BENCHMARKS.md`). It removes nothing. Set `every` on the members. `psystem_snapshot_events` and `snapshot` in `/v1/status` say how far the last one reaches.
 
 **Pruning takes away history.** With `prune = true`, `/v1/certificates/{event_id}` answers `404` for what the snapshot covers, and a client can no longer get the proof of an old event from this node. `executed` in `/v1/status` still counts everything, and `certificates_held` says what is left. Keep at least one node that does not prune, or an archive of your own, if anyone may ask. A node that prunes also cannot sign a snapshot older than its own. To give the disk back, stop the node and run `VACUUM` on a copy.
 

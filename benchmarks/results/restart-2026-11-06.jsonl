@@ -1,0 +1,6 @@
+{"certificates": 10000, "mode": "no snapshot", "restart_seconds": 3.269, "store_mib": 7.4, "peak_rss_mib": 65}
+{"certificates": 10000, "mode": "snapshot", "restart_seconds": 0.168, "store_mib": 8.0, "peak_rss_mib": 67}
+{"certificates": 10000, "mode": "snapshot and pruning", "restart_seconds": 0.018, "store_mib": 8.0, "peak_rss_mib": 67}
+{"certificates": 50000, "mode": "no snapshot", "restart_seconds": 17.91, "store_mib": 36.7, "peak_rss_mib": 183}
+{"certificates": 50000, "mode": "snapshot", "restart_seconds": 0.826, "store_mib": 39.9, "peak_rss_mib": 195}
+{"certificates": 50000, "mode": "snapshot and pruning", "restart_seconds": 0.098, "store_mib": 39.9, "peak_rss_mib": 195}

@@ -1,0 +1,120 @@
+{
+  "machine": {
+    "python": "3.14.8",
+    "system": "Linux-7.1.5+kali-amd64-x86_64-with-glibc2.43",
+    "processor": "",
+    "cpus": 4,
+    "directory": "/var/tmp/psystem-bench.mUYb"
+  },
+  "signatures": {
+    "ed25519_sign_per_s": 24313.4,
+    "ed25519_verify_per_s": 9630.5
+  },
+  "durable_votes": {
+    "durable_votes_per_s": 579.0,
+    "durable_vote_ms": 1.727
+  },
+  "certificates": [
+    {
+      "f": 1,
+      "n": 4,
+      "certificate_verify_per_s": 3364.1,
+      "certificate_bytes": 674
+    },
+    {
+      "f": 2,
+      "n": 7,
+      "certificate_verify_per_s": 2009.2,
+      "certificate_bytes": 1000
+    },
+    {
+      "f": 3,
+      "n": 10,
+      "certificate_verify_per_s": 1464.6,
+      "certificate_bytes": 1326
+    },
+    {
+      "f": 4,
+      "n": 13,
+      "certificate_verify_per_s": 1074.8,
+      "certificate_bytes": 1652
+    }
+  ],
+  "replica_path": {
+    "vote_requests_per_s": 488.8,
+    "certificates_executed_per_s": 358.4
+  },
+  "network_latency": [
+    {
+      "f": 1,
+      "n": 4,
+      "events": 60,
+      "batch": 1,
+      "executed_on_all_per_s": 65.3,
+      "latency_ms_median": 15.0,
+      "latency_ms_p95": 17.2
+    },
+    {
+      "f": 2,
+      "n": 7,
+      "events": 60,
+      "batch": 1,
+      "executed_on_all_per_s": 40.4,
+      "latency_ms_median": 24.3,
+      "latency_ms_p95": 28.6
+    },
+    {
+      "f": 4,
+      "n": 13,
+      "events": 60,
+      "batch": 1,
+      "executed_on_all_per_s": 19.3,
+      "latency_ms_median": 51.0,
+      "latency_ms_p95": 58.8
+    }
+  ],
+  "network_throughput": [
+    {
+      "f": 1,
+      "n": 4,
+      "events": 600,
+      "batch": 1,
+      "executed_on_all_per_s": 19.3
+    },
+    {
+      "f": 1,
+      "n": 4,
+      "events": 600,
+      "batch": 50,
+      "executed_on_all_per_s": 201.5
+    },
+    {
+      "f": 2,
+      "n": 7,
+      "events": 600,
+      "batch": 1,
+      "executed_on_all_per_s": 12.9
+    },
+    {
+      "f": 2,
+      "n": 7,
+      "events": 600,
+      "batch": 50,
+      "executed_on_all_per_s": 84.5
+    },
+    {
+      "f": 4,
+      "n": 13,
+      "events": 600,
+      "batch": 1,
+      "executed_on_all_per_s": 7.6
+    },
+    {
+      "f": 4,
+      "n": 13,
+      "events": 600,
+      "batch": 50,
+      "executed_on_all_per_s": 29.1
+    }
+  ]
+}
