@@ -5,6 +5,24 @@ from network.node import Node
 from network.peer import Peer
 
 
+def start_on_another_port(node_id: str, old_port: int) -> Node:
+    """The system may give back the port just freed, and this test is about a node that moved."""
+    for _ in range(20):
+        node = Node(
+            node_id,
+            State({"alice": 10}),
+            port=0,
+        )
+        node.start()
+
+        if node.port != old_port:
+            return node
+
+        node.stop()
+
+    raise AssertionError(f"THE SYSTEM KEEPS GIVING PORT {old_port}")
+
+
 def test_p16_reconnect_eventually_restores_peer_connection():
     node_a = Node(
         "p16-node-A",
@@ -44,14 +62,7 @@ def test_p16_reconnect_eventually_restores_peer_connection():
 
         assert node_b.node_id not in node_a.peer_connections
 
-        node_b = Node(
-            "p16-node-B",
-            State({"alice": 10}),
-            port=0,
-        )
-        node_b.start()
-
-        assert node_b.port != old_port
+        node_b = start_on_another_port("p16-node-B", old_port)
 
         node_a.peers[node_b.node_id] = Peer(
             node_id=node_b.node_id,
@@ -126,14 +137,7 @@ def test_p16_reconnect_recovers_across_repeated_peer_restarts():
 
             assert node_b.node_id not in node_a.peer_connections
 
-            node_b = Node(
-                "p16-repeat-B",
-                State({"alice": 10}),
-                port=0,
-            )
-            node_b.start()
-
-            assert node_b.port != old_port
+            node_b = start_on_another_port("p16-repeat-B", old_port)
 
             node_a.peers[node_b.node_id] = Peer(
                 node_id=node_b.node_id,
