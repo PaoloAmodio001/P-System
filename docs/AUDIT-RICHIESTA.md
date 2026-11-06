@@ -17,11 +17,11 @@ Da: Paolo Amodio. Stato al 2026-11-06, branch `verso-1.0` (https://github.com/Pa
 
 | Etichetta | Che cosa | Evidenza |
 |---|---|---|
-| `FORMAL` (solo sul modello) | Due nodi onesti non eseguono eventi diversi per lo stesso `(sender, nonce)`, anche tra epoche | `no_double_spend`, `no_double_spend_across_epochs` |
+| `FORMAL` (solo sul modello) | In un comitato, due nodi onesti non eseguono eventi diversi per lo stesso `(sender, nonce)`. Tra epoche, due eventi così non ottengono entrambi un certificato: certificazione, **non esecuzione** | `no_double_spend`, `no_double_spend_across_epochs` |
 | `FORMAL` (solo sul modello) | Lo stato è funzione dell'insieme degli eventi. Il riavvio da istantanea raggiunge lo stesso stato | `state_is_derive`, `resume_is_derive` |
 | `FORMAL` (solo sul modello) | Certificati in conflitto identificano almeno `f+1` firmatari colpevoli | `conflict_identifies_faulty` |
 | `FORMAL` (solo sul modello) | Con `3f+1` nessuna regola sui rapporti sblocca in sicurezza; con `5f+1` sì | `split_lock_ambiguous_general`, `no_double_spend_with_unlock` |
-| `FORMAL` (con la consegna come ipotesi) | Un mittente onesto ottiene un certificato | `honest_sender_certifies` |
+| `CONDITIONAL` (solo sul modello) | Con la consegna a `q` onesti, senza conflitti e con una firma valida da ciascuno, ognuno vota e le firme formano un certificato valido. Nessuno che le raccolga è nel modello | `honest_sender_certifies` |
 | `EMPIRICAL` | **Il Python si comporta come il modello.** Non c'è refinement: è la lacuna maggiore | Differenziali A-E, mutazioni |
 | `EMPIRICAL` | Sicurezza con guasti di rete e `kill -9` tra processi reali, su una macchina | `scripts/soak.py`: ultima prova di 92 minuti su `25844e1`, 32 campagne, 0 insicure |
 | `EMPIRICAL` | Latenza e throughput su una macchina e su container | `docs/BENCHMARKS.md` |

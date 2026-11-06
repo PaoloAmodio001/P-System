@@ -9,14 +9,14 @@ Del 2026-11-06, su `5012d3a`. **`formal/` non è stato modificato.** Questa è u
 - **Nessun teorema principale è vuoto.** Per ogni ipotesi principale esiste un'esecuzione che la soddisfa con un evento vero: in `formal/` per quelle più vecchie, e nell'appendice per `UnlockChain`, `InstalledClosures`, `SingleVersion` e altre che non avevano un testimone positivo.
 - **Nessuna ipotesi risulta mai soddisfacibile o contraddittoria.**
 - **Nessun teorema ha come prova solo `exact h`.** Due hanno come prova solo `rfl`, e sono lemmi interni.
-- **Cinque enunciati sono più deboli di come li presentano i documenti.** Vedi la sezione 1. Sono questi i punti da guardare per primi.
+- **Cinque enunciati erano più deboli di come li presentavano i documenti, ora corretti.** Vedi la sezione 1. Sono questi i punti da guardare per primi.
 - Il totale di 199 **non è una misura di risultati**. Circa 30 sono risultati principali, e il resto sono lemmi interni, casi concreti o controesempi. La maggior parte serve, ma non va contata come risultato: vedi la sezione 5.
 
 ## 1. Enunciati più deboli di come vengono presentati
 
-Decisione per Paolo: abbassare il testo dei documenti, o rafforzare il teorema. Non ho cambiato nessuno dei due.
+Paolo ha deciso il 2026-11-06: **i documenti sono stati abbassati** a ciò che i teoremi dimostrano, la colonna "Che cosa dicono i documenti" riporta il testo di allora, e rafforzare i teoremi è lavoro dopo la 1.0, in `ROADMAP.md`. `formal/` non è cambiato.
 
-| Teorema | Che cosa dice davvero | Che cosa dicono i documenti | Proposta |
+| Teorema | Che cosa dice davvero | Che cosa dicevano i documenti | Proposta di allora |
 |---|---|---|---|
 | `no_double_spend_across_epochs`, `no_double_spend_views`, `no_double_spend_any_closures` | `Certified` e `CertifiedV`: due eventi con un quorum di voti di onesti coincidono. **Il modello delle epoche non ha esecuzione**, e non parla di nodi che eseguono | README, CHANGELOG: "Two honest nodes never execute different events [...] also across epochs" | Scrivere "certificare" per le epoche, o dimostrare il passo verso l'esecuzione. `Certified` incorpora inoltre l'infalsificabilità nella definizione, senza firme e senza `Unforgeable` |
 | `honest_sender_certifies` | Date `hsign` (ogni onesto ha una firma valida), consegna e assenza di conflitti, ogni onesto vota e **l'oggetto** certificato costruito dall'enunciato è valido. Non dice che qualcuno raccolga le firme o riceva il certificato | README: "An honest sender gets a certificate, if messages arrive" | La parte sulla validità del certificato riformula `hsign`, `hnd` e `hq`. Etichettare `CONDITIONAL` secondo `docs/PROOF-OBLIGATIONS.md`, e dire che la raccolta non è modellata |

@@ -21,7 +21,11 @@ Si può fare da soli, ma nessuna di queste voci sostituisce le verifiche della s
 | Cosa | Perché conta | Note |
 |---|---|---|
 | Ridurre la distanza tra modello e Python: più funzioni estratte o controllate, o un refinement parziale di `QuorumReplica` | È la lacuna maggiore: oggi il legame è solo `EMPIRICAL` | Ricerca, esito incerto. Una revisione esterna dovrebbe scegliere la strada prima |
-| Teoremi di epoca sull'**esecuzione**, non solo sulla certificazione | `no_double_spend_across_epochs` parla di `Certified`, non di eventi eseguiti da due nodi: vedi `docs/LEAN-REVISIONE.md` | Da rivalutare con quell'elenco |
+| Rafforzare i cinque enunciati di `docs/LEAN-REVISIONE.md`, sezione 1. **Epoche:** dall'eseguito al certificato, per due nodi, e con le firme invece di `Certified` | Oggi `no_double_spend_across_epochs` parla di certificazione, e i documenti lo dicono | Solo Lean, ma il modello delle epoche deve avere un'esecuzione. Il più importante dei cinque |
+| **Mittente onesto:** raccolta delle firme e consegna del certificato, su un modello di rete con equità | `honest_sender_certifies` costruisce il certificato nell'enunciato | Fase B: sarebbe il primo vero teorema di liveness |
+| **Chiavi vecchie:** ricavare `SingleVersion` dalla firma del mittente, invece di assumerla | Oggi è tutto il caso di due certificati vecchi | Il modello deve avere le firme del mittente |
+| **Chiusure:** un teorema che dica che con un ordine solo e la consegna la chiusura si forma | `one_order_never_blocks` è solo un conteggio. Che soltanto il governo possa bloccare è un argomento a mano | Modello di consegna, come sopra |
+| **Asset:** ricavare l'ipotesi di `asset_supply_conserved` da `auth`, per ottenere "la quantità di un asset non cresce" | Oggi il passaggio è a mano | Piccolo |
 | Testimoni non banali per `InstalledClosures`, `UnlockChain`, `Attests` e catene finite | Vedi `docs/LEAN-REVISIONE.md` | Solo Lean |
 | Generatore di traffico da più mittenti e più client, su più macchine | Oggi si misura un mittente alla volta, e nessun traffico continuo | Prerequisito di una prova seria su macchine separate |
 | Id degli eventi eseguiti che crescono anche con la potatura | Limite dichiarato alla durata di una rete | Cambia store e istantanee, e forse il modello |

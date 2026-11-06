@@ -39,12 +39,13 @@ For an external auditor of the protocol and of the code. **No external audit has
 
 | Label | Claim | Evidence |
 |---|---|---|
-| `FORMAL (model)` | No double spend, one committee and a chain, with validators holding different locks and floors | `no_double_spend`, `no_double_spend_across_epochs`, `no_double_spend_views`, `no_double_spend_any_closures`, `no_double_spend_with_unlock` |
+| `FORMAL (model)` | No double spend in one committee, by execution. Over a chain, with validators holding different locks and floors, by certification: the model of epochs has no execution | `no_double_spend`, `no_double_spend_across_epochs`, `no_double_spend_views`, `no_double_spend_any_closures`, `no_double_spend_with_unlock` |
 | `FORMAL (model)` | The state is a function of the set of events. A restart from a snapshot reaches it | `state_is_derive`, `same_executed_same_state`, `resume_is_derive` |
 | `FORMAL (model)` | Conflicting certificates name at least `2q - n` guilty signers | `conflict_identifies_faulty` |
 | `FORMAL (model)` | One order for each epoch can have a quorum of reports | `order_unique` |
 | `FORMAL (model)` | With `3f+1` no rule on reports can unlock safely, for every `f`. With `5f+1` this one can | `split_lock_ambiguous_general`, `certified_passes_threshold` |
-| `FORMAL (model)`, with delivery as a hypothesis | An honest sender gets a certificate | `honest_sender_certifies`, `one_order_never_blocks` |
+| `CONDITIONAL (model)` | Given delivery to `q` honest validators, no conflict and a valid signature from each, those signatures make a valid certificate. Nobody gathering them is modelled | `honest_sender_certifies` |
+| `TRIVIAL (model)` | With one order, a member can still report for it. **That a closure completes is only `EMPIRICAL`** | `one_order_never_blocks` |
 | `EMPIRICAL` | **Python behaves like the model** | Differentials A to E, mutation tests. **No refinement proof. This is the largest gap** |
 | `EMPIRICAL` | Safety under crashes and network faults between real processes, on one machine | `tests/chaos.py`, `scripts/soak.py` |
 | `OPEN` | Liveness with no hypothesis on delivery | Nothing, and it cannot hold without more assumptions |

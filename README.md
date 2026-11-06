@@ -11,18 +11,19 @@ pilot and no run on separate machines. See `docs/VALIDATION-PLAN.md` for what is
 
 | Property | Status |
 |---|---|
-| Two honest nodes never execute different events for one `(sender, nonce)`, also across epochs of different committees | `FORMAL (model)`: `no_double_spend`, `no_double_spend_across_epochs` |
+| In one committee, two honest nodes never execute different events for one `(sender, nonce)` | `FORMAL (model)`: `no_double_spend` |
+| Across epochs of different committees, two different events for one `(sender, nonce)` never both get a certificate. **This says certified, not executed:** the model of epochs has no execution, and there a certificate is defined by the votes of honest signers, with no signatures | `FORMAL (model)`: `no_double_spend_across_epochs` |
 | The state is what `derive` computes from the executed events, whatever their order of arrival | `FORMAL (model)`: `state_is_derive`, `convergence_after_exchange` |
 | Two valid certificates in conflict name at least `f+1` guilty members | `FORMAL (model)`: `conflict_identifies_faulty` |
-| Keys of an ended committee, all stolen, give no double spend of a sender that signed once | `FORMAL (model)`: `old_keys_no_double_spend` |
-| The supply of an asset never grows | `FORMAL (model)`: `asset_supply_conserved` |
+| A node takes a certificate of an ended committee only for an event in its locks. Two events accepted that way do not conflict **if the locks hold one version of each spend, which is a hypothesis**: with those keys stolen, it is the whole of that case | `CONDITIONAL (model)`: `old_certificate_outside_locks_refused`, `old_keys_no_double_spend` |
+| A run where each event stays inside a set of accounts or outside it keeps the sum of that set. **That transfers of an asset do stay inside is a hypothesis here**: Python enforces it, and only tests check that | `CONDITIONAL (model)`: `asset_supply_conserved` |
 | A restart from a snapshot reaches the state that replaying everything reaches, and pruning locks under a floor keeps the above | `FORMAL (model)`: `resume_is_derive`, `no_double_spend_views` |
 | With the optional `n = 5f+1`, freeing a split nonce loses no certified event, for every `f`. With `n = 3f+1` no such rule exists | `FORMAL (model)`: `no_double_spend_with_unlock`, `split_lock_ambiguous_general` |
-| An honest sender gets a certificate, **if messages arrive** | `FORMAL (model)`: `honest_sender_certifies`. Delivery is a hypothesis |
+| If `q` honest validators receive one version of an event, see no conflict and each has a valid signature on it, each votes for it and those signatures make a valid certificate. **Nobody gathering them is modelled, and delivery is a hypothesis** | `CONDITIONAL (model)`: `honest_sender_certifies` |
 | The Python code behaves like the model | `EMPIRICAL`: differential tests. **Not a refinement proof** |
 
 The theorems hold with at most `f` faulty validators in each committee and unforgeable signatures. A committee chosen badly by
-governance can fork, and no theorem removes that assumption. Full list and limits: `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`.
+governance can fork, and no theorem removes that assumption. Full list and limits: `docs/PROOF-SCOPE.md`, `docs/PROOF-OBLIGATIONS.md`, `docs/LEAN-REVISIONE.md`. `CONDITIONAL` is defined in the second: machine-checked, with the hard part in a hypothesis.
 
 **It does not do:** shared state written by several parties (order books, auctions, shared counters: they need consensus, and this
 design cannot give them). Objects with their own state, and exchanges between two owners. Confidentiality between members. Guaranteed progress: votes split between two versions

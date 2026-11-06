@@ -15,13 +15,14 @@ Theorems in Lean 4 about a model of the protocol, for at most `f` faulty validat
 theorems in 24 modules, with no axiom beyond the three standard ones. A committee chosen badly by governance can fork, and no theorem
 removes that assumption. Nothing is proved about Ed25519 or about the Python code. List and limits: `docs/PROOF-SCOPE.md`.
 
-- Two honest nodes never execute different events for one `(sender, nonce)`, also across epochs: `no_double_spend`, `no_double_spend_across_epochs`.
+- In one committee, two honest nodes never execute different events for one `(sender, nonce)`: `no_double_spend`. Across epochs, two such events never both get a certificate: `no_double_spend_across_epochs`. That second one says certified, not executed: the model of epochs has no execution, and a certificate there is defined by the votes of honest signers.
 - The state is what `derive` computes, whatever the order of arrival: `state_is_derive`, `convergence_after_exchange`.
-- A conflict names at least `f+1` guilty members: `conflict_identifies_faulty`. Stolen keys of an ended committee give no double spend of a sender that signed once: `old_keys_no_double_spend`.
+- A conflict names at least `f+1` guilty members: `conflict_identifies_faulty`. A certificate of an ended committee counts only for an event in the locks, and two events accepted that way do not conflict if the locks hold one version of each spend: `old_keys_no_double_spend`, `CONDITIONAL`, since with stolen keys that hypothesis is the whole of the case.
 - A restart from a snapshot reaches the state of a full replay, and pruning locks under a floor keeps safety: `resume_is_derive`, `no_double_spend_views`.
-- Closures with no votes: any closures of one order keep safety, and only a governance that signs two orders can block: `no_double_spend_any_closures`, `one_order_never_blocks`, `two_orders_can_block`.
+- Closures with no votes: any closures of one order keep safety: `no_double_spend_any_closures`. A governance that signs two orders can block, shown on one instance: `two_orders_can_block`. With one order, a member can still report for it: `one_order_never_blocks`, which is only counting. **That nothing else can block is an argument by hand, and no theorem.**
 - With the optional `n = 5f+1`, freeing a split nonce loses no certified event, for every `f`, and with `3f+1` no such rule exists: `no_double_spend_with_unlock`, `split_lock_ambiguous_general`.
-- An honest sender gets a certificate, **if messages arrive**: `honest_sender_certifies`. Delivery is a hypothesis.
+- If `q` honest validators receive one version of an event, see no conflict and each has a valid signature on it, each votes for it and those signatures make a valid certificate: `honest_sender_certifies`, `CONDITIONAL`. Delivery is a hypothesis, and nobody gathering the signatures is modelled.
+- A run where each event stays inside a set of accounts or outside it keeps the sum of that set: `asset_supply_conserved`, `CONDITIONAL`. That transfers of an asset stay inside is a hypothesis in Lean, and `EMPIRICAL` in Python.
 
 ### EMPIRICAL
 
@@ -42,7 +43,7 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 ### Added in `verso-1.0`
 
 - Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 17.91 s to 0.83 s, 0.10 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
-- **A closure no longer takes votes.** It is an order of governance and any quorum of reports, and a member reports for one order per epoch. Two proposers at once, or one that dies, can no longer block an epoch: only a governance that signs two orders can. `QuorumReports.lean`, `tests/test_quorum_reports.py`. This replaces the closure votes and their retries of the earlier passage. `CLOSURE_VOTE_REQUEST`, `CLOSURE_LOCKED` and `CLOSURE_VOTE` are gone. Stores migrate to schema 5.
+- **A closure no longer takes votes.** It is an order of governance and any quorum of reports, and a member reports for one order per epoch. In our tests two proposers at once, or one that dies, no longer block an epoch, and a governance that signs two orders can. That nothing else can is not proved. `QuorumReports.lean`, `tests/test_quorum_reports.py`. This replaces the closure votes and their retries of the earlier passage. `CLOSURE_VOTE_REQUEST`, `CLOSURE_LOCKED` and `CLOSURE_VOTE` are gone. Stores migrate to schema 5.
 - The optional configuration `n = 5f+1`, `q = 4f+1`, with split nonces free at the end of an epoch: `psystem genesis --unlock`. `QuorumUnlock.lean` proves it for every `f`, and that it cannot work with `3f+1`.
 - `scripts/make_host_deployment.py`, `scripts/measure_network.py`, `scripts/netem_lab.py`: nodes on separate hosts, and containers with latency and loss. Measured on containers on one machine. **Not yet on separate machines.**
 - Limits against saturation: `tests/test_saturation.py`, `docs/proposte/passo-4.md`.

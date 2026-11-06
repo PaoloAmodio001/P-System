@@ -19,9 +19,9 @@ authors of the code, and it is what an audit should start from and attack.
 
 | Attacker | Attack | What stops it | Evidence |
 |---|---|---|---|
-| Sender | Signs two versions of a spend | Vote lock: at most one is certified, maybe none | `no_double_spend` FORMAL (model); differentials A, B, C EMPIRICAL |
+| Sender | Signs two versions of a spend | Vote lock: at most one is certified, maybe none | `no_double_spend` FORMAL (model), and `no_double_spend_across_epochs` for certification across epochs; differentials A, B, C EMPIRICAL |
 | Up to `f` members | Vote for everything, forge, withhold | Quorum intersection | Same |
-| Thief of keys of an ended committee, all of them | Certify a spend nobody signed, or a second one | An old certificate counts only for an event in the locks | `old_keys_no_double_spend`, `accepted_complete` FORMAL (model); `tests/test_quorum_old_keys.py` EMPIRICAL |
+| Thief of keys of an ended committee, all of them | Certify a spend nobody signed, or a second one | An old certificate counts only for an event in the locks | `old_certificate_outside_locks_refused`, `accepted_complete` FORMAL (model), `old_keys_no_double_spend` CONDITIONAL (model), since it assumes that the locks hold one version of each spend; `tests/test_quorum_old_keys.py` EMPIRICAL |
 | Same, and of governance | Show a joining node or a light client another chain from the genesis | **Not stopped.** Compare the id of a recent committee out of band before trusting one | None |
 | Up to `f` members | Lie in a report to lose a certified event | An honest signer among any quorum of reports | `closure_preserves_certified` FORMAL (model) |
 | Up to `f` members | Report events nobody signed, to lock accounts | A report with one such event is refused | `tests/test_quorum_epochs.py` EMPIRICAL |
@@ -36,7 +36,7 @@ authors of the code, and it is what an audit should start from and attack.
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
 | Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
-| Crash | A proposer dies during a closure | Any quorum of reports is a closure, and a member that reported collects them itself | `one_order_never_blocks` FORMAL (model), `tests/test_quorum_reports.py` EMPIRICAL |
+| Crash | A proposer dies during a closure | Any quorum of reports is a closure, and a member that reported collects them itself | `tests/test_quorum_reports.py` EMPIRICAL. No theorem says that the closure completes: `one_order_never_blocks` only counts who can still report |
 
 ## Known gaps
 
@@ -55,7 +55,7 @@ authors of the code, and it is what an audit should start from and attack.
   tokens beyond `hmac.compare_digest`.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
-- **Liveness.** `honest_sender_certifies` assumes delivery. Nothing promises progress against an adversarial network,
+- **Liveness.** `honest_sender_certifies` assumes delivery, and says that the signatures make a valid certificate, not that anyone gathers them. Nothing promises progress against an adversarial network,
   and a governance that signs two orders for one epoch can split the reports, which stops that epoch from closing for good.
 - **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. A signer can add locks nobody signed to a snapshot: that can only stop the node that takes it from voting on those nonces. A node that pruned cannot prove a conflict under its floor.
 - **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.

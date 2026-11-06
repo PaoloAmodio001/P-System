@@ -18,23 +18,23 @@ To end an epoch a threshold identity of governance signs an **order** naming the
 
 ## 2. What is proved
 
-All of this is about the model. There is no `sorry`, `admit`, `axiom`, `opaque` or `native_decide`, and `formal/lean/AuditPSystem.lean` prints only `propext`, `Quot.sound` and `Classical.choice` for each of 199 theorems in 24 modules. Signatures are parameters, and `Unforgeable` is a hypothesis about a run, so nothing here is about Ed25519 or SHA-256. Delivery is a hypothesis wherever a result speaks of progress.
+All of this is about the model. There is no `sorry`, `admit`, `axiom`, `opaque` or `native_decide`, and `formal/lean/AuditPSystem.lean` prints only `propext`, `Quot.sound` and `Classical.choice` for each of 199 theorems in 24 modules. Signatures are parameters, and `Unforgeable` is a hypothesis about a run, so nothing here is about Ed25519 or SHA-256. Delivery is a hypothesis wherever a result speaks of progress. **Across epochs, safety means certification and not execution:** the model of epochs has no execution, and `Certified` is defined by the votes of honest signers, with no signatures. The step from a certificate to two nodes executing is proved for one committee only.
 
 | Theorem | Statement |
 |---|---|
 | `no_double_spend`, `no_double_spend_q` | Two honest nodes never execute different events for one `(sender, nonce)`, for any quorum with `n + \|F\| < 2q` |
 | `state_is_derive`, `convergence_after_exchange` | The state is a function of the set of events, and nodes that exchange logs agree |
 | `conflict_identifies_faulty` | Two conflicting certificates name at least `2q - n` faulty signers, with no bound on faults assumed |
-| `no_double_spend_across_epochs`, `closure_preserves_certified` | Safety over a chain of committees, each with its own bound. What is certified in an epoch is in the locks of any closure of it |
+| `no_double_spend_across_epochs`, `closure_preserves_certified` | Over a chain of committees, each with its own bound, two conflicting events never both get a certificate. What is certified in an epoch is in the locks of any closure of it |
 | `no_double_spend_views` | The same, where each validator has its own locks and its own floor |
 | `order_unique`, `no_double_spend_any_closures` | Two orders cannot both get a quorum of reports, and validators can install different closures of one epoch |
-| `one_order_never_blocks`, `two_orders_can_block` | With one order no proposer can stand in the way of another. A governance that signs two can stop an epoch |
+| `one_order_never_blocks`, `two_orders_can_block` | With one order, a member can still report for it, which is only counting. On one instance, a governance that signs two can stop an epoch. That nothing else can block is an argument, not a theorem |
 | `split_lock_ambiguous_general`, `threshold_rule_loses_a_certificate_3f1` | For every `f`, with `n = 3f+1`, the same reports fit a certificate for either of two events, and any threshold of 2 or more loses one |
 | `certified_passes_threshold`, `unlocked_key_has_no_certificate`, `no_double_spend_with_unlock` | For every `f`, with `n = 5f+1`, `q = 4f+1`, a certified event has `2f+1` reports in every closure, and freeing what has fewer creates no conflict |
-| `accepted_complete`, `old_keys_no_double_spend` | A certificate of an ended committee counts only for an event in the locks, which loses nothing real, and with all those keys stolen a sender that signed once has no double spend |
+| `accepted_complete`, `old_keys_no_double_spend` | A certificate of an ended committee counts only for an event in the locks, which loses nothing real. Two events accepted that way do not conflict if the locks hold one version of each spend: this hypothesis is the whole of the case with stolen keys, so the result is the rule and not the conclusion |
 | `resume_equals_replay`, `resume_is_derive`, `attested_snapshot_matches_node` | A restart from a snapshot goes on as a full replay would, and with a quorum of signatures it is the state of any honest node with those events |
-| `honest_sender_certifies` | An honest sender gets a certificate, given delivery to `q` honest validators |
-| `asset_supply_conserved` | A run staying inside a set of accounts keeps its sum |
+| `honest_sender_certifies` | Given delivery to `q` honest validators, no conflict, and a valid signature from each, each votes and those signatures make a valid certificate. Nobody gathering them is modelled |
+| `asset_supply_conserved` | A run staying inside a set of accounts keeps its sum. Staying inside is a hypothesis |
 
 Each hypothesis of the newer results has a counterexample showing it is needed: `without_report_lock_two_orders_pass`, `order_unique_needs_the_bound`, `too_few_reports_miss_a_certificate`, `prune_without_floor_lets_conflict_through`, `threshold_above_2f1_fails`, `too_few_reports_fail`, `forgetting_old_locks_fails`, `attestation_without_honest_signer_proves_nothing`.
 
@@ -97,6 +97,7 @@ The table says what each work is reported to do, from its paper. It is not a com
 ## 7. Limits
 
 - **No refinement.** The theorems are about a model. The link with the code is tests.
+- **Weak statements.** Across epochs we prove certification and not execution. Several results above carry their hard part in a hypothesis, and `docs/LEAN-REVISIONE.md` lists them, with the infinite chains that the hypotheses on epochs ask for.
 - **Governance.** It chooses the committee, and a committee with more than `f` faulty members can fork. No theorem removes that. Governance that signs two orders stops an epoch for good, and the protocol has no way out.
 - **Liveness.** Nothing promises progress against an adversarial network. A certificate may never form, and that is by design.
 - **An equivocating sender** loses that nonce for good with `n = 3f+1`.
