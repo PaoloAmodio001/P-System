@@ -77,6 +77,9 @@ To stop the demo and remove what it made: `docker compose down --rmi local`, the
 | `docs/paper/preprint.md` | To be read by others. Not submitted and not published |
 | `docs/MACCHINE-SEPARATE.md` | Four nodes on four machines, step by step. Nobody has done it yet |
 | `docs/AUDIT-PACKAGE.md` | For an external auditor: scope, assumptions, surface, how to repeat, questions |
+| `docs/AUDIT-RICHIESTA.md` | One page to send to a reviewer, in Italian |
+| `docs/LEAN-REVISIONE.md` | Which theorems are weak, and which hypotheses have a witness. Not an independent review |
+| `docs/DIPENDENZE.md` | Every dependency, with its version, license and reason |
 | `ROADMAP.md`, `docs/piano-bizantino.md`, `CHANGELOG.md` | Where it is going, how it got here |
 
 ## Running the checks
