@@ -3,6 +3,7 @@
 The plan, the proposals and the changelog are history and stay out: they may name what is gone.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -156,14 +157,74 @@ def test_every_number_in_the_preprint_is_in_a_file_of_the_repository():
     assert not missing, f"not in the repository: {missing}"
 
 
+def theorems_in(source: str) -> int:
+    """Also those with an attribute, and not a line of a comment that starts with the word."""
+    code = re.sub(r"/-.*?-/", "", source, flags=re.S)
+    return len(re.findall(r"^(?:@\[[^\]]*\]\s*)?(?:private |protected )?theorem\s", code, re.M))
+
+
+def test_the_count_of_theorems_sees_what_it_used_to_miscount():
+    source = "/--\ntheorem that needs it.\n-/\ntheorem one : True := trivial\n@[simp] theorem two : True := trivial\n"
+    assert theorems_in(source) == 2
+
+
 def test_the_count_of_theorems_in_the_preprint_is_the_real_one():
-    theorems = sum(
-        len(re.findall(r"^theorem ", path.read_text(), re.M))
-        for path in (ROOT / "formal/lean/PSystem").glob("*.lean")
-    )
+    theorems = sum(theorems_in(path.read_text()) for path in (ROOT / "formal/lean/PSystem").glob("*.lean"))
     modules = len(list((ROOT / "formal/lean/PSystem").glob("*.lean")))
     text = (ROOT / "docs/paper/preprint.md").read_text()
     assert f"{theorems} theorems in {modules} modules" in text
+
+
+def measures_expected() -> list[str]:
+    """What the tables of docs/BENCHMARKS.md must say, computed from the raw files."""
+    results = ROOT / "benchmarks/results"
+    quorum = json.loads((results / "quorum-ext4-2026-11-06.json").read_text())
+    tmpfs = json.loads((results / "quorum-tmpfs-2026-11-06.json").read_text())
+    lines = lambda name: [json.loads(line) for line in (results / name).read_text().splitlines()]
+    expected = [
+        f"| Ed25519 signature | {quorum['signatures']['ed25519_sign_per_s']:.0f} per second |",
+        f"| Ed25519 verification | {quorum['signatures']['ed25519_verify_per_s']:.0f} per second |",
+        f"{quorum['durable_votes']['durable_votes_per_s']:.0f} per second ({quorum['durable_votes']['durable_vote_ms']} ms)",
+        f"vote requests | {quorum['replica_path']['vote_requests_per_s']:.0f} per second |",
+        f"certificates executed | {quorum['replica_path']['certificates_executed_per_s']:.0f} per second |",
+        f"| tmpfs, no real `fsync` | {tmpfs['network_latency'][0]['latency_ms_median']} ms | {tmpfs['network_throughput'][0]['executed_on_all_per_s']} per second |",
+        f"| ext4 | {quorum['network_latency'][0]['latency_ms_median']} ms | {quorum['network_throughput'][0]['executed_on_all_per_s']} per second |",
+    ]
+    expected += [f"{row['certificate_verify_per_s']:.0f} per second | {row['certificate_bytes']} bytes |" for row in quorum["certificates"]]
+    expected += [f"| n = {row['n']} | {row['latency_ms_median']} ms | {row['latency_ms_p95']} ms |" for row in quorum["network_latency"]]
+    by_size = {}
+
+    for row in quorum["network_throughput"]:
+        by_size.setdefault(row["n"], []).append(row["executed_on_all_per_s"])
+
+    expected += [f"| n = {n} | {one} per second | {many} per second |" for n, (one, many) in by_size.items()]
+    expected += [f"{row['seconds_to_close']} s | {row['peak_memory_mib']} MiB |" for row in lines("epoch-capacity-2026-11-06.jsonl")]
+    restart = {(row["certificates"], row["mode"]): row["restart_seconds"] for row in lines("restart-2026-11-06.jsonl")}
+    expected += [
+        f"| {restart[count, 'no snapshot']:.2f} s | {restart[count, 'snapshot']:.2f} s | {restart[count, 'snapshot and pruning']:.{3 if count == 10000 else 2}f} s |"
+        for count in (10000, 50000)
+    ]
+    soak = lines("soak-2026-11-06.jsonl")
+    expected.append(
+        f"| {len(soak)} | {sum(not row['safe'] for row in soak)} | {sum(row['submitted'] for row in soak)} | {sum(row['equivocations'] for row in soak)} "
+        f"| {sum(row['restarts'] for row in soak)} | {sum(row['epoch'] for row in soak)} | {max(row['seconds_to_converge'] for row in soak)} s |"
+    )
+
+    for row in lines("netem-2026-11-05.jsonl"):
+        expected.append(f"| {row['latency']['median_ms']} ms | {row['latency']['p95_ms']} ms | {row['throughput']['events_per_second']:.0f} per second | {row['recovery']['seconds_to_catch_up']:.2f} s |")
+
+    return expected
+
+
+def test_the_tables_of_the_measures_are_those_of_the_raw_files():
+    text = (ROOT / "docs/BENCHMARKS.md").read_text()
+    missing = [line for line in measures_expected() if line not in text]
+    assert not missing, f"not in docs/BENCHMARKS.md: {missing}"
+
+
+def test_a_measure_changed_by_hand_would_be_noticed():
+    text = (ROOT / "docs/BENCHMARKS.md").read_text().replace("| n = 4 | 15.0 ms |", "| n = 4 | 14.0 ms |")
+    assert [line for line in measures_expected() if line not in text]
 
 
 def test_a_number_that_is_in_no_file_would_be_noticed():

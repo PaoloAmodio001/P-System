@@ -132,7 +132,7 @@ A failed mutation run says which line and which test. A differential that diverg
 **The model.**
 
 7. Do `Certified`, `ViewChain`, `UnlockChain` and `Unforgeable` describe what the Python code gives? Is any of them stronger than it should be?
-8. Could a theorem hold only because a hypothesis is empty? Each has a non-vacuity witness or a counterexample in `formal/lean/PSystem/`, and we would like them checked.
+8. Could a theorem hold only because a hypothesis is empty? Most have a non-vacuity witness in `formal/lean/PSystem/`, and a counterexample shows only that a hypothesis is needed: `docs/LEAN-REVISIONE.md` lists what has no witness there and which statements are weaker than they read. We would like them checked.
 9. What would be the cheapest way to narrow the gap between model and code?
 
 **The code.**

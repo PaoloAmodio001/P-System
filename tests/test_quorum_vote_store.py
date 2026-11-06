@@ -24,6 +24,7 @@ from core.attestation import Committee, EpochChange, Governance, QuorumCertifica
 from crypto.identity import Identity
 from core.event import Transfer
 from core.state import State
+from tests.die_with_parent import command
 from network.quorum import SqliteVoteStore, VoteStoreError
 from tests import quorum_store_worker as worker
 
@@ -328,7 +329,7 @@ def test_a_vote_holds_the_write_lock_from_the_start(path, store):
 
 def _spawn(mode: str, path: Path, *args) -> subprocess.Popen:
     return subprocess.Popen(
-        [sys.executable, str(WORKER), mode, str(path), *map(str, args)],
+        command(str(WORKER), mode, str(path), *map(str, args)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

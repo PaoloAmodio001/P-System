@@ -45,14 +45,7 @@ jobs:
             exit 1
           fi
           lake env lean AuditPSystem.lean > audit.log
-          grep -c 'depends on axioms' audit.log
-          # Each list of axioms, one name per line, must hold only the three standard ones.
-          if grep 'depends on axioms' audit.log \
-            | sed -E 's/.*\[(.*)\].*/\1/' | tr ',' '\n' | tr -d ' ' \
-            | grep -vE '^(propext|Quot\.sound|Classical\.choice)$'; then
-            echo "A theorem depends on another axiom" >&2
-            exit 1
-          fi
+          python ../../scripts/check_axioms.py audit.log
 
       # The tests that need Lean skip themselves without lake, and a run that skipped them
       # must not look like a run that passed them.

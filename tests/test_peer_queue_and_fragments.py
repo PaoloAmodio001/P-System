@@ -364,10 +364,18 @@ def test_flush_waits_for_the_queue():
     assert left.flush(0.0)
     left.enqueue({"type": "T", "data": "x" * 5_000_000})
     assert not left.flush(0.05)
-    threading.Timer(0.3, right.receive).start()
-    assert left.flush(10)
-    left.close()
-    right.close()
+    reader = threading.Timer(0.3, right.receive)
+    reader.start()
+
+    try:
+        assert left.flush(10)
+        # The queue is empty when the last bytes are in the buffer of the socket, and the reader may
+        # still be on them: closing now would raise in its thread, under load.
+        reader.join(10)
+        assert not reader.is_alive()
+    finally:
+        left.close()
+        right.close()
 
 
 def test_flush_on_a_closed_connection_with_nothing_queued():

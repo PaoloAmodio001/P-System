@@ -1,6 +1,6 @@
 # P-System: dal prototipo di ricerca alla piattaforma
 
-Del 2026-11-04, aggiornata il 2026-11-05. Punto di partenza allora: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
+Del 2026-11-04, aggiornata il 2026-11-06. Punto di partenza allora: `byzantine-quorum`, sottofase 5.5 chiusa. Decise da Paolo: tutto in Python, l'obiettivo, le tre anticipazioni, D1 e D2.
 
 Niente di questo documento è un risultato. I teoremi elencati sono **da dimostrare**, e i nomi sono provvisori. Le stime di tempo sono giudizi a occhio, non misure: valgono come ordine di grandezza, in mesi-persona a tempo pieno.
 
@@ -9,6 +9,79 @@ Niente di questo documento è un risultato. I teoremi elencati sono **da dimostr
 - **Dimostrato sul modello:** `no_double_spend` e la sua forma per soglie qualsiasi, `delivered_certs_agree`, `executed_authorized`, `state_is_derive`, `convergence_after_exchange`, `conflict_identifies_faulty`, `no_double_spend_across_epochs` su una catena di comitati, `honest_sender_certifies` con la consegna come ipotesi. Crittografia idealizzata.
 - **Collegato al codice solo in modo `EMPIRICAL`:** differenziali A e B tra Python e `runNode`, differenziale C su TLS reale, 4 processi reali. Per le epoche, il differenziale D confronta un validatore con `runEpoch`, `reportOf` e `lockAllows`; la verifica delle chiusure resta fuori, perché nel modello è l'ipotesi `ChainValid`. Non è un refinement.
 - **Non esiste:** audit esterni, utenti, pilota, prove su macchine separate, liveness incondizionata, oggetti con stato proprio. Il passaggio a macchine separate ha gli script, ma non è stato misurato.
+
+## Che cosa manca dopo la 1.0
+
+Elenco del 2026-11-06, scritto per essere usato: da qui si sceglie che cosa fare. Il numero 1.0 non soddisfa i criteri della fase H: **tutto ciò che segue è ancora da fare, e nulla è una promessa.** Le stime di costo non ci sono perché nessuno ha chiesto un preventivo.
+
+### Richiede codice
+
+Si può fare da soli, ma nessuna di queste voci sostituisce le verifiche della sezione dopo.
+
+| Cosa | Perché conta | Note |
+|---|---|---|
+| Ridurre la distanza tra modello e Python: più funzioni estratte o controllate, o un refinement parziale di `QuorumReplica` | È la lacuna maggiore: oggi il legame è solo `EMPIRICAL` | Ricerca, esito incerto. Una revisione esterna dovrebbe scegliere la strada prima |
+| Teoremi di epoca sull'**esecuzione**, non solo sulla certificazione | `no_double_spend_across_epochs` parla di `Certified`, non di eventi eseguiti da due nodi: vedi `docs/LEAN-REVISIONE.md` | Da rivalutare con quell'elenco |
+| Testimoni non banali per `InstalledClosures`, `UnlockChain`, `Attests` e catene finite | Vedi `docs/LEAN-REVISIONE.md` | Solo Lean |
+| Generatore di traffico da più mittenti e più client, su più macchine | Oggi si misura un mittente alla volta, e nessun traffico continuo | Prerequisito di una prova seria su macchine separate |
+| Id degli eventi eseguiti che crescono anche con la potatura | Limite dichiarato alla durata di una rete | Cambia store e istantanee, e forse il modello |
+| Oggetti con stato proprio, operazioni su più oggetti | Fase C. Cambia gli id e tutte le prove | **Solo con un caso d'uso reale** |
+| Aggiornamenti a rotazione, versione del protocollo legata all'epoca | Oggi un cambio di versione ferma tutti i nodi insieme | Fase G |
+| Integrazione di un HSM o KMS dietro `network/remote_signer.py` | Le chiavi oggi stanno in file o in un altro processo | Serve anche hardware: vedi sotto |
+| CRL o OCSP, tracciamento, immagini firmate, build riproducibili | Oggi: elenco di revoca a mano, nessun tracciamento | Fasi E e G |
+| Analisi delle vulnerabilità note in CI | Non esiste: `docs/DEPENDENCIES.md` | Piccolo |
+| Politica di compatibilità di formato e protocollo | Criterio della fase H. Esiste solo per l'API (`docs/API.md`) | Soprattutto scrittura |
+| Ridurre `core/` | 75 file, molti servono solo la modalità storica senza garanzie | Da valutare insieme alla rimozione di quella modalità |
+| Verifica parallela delle firme, raggruppamento dei messaggi in uscita | Solo se un profilo su macchine separate lo chiede | Fase D |
+
+**Fuori da questo elenco, e non promesso:** stato condiviso tra più proprietari, scambi atomici tra due proprietari e riservatezza tra i membri. I primi due richiedono consenso (vincolo 1). La riservatezza richiederebbe un progetto a sé.
+
+### Richiede persone
+
+Nessun test scritto qui può sostituirle. **Oggi nessuna di queste è iniziata.** Il testo per chiedere una revisione è in `docs/AUDIT-RICHIESTA.md`.
+
+| Chi | Per fare cosa | Bloccato da |
+|---|---|---|
+| Ricercatore di sistemi distribuiti | Revisione del protocollo, a partire da chiusure senza voti e sblocco con `5f+1` | Trovarlo. Era indicato come necessario **prima** dell'implementazione, e non è avvenuto |
+| Esperto di Lean o di metodi formali | Verifica di ipotesi ed enunciati | Trovarlo |
+| Revisori di sicurezza e di crittografia, test di penetrazione | Fase E | Trovarli, e pagarli |
+| Revisore esterno del preprint | Prima di una pubblicazione | Decisione di Paolo sul preprint |
+| Tre o quattro operatori indipendenti | Guasti davvero indipendenti, esercitazioni | Trovarli |
+| Sviluppatori che provino API e SDK senza aiuto | Fase F. Il loro primo errore è il dato utile | Trovarli |
+| Un utente potenziale con un caso a proprietario singolo | Capire se il modello serve, **prima** di investire nella fase C | Parlarci |
+| Partner di un pilota | `docs/VALIDATION-PLAN.md`: almeno tre mesi con traffico vero | È il rischio maggiore, e non è tecnico |
+| Legale | MiCA, PSD2, DORA, GDPR secondo il caso d'uso. Collisione di nome con `p-org/P` | Prima di una release pubblica |
+| Qualcuno che riproduca i risultati da zero | Criterio della fase H | Trovarlo |
+
+### Richiede macchine
+
+| Cosa | Per quanto | Procedura |
+|---|---|---|
+| Quattro nodi su quattro macchine, più un misuratore | Almeno 19 giorni la prima volta | `docs/MACCHINE-SEPARATE.md`. Mai fatto |
+| Stessa prova su reti e fornitori diversi | Settimane | Dopo la prima |
+| Comitati di 7 e 13 nodi, e `5f+1` con 6 nodi, su macchine separate | Giorni per ciascuno | Stessi script, con più nodi |
+| Taglio reale di corrente su una macchina con un disco vero | Giorni | `kill -9` è provato, il taglio di corrente no |
+| Confronto con il prototipo di FastPay | Giorni | Stesse macchine e stessa dimensione degli eventi. Va confrontata prima la durabilità |
+| Prova su settimane con un'epoca di grandi dimensioni e potatura | Settimane | Mai fatta |
+
+### Richiede soldi
+
+Importi non stimati: vanno chiesti preventivi.
+
+| Voce | Note |
+|---|---|
+| Audit del codice, audit crittografico, test di penetrazione | Il tempo di revisione stimato è in `docs/AUDIT-RICHIESTA.md` |
+| Analisi di tipo Jepsen | Da chiedere a chi la fa |
+| Macchine e rete per le prove | Quattro o più macchine, per settimane. Il costo dipende dal fornitore |
+| HSM o KMS | Solo se serve un impiego reale |
+| Consulenza legale, eventuali certificazioni | Dipende dal settore: `docs/VALIDATION-PLAN.md` |
+| Tempo a pieno regime di altre persone | La stima del quadro d'insieme resta 2,5-6 anni-persona in tutto |
+
+### Decisioni di Paolo, prima di tutto questo
+
+1. Unire la PR di `verso-1.0` e creare il tag `v1.0.0`? Il numero 1.0 non rispetta la fase H: si può tenerlo, dichiarandolo, o usare un numero più basso.
+2. Se e quando rendere pubblici repository e preprint.
+3. Da chi iniziare: consiglio la revisione del protocollo e i quattro nodi insieme, perché entrambi possono cambiare ciò che viene dopo. Un utente potenziale subito dopo.
 
 ## Stato rispetto agli ambiti di `CLAUDE.md`, sezione 3.1
 
@@ -20,7 +93,7 @@ Valutazione del 2026-11-05, dopo il lavoro di A, B, D, E, F, G e del programma v
 | Sicurezza | TLS 1.3 reciproco con identità legata al certificato, firme Ed25519, blocco durevole, firmatario separato con un proprio blocco, chiavi cifrate, revoca a elenco, regola sulle chiavi delle epoche finite, limiti di frequenza, fuzzing, modello delle minacce scritto da noi | **Audit esterni, test di penetrazione.** HSM o KMS integrati, CRL o OCSP | E |
 | Networking | Processi separati su TLS reale, riconnessione, sincronizzazione, una coda e uno scrittore per peer, messaggi oltre il frame, scrittura a gruppi | Prove su reti vere | E |
 | Tolleranza ai guasti | `FORMAL (model)` anche su una catena di comitati; `EMPIRICAL` su 4 processi con `SIGKILL`, 4 container e campagne di guasti di rete iniettati | Prove su macchine separate. Liveness incondizionata | G |
-| Formal verification | 198 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
+| Formal verification | 199 teoremi, nessun assioma oltre ai tre standard; differenziale delle epoche per un validatore | Il legame con Python resta `EMPIRICAL`: nessun refinement | B |
 | Prestazioni | Misure riproducibili su una macchina in `docs/BENCHMARKS.md` | Macchine separate; riproduzione esterna; confronto con FastPay | D |
 | Scalabilità | Misurata con `n` = 4, 7, 13 su una macchina; chiusura misurata fino a 60 000 eventi; riavvio fino a 50 000, con istantanee e potatura | Misure con nodi separati e carichi lunghi | D |
 | Interoperabilità | API HTTP `/v1` con TLS opzionale, descrizione OpenAPI verificata da un test, CLI, SDK Python, client leggero | Nessun SDK in altri linguaggi: si passa dall'API | F |
@@ -134,7 +207,7 @@ L'ordine delle fasi resta quello richiesto. Tre attività sono anticipate:
 
 ## Fase B. Liveness e recupero
 
-**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `order_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); sblocco con `n = 5f+1`, dimostrato solo nel conteggio; `new_key_old_epoch` come teorema.
+**Stato: fatta in gran parte.** Dimostrati: `no_double_spend_q`, `unlock_safe_5f1`, `split_lock_ambiguous`, `conflict_identifies_faulty`, `no_double_spend_across_epochs`, `closure_preserves_certified`, `order_unique`, `locks_carried`, `honest_sender_certifies` con la consegna come ipotesi. Implementate le epoche, con il riporto dei blocchi riportati: un `(sender, nonce)` si rivota solo per l'unica alternativa riportata. Da fare: la revisione del protocollo da parte di un ricercatore, indicata sotto come indispensabile, **non è avvenuta**. Fatto dopo: sblocco con `n = 5f+1`, dimostrato per ogni `f` e implementato (decisione D2). Non fatti: rotazione delle chiavi degli utenti, che in questo modello cambia il conto (fase C); `new_key_old_epoch` come teorema.
 
 **Obiettivo.** Un sistema che può cambiare comitato, ruotare le chiavi e riprendersi, senza perdere la proprietà di sicurezza. È **la fase più difficile e la più interessante**: è il punto in cui FastPay si ferma e Sui ricorre al consenso.
 

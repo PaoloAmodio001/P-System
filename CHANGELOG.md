@@ -11,7 +11,7 @@ industrial validation and it is not certification.
 
 ### FORMAL (model)
 
-Theorems in Lean 4 about a model of the protocol, for at most `f` faulty validators in each committee and unforgeable signatures: 198
+Theorems in Lean 4 about a model of the protocol, for at most `f` faulty validators in each committee and unforgeable signatures: 199
 theorems in 24 modules, with no axiom beyond the three standard ones. A committee chosen badly by governance can fork, and no theorem
 removes that assumption. Nothing is proved about Ed25519 or about the Python code. List and limits: `docs/PROOF-SCOPE.md`.
 
@@ -26,7 +26,7 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 ### EMPIRICAL
 
 - The Python code against the model: differentials on `QuorumReplica`, on a real `Node`, on epochs and on `--unlock`, with 15 seeds, and mutations inside `pytest` to show that the tests can fail. **Not a refinement proof.** The order in which a node runs what waits in its buffer is a rule of the node: the model takes any order, and only the differential checks this one.
-- Faults on the network between four real processes on one machine: `docs/BENCHMARKS.md`, with the commit of each run. The last run, of 3 hours on `a9edb19`, had 55 campaigns with 0 unsafe, and comes before the correction of the SDK. Hours on one machine do not replace weeks on separate ones.
+- Faults on the network between four real processes on one machine: `docs/BENCHMARKS.md`, with the commit of each run. The last run, of 92 minutes on `25844e1` with the code of `5012d3a`, had 32 campaigns with 0 unsafe. Hours on one machine do not replace weeks on separate ones.
 - Attacks on saturation that won before the limits and lose after them: `tests/test_saturation.py`. The values of the limits are chosen by judgment.
 - Measures on one machine, and on containers with emulated latency on one machine: `docs/BENCHMARKS.md`.
 
@@ -41,7 +41,7 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 
 ### Added in `verso-1.0`
 
-- Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 20 s to 0.9 s, 0.1 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
+- Snapshots signed by a quorum, and optional pruning of certificates, of votes of ended epochs and of locks under a floor. A restart of 50 000 certificates goes from 17.91 s to 0.83 s, 0.10 s with pruning: `QuorumSnapshot.lean`, `tests/test_snapshots.py`, `docs/BENCHMARKS.md`. The ids of executed events still grow.
 - **A closure no longer takes votes.** It is an order of governance and any quorum of reports, and a member reports for one order per epoch. Two proposers at once, or one that dies, can no longer block an epoch: only a governance that signs two orders can. `QuorumReports.lean`, `tests/test_quorum_reports.py`. This replaces the closure votes and their retries of the earlier passage. `CLOSURE_VOTE_REQUEST`, `CLOSURE_LOCKED` and `CLOSURE_VOTE` are gone. Stores migrate to schema 5.
 - The optional configuration `n = 5f+1`, `q = 4f+1`, with split nonces free at the end of an epoch: `psystem genesis --unlock`. `QuorumUnlock.lean` proves it for every `f`, and that it cannot work with `3f+1`.
 - `scripts/make_host_deployment.py`, `scripts/measure_network.py`, `scripts/netem_lab.py`: nodes on separate hosts, and containers with latency and loss. Measured on containers on one machine. **Not yet on separate machines.**
@@ -51,10 +51,10 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 ### Fixed
 
 - Whoever reached the port, with no certificate, could keep every honest peer out with 70 silent connections. The one waiting longest now gives way.
-- A request for synchronization cost 28 ms under the lock of the node with 3000 certificates, at up to 5000 requests per second. A peer now pays for what it asks.
+- A request for synchronization cost a peer nothing and took the lock of the node for its whole length. A peer now pays for what it asks.
 - An answer cut in half gave the caller of the SDK an exception nobody expected. It is now a failed connection. Found by a soak.
 - Each new certificate tried every one in the buffer, with a read of the disk for each, and the buffer had no limit.
-- With 100 000 proofs in memory each message cost 1.75 ms, because they were copied each time.
+- With many proofs in memory each message took longer, because they were copied each time.
 
 - **Keys of an ended committee, stolen after its closure, could certify a spend the sender never signed, and nodes of later
   epochs executed it.** Changing committee protected nothing against stolen keys. An old certificate now counts only for an event
@@ -62,14 +62,14 @@ removes that assumption. Nothing is proved about Ed25519 or about the Python cod
 - Nodes in different processes could not connect at all: each process made its own throwaway authority. The system had only
   ever run inside one process.
 - A peer could claim any node id with any certificate of the authority, and take the connection of the real node.
-- A reader and a writer on one TLS connection corrupted the session, in about a third of the runs when both sides send at once.
+- A reader and a writer on one TLS connection corrupted the session in many runs, when both sides send at once.
 - A node on all interfaces announced `0.0.0.0`, and peers took it as its address, which broke reconnection.
 - A peer that does not read could hold every broadcast behind it for good.
 
 - (Later replaced by closures with no votes, above.) One proposer that died at the wrong moment and one retry stopped the whole committee for good: every member refused the
   second closure and had already stopped voting on events. Members now keep and offer the closure they voted for.
 - A peer that did not read delayed every other peer. Each peer now has its own queue and writer.
-- An epoch of more than about 12 000 events could never close, because a closure had to fit in one frame.
+- An epoch too large for one frame could never close, because a closure had to fit in one frame.
 
 - Certificates of the authority failed strict verification, which is the default in recent Python, because they lacked
   the identifier of their authority.

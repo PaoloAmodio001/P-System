@@ -168,7 +168,7 @@ sender can leave its account blocked.
 | `QuorumReports` | a closure needs no votes: a lock on the order, and any quorum of reports |
 | `QuorumUnlock` | unlocking with `n = 5f+1` for every `f`, and why it fails with `n = 3f+1` |
 
-- 24 modules, 198 theorem declarations, about 5000 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
+- 24 modules, 199 theorem declarations, about 5000 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
   of the proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.

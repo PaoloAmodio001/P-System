@@ -1,5 +1,9 @@
 # Piano: sicurezza bizantina con certificati di quorum
 
+## Dopo la 1.0, branch `dopo-1.0`, 2026-11-06
+
+Riepilogo: `docs/notte-2026-11-06.md`. Nessuna modifica a `core/`, `network/`, `formal/`, `sdk/`. **Modifiche:** procedura per quattro macchine, pagina per il revisore, elenco di ciò che manca, revisione delle prove Lean, dipendenze, proposta su `CLAUDE.md`, misure rifatte con i file grezzi, test corretti, nodi dei test che muoiono con il genitore, controllo degli assiomi della CI. **Problemi:** la CI della PR #3 è rossa per un difetto del controllo, non delle prove. Due difetti del prodotto annotati e non corretti. **Aperto:** merge e tag, enunciati Lean deboli, difetti D1 e D2.
+
 ## Stato al 2026-11-04: da leggere per riprendere
 
 **Vedi anche il riepilogo del programma verso la 1.0, qui sotto. Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.

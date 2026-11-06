@@ -18,7 +18,7 @@ To end an epoch a threshold identity of governance signs an **order** naming the
 
 ## 2. What is proved
 
-All of this is about the model. There is no `sorry`, `admit`, `axiom`, `opaque` or `native_decide`, and `formal/lean/AuditPSystem.lean` prints only `propext`, `Quot.sound` and `Classical.choice` for each of 198 theorems in 24 modules. Signatures are parameters, and `Unforgeable` is a hypothesis about a run, so nothing here is about Ed25519 or SHA-256. Delivery is a hypothesis wherever a result speaks of progress.
+All of this is about the model. There is no `sorry`, `admit`, `axiom`, `opaque` or `native_decide`, and `formal/lean/AuditPSystem.lean` prints only `propext`, `Quot.sound` and `Classical.choice` for each of 199 theorems in 24 modules. Signatures are parameters, and `Unforgeable` is a hypothesis about a run, so nothing here is about Ed25519 or SHA-256. Delivery is a hypothesis wherever a result speaks of progress.
 
 | Theorem | Statement |
 |---|---|
@@ -46,7 +46,7 @@ Each hypothesis of the newer results has a counterexample showing it is needed: 
 
 **Old keys.** Our implementation checked a certificate against the committee of its epoch, as the natural reading suggests. With the keys of an ended committee, stolen after its closure, we made a node of a later epoch execute a transfer its sender never signed: rotating keys protected nothing. `closure_preserves_certified` suggests the repair, since everything really certified is in the locks: a node takes a certificate of an ended committee only for an event in them. The limit is formal too: a sender that signed two versions, both reported, can have the wrong one accepted (`two_versions_in_locks_both_accepted`). A node joining from genesis can still be shown a false chain if keys of governance are stolen as well. Forward-secure signatures, used for this purpose by Kuznetsov and Tonkikh, would be a stronger answer, which we did not adopt.
 
-**A snapshot needs no agreement.** A snapshot says that with these events the state is this. Two different ones can both be true, so no vote lock applies, and a member signs only what it derived itself. Pruning a lock is safe together with a floor under which a validator does not vote, and a false floor only refuses votes. The two must come together: `prune_without_floor_lets_conflict_through`. In our implementation a restart of 50 000 certificates goes from 20.3 s to 0.91 s, and to 0.10 s with pruning.
+**A snapshot needs no agreement.** A snapshot says that with these events the state is this. Two different ones can both be true, so no vote lock applies, and a member signs only what it derived itself. Pruning a lock is safe together with a floor under which a validator does not vote, and a false floor only refuses votes. The two must come together: `prune_without_floor_lets_conflict_through`. In our implementation a restart of 50 000 certificates goes from 17.91 s to 0.83 s, and to 0.10 s with pruning.
 
 ## 4. Link with the implementation: `EMPIRICAL`
 
@@ -70,7 +70,7 @@ With four containers on separate networks with `tc netem`, on one machine, so sh
 | 25 ms | 0.1% | 103.8 ms | 374 per second |
 | 50 ms | 1% | 183.0 ms | 91 per second |
 
-The window of `max_nonce_ahead` bounds the events one sender has on their way. Closing an epoch of 60 000 events took 319 s and 5945 MiB with all four nodes in one process, which is a real limit.
+The window of `max_nonce_ahead` bounds the events one sender has on their way. Closing an epoch of 60 000 events took 248.2 s and 5135 MiB with all four nodes in one process, which is a real limit.
 
 ## 6. Related work
 

@@ -10,6 +10,7 @@ import pytest
 
 from core.state import State
 from crypto.identity import Identity
+from tests.die_with_parent import command
 from network.quorum import QuorumConfig, QuorumRuntime, SqliteVoteStore, VoteStoreError
 from tests import quorum_store_worker as worker
 
@@ -125,7 +126,7 @@ def test_store_can_still_be_opened_twice_without_a_runtime(path):
 
 def _spawn_holder(path: Path) -> subprocess.Popen:
     process = subprocess.Popen(
-        [sys.executable, worker.__file__, "hold-runtime", str(path)],
+        command(worker.__file__, "hold-runtime", str(path)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
