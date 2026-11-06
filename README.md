@@ -30,8 +30,11 @@ of a spend give no certificate at all, and that nonce stays locked for good, unl
 
 ## Quick start
 
+You need Python 3.14, Linux, and Docker with Compose for this demo.
+
 ```sh
-python -m venv .venv && . .venv/bin/activate
+git clone https://github.com/PaoloAmodio001/P-System && cd P-System
+python3.14 -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements.lock && pip install --no-deps .
 
 python scripts/make_local_deployment.py /tmp/psystem-demo --f 1
@@ -39,6 +42,8 @@ cd /tmp/psystem-demo && docker compose up -d --build
 ```
 
 Without containers, and for a real deployment: `docs/OPERATIONS.md`.
+
+From `/tmp/psystem-demo`, in the same environment:
 
 ```python
 from crypto.identity import Identity
@@ -54,6 +59,8 @@ signed = wallet.transfer("receiver-account", 8)
 client.submit(signed)                                           # "accepted" says nothing about a certificate
 client.wait_final(signed.transfer, ChainVerifier(genesis.committee, genesis.governance))
 ```
+
+To stop the demo and remove what it made: `docker compose down --rmi local`, then delete `/tmp/psystem-demo`. Its keys are for this demo only.
 
 ## Documents
 
@@ -75,14 +82,16 @@ client.wait_final(signed.transfer, ChainVerifier(genesis.committee, genesis.gove
 ## Running the checks
 
 ```sh
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt   # not pinned, unlike requirements.lock: see docs/DIPENDENZE.md
 pytest -q -m "not slow"                  # about 3 minutes on one core
 pytest -q                                # adds mutations, differentials, faults: about an hour on one core
-PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py tests/test_epoch_differential.py
+PSYSTEM_DIFF_SEEDS=15 pytest -q tests/test_quorum_differential.py tests/test_quorum_differential_node.py tests/test_epoch_differential.py tests/test_unlock_differential.py
 python scripts/soak.py --minutes 60 --out soak.jsonl   # campaigns of network faults on real processes
 python scripts/netem_lab.py measure lab --delay 25 --jitter 5 --loss 0.1   # containers with a real delay: needs Docker
-cd formal/lean && lake build             # needs Lean: see formal/lean/lean-toolchain
+cd formal/lean && lake build             # needs elan, which installs the Lean of formal/lean/lean-toolchain
 ```
+
+Install elan from https://github.com/leanprover/elan. The tests that need Lean skip themselves without `lake`, and a run that skipped them has not passed them.
 
 `sh scripts/install_hooks.sh` installs a pre-commit hook that refuses a commit unless `pytest -q -m "not slow"` and `lake build` pass.
 It checks the working tree, so stage what you mean to test.

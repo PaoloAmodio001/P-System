@@ -14,7 +14,8 @@ measured.
 ## Setting up
 
 ```sh
-python -m venv .venv && . .venv/bin/activate
+git clone https://github.com/PaoloAmodio001/P-System && cd P-System
+python3.14 -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements.lock && pip install --no-deps .
 
 psystem authority init ca/                         # held apart, by whoever admits nodes
@@ -24,6 +25,8 @@ psystem key generate gov0.key                      # one per signer of governanc
 psystem genesis genesis.json --member KEY --member KEY --member KEY --member KEY --f 1 \
   --balance ACCOUNT=1000 --governance G0 --governance G1 --governance G2 --governance-threshold 2
 ```
+
+`key generate` prints a `public_key` and an `account`, and `psystem key show FILE` prints them again. `--member` and `--governance` take the `public_key` of a key, and `--balance` the `account`. Do this once for each member, with a `--member` for each.
 
 Compare the `genesis_hash` it prints among all the organizations, out of band. Two nodes with different
 files are not one network.
@@ -66,7 +69,7 @@ host = "n1.example.org"
 port = 7000
 ```
 
-A setting the program does not recognize is an error, on purpose.
+One `[[peers]]` for each other member. The paths are relative to the file: this layout has `ca/` and `genesis.json` next to the directory of the node. An API on anything but `127.0.0.1` refuses to start without `token_file`. A setting the program does not recognize is an error, on purpose.
 
 **Protecting a key.** In order of strength, and only the first is the default:
 
@@ -91,9 +94,10 @@ psystem init-store --config n0/node.toml
 psystem node --config n0/node.toml
 ```
 
-`node` never creates a store. If the file is missing it stops with exit code 2, and that must stop
-there: `deploy/systemd/psystem.service` does not restart on it. A validator that starts again with no votes
-can sign both versions of a spend, and it counts as faulty.
+`node` never creates a store: if the file is missing it stops, and it must stay stopped until a person looks. A validator that starts again with no votes
+can sign both versions of a spend, and it counts as faulty. **Known defect, on 2026-11-06:** it stops with exit code 1 and a traceback, and not with the 2 that `deploy/systemd/psystem.service` expects, so under systemd it tries again every 5 seconds, refusing each time, and leaves a `votes.sqlite.lock`. It creates no store, so this is noise and not a danger. Watch for a unit that keeps restarting. See `docs/notte-2026-11-06.md`.
+
+Under systemd: the unit runs `/usr/local/bin/psystem` as the user `psystem`, with the files in `/var/lib/psystem/NAME`. Create the user and the directory, and change `ExecStart` if `psystem` is in a virtual environment. This file has not been tried on a real host in this form.
 
 Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a `docker-compose.yml`. It publishes the API of node
 `i` on `127.0.0.1:(8080 + i)`, with a token in `node-i/api.token`, in clear: fit for one machine and nothing more.
@@ -239,5 +243,5 @@ protocol version needs all the nodes at once, and they refuse each other meanwhi
 ## Rotating certificates
 
 They last a year by default, and an expired one stops connections. Issue a new one with the same `node_id` and
-restart the node. There is no revocation list: remove a member by changing committee, and if a key of the
+restart the node. To stop one sooner, use `tls_revoked`, as in "Setting up". That stops the certificate and not the member: remove a member by changing committee. If a key of the
 authority is lost, start from a new authority.

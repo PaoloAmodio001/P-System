@@ -93,7 +93,7 @@ Su ogni macchina, con il `venv` attivo. Per una prova breve:
 cd ~/psystem/node-0 && psystem node --config node.toml 2> node.log
 ```
 
-Per una prova di giorni usa `systemd`, adattando `deploy/systemd/psystem.service` alla cartella `~/psystem/node-i` e al percorso di `psystem` nel `venv`, così un nodo caduto riparte da solo. Il valore `RestartPreventExitStatus=2` va conservato: un nodo senza store deve fermarsi lì.
+Per una prova di giorni usa `systemd`, adattando `deploy/systemd/psystem.service` alla cartella `~/psystem/node-i` e al percorso di `psystem` nel `venv`, così un nodo caduto riparte da solo. Conserva `RestartPreventExitStatus=2`. Oggi però un nodo senza store esce con codice 1 e `systemd` lo rilancia ogni 5 secondi, senza creare uno store: se un'unità continua a ripartire, controlla (`docs/notte-2026-11-06.md`).
 
 Dal misuratore, controlla ogni nodo:
 
