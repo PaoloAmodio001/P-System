@@ -250,8 +250,8 @@ def wait_for(clients: list[Client], account: str, nonce: int, seconds: float) ->
 def wait_connected(clients: list[Client], seconds: float = 60.0) -> None:
     """
     Every node sees every other. An event sent before that reaches too few to get a certificate, and
-    nothing sends it again by itself, so a measure would only wait. Seeing each other now does not say
-    that these connections will stay: see scripts/probe_stuck_event.py.
+    a measure would count the wait until the node that took it asks again. Seeing each other now does
+    not say that these connections will stay: see scripts/probe_stuck_event.py.
     """
     deadline = time.monotonic() + seconds
 
