@@ -39,7 +39,59 @@ Riepilogo: `docs/notte-2026-11-06.md`. Nessuna modifica a `core/`, `network/`, `
 
 **Sicurezza:** nessun effetto osservato. **Liveness:** è un blocco di un mittente onesto, senza guasti, che il modello non esclude: non è una violazione di una proprietà dichiarata, ma limita l'uso reale, ed è presente in `v1.0.0-rc1`.
 
-**Aperto, decisione di Paolo.** La correzione tocca il prodotto, quindi non è qui. Proposta: il nodo che aggrega rinvia `VOTE_REQUEST` per ciò che ha in corso, a ogni giro di sincronizzazione o a una nuova connessione. Un nodo onesto rivota lo stesso evento senza violare il blocco, e la prova `resend` mostra già che basta. Costo: messaggi in più, da limitare.
+### Branch `fix-blocco`, 2026-11-06. Correzione del blocco, nel prodotto
+
+Parte da `diagnosi-blocco`. **Stato del caso in CI: resta `OPEN`.** Il difetto qui sotto è reale e corretto; che fosse quello del giro in CI è compatibile, non dimostrato. Da ora la CI conserva le prove di un fallimento come artifact.
+
+**Causa, misurata.** Con contatori attorno a `PeerConnection`, in un lanciatore fuori dal repository: in 200 esecuzioni, tutte le 486 chiusure riguardano una connessione aperta dal nodo con id più alto. Il nodo più basso la riceve e poi, dal proprio `_reconnect_loop`, richiama, anche se la connessione funziona, e chiude quella in uso. In un blocco catturato (1 su 200), due connessioni di `node-0` sostituite a 8 ms di distanza hanno perso:
+
+| Dove | Messaggi |
+|---|---|
+| Coda svuotata alla chiusura | 9 voti |
+| Scritti e non letti dall'altro | 38 richieste, 1 voto |
+| Risposta a una connessione già chiusa, dedotto dai contatori | circa 50 voti |
+
+Spostare la coda sulla connessione che resta non sarebbe bastato.
+
+**Perché esisteva il richiamo.** `6ef4d53` non ha corpo nel messaggio e il piano non ne parla. I suoi test riguardano le chiamate simultanee, che la regola in `_register_peer_connection` risolve anche senza richiamo. Effetto collaterale trovato leggendo il codice: il richiamo sostituiva anche una connessione entrante morta in silenzio. Ora il nodo la scopre alla scrittura successiva della sincronizzazione.
+
+**Modifiche.**
+
+1. `network/node.py`: una connessione viva resta, chiunque l'abbia aperta.
+2. `network/quorum.py`: chi raccoglie i voti chiede di nuovo per gli eventi senza certificato: dopo 2 s, poi il doppio fino a 30 s, al massimo 256 richieste per giro, prima chi aspetta da più tempo. Una nuova connessione azzera l'attesa. Si smette con il certificato, con un'altra versione certificata, con l'arresto o la chiusura dell'epoca. I valori sono scelti a giudizio.
+3. `.github/workflows/ci.yml`: `test-failures/` come artifact se un test fallisce.
+
+**Prima e dopo, `EMPIRICAL`.**
+
+| Prova | Prima | Dopo |
+|---|---|---|
+| `test_a_burst_is_not_lost_to_a_call_back`, deterministico | `4 EVENT_NOT_RUN` per 20 s | Passa |
+| `test_a_burst_lost_with_two_connections_runs_all_the_same`, deterministico, senza il rinvio | `4 EVENT_NOT_RUN` per 20 s | Passa |
+| `links`: esecuzioni con una connessione chiusa dopo `wait_connected` | 15 su 15 | 0 su 30 |
+| `cut --links 2` e `--links 3`, durata 30 s | 8 su 8 ferme, per ciascuna | 0 su 16 |
+| `burst --pause 0.02` | 1 su 100, 1 su 25, 1 su 200 | 0 su 150 |
+
+Il dato `burst` da solo sarebbe poco: su eventi così rari, 0 su 150 è debole. Contano le prove deterministiche.
+
+**Il caso per cui il richiamo poteva servire.** `test_two_nodes_that_call_each_other_end_on_one_connection`: due nodi che si chiamano a vicenda finiscono su una sola connessione e ci restano, 5 su 5. `test_a_dead_connection_from_the_higher_id_does_not_keep_it_out`: una connessione morta non tiene fuori il peer, con la sincronizzazione. Il primo e il secondo passano anche prima della correzione.
+
+**Certificato formato e non consegnato: recuperato, `EMPIRICAL`.** `test_a_certificate_nobody_got_comes_with_the_synchronization`: il nodo che lo forma non lo invia a nessuno, e gli altri lo ricevono dalla sincronizzazione. Con la sincronizzazione spenta resta su un solo nodo: il test di controllo lo verifica.
+
+**Rivotare non viola i lock.** `voteAllowed` ammette l'evento già votato e nessun altro. `voteLock_runNode` e `no_double_spend` valgono per qualsiasi lista di input, quindi una richiesta ripetuta è solo un input in più. Nessun nuovo teorema. In Python `record_vote` non scrive una seconda riga e rifiuta un'altra versione, e una seconda firma dello stesso nodo conta una volta. Il differenziale già conteggia `vote repeated`.
+
+**Legame con `honest_sender_certifies`.** Nel blocco catturato, sui primi nonce, l'ipotesi di consegna valeva e la conclusione era vera, ma nessun certificato esisteva: il teorema non modella chi raccoglie le firme. La correzione lavora lì, e non dimostra né l'ipotesi né la raccolta. Il teorema resta `CONDITIONAL`, con la consegna come ipotesi esplicita, e il rinvio resta `EMPIRICAL`. Nessuna garanzia di liveness.
+
+**Limiti rimasti.**
+
+- **Riavvio:** chi raccoglie perde quanto aveva in memoria. Tocca al client inviare di nuovo.
+- **Nodo morto:** finché chi ha ricevuto l'evento non torna, nessuno raccoglie per lui. Il client deve inviare altrove.
+- **Chiusura di un'epoca:** svuota la raccolta, e i relativi eventi non vengono più chiesti.
+- **Mittente con due versioni:** può non arrivare mai a un quorum. Il rinvio continua ogni 30 s finché la voce non cade per i motivi sopra.
+- **Recupero lento su molti eventi:** 256 a giro, ogni 5 s con la configurazione predefinita: circa 51 eventi al secondo.
+- **Connessione morta in silenzio:** si scopre solo scrivendo, e se la rete scarta i pacchetti senza errore serve il timeout di TCP, perché non c'è keepalive. Senza sincronizzazione (`sync_interval = None`, non ammesso dalla configurazione del servizio) un peer resta fuori: `test_without_a_synchronization_a_dead_connection_keeps_a_peer_out`.
+- **Chiamate davvero simultanee:** la regola chiude ancora una delle due connessioni. Non osservato dopo la correzione, ma non escluso: lì copre il rinvio.
+- **Non rimisurato:** `docs/BENCHMARKS.md`.
+- **`v1.0.0-rc1` contiene il difetto.**
 
 ## Stato al 2026-11-04: da leggere per riprendere
 

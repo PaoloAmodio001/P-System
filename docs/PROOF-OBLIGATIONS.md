@@ -244,6 +244,7 @@ Hypotheses that remain, in `no_double_spend_across_epochs`:
 - O7 covers safety in the quorum model. No theorem establishes unconditional
   liveness or complete Byzantine fault tolerance.
 - There is no unconditional liveness theorem: `honest_sender_certifies` assumes delivery.
+- Gathering the signatures is not modelled. Python asks again for what has no certificate, and a certificate that reached nobody comes with synchronization: both EMPIRICAL (`tests/test_stuck_event.py`). A repeated request is one more input, which `voteLock_runNode` and `no_double_spend` already allow.
 - Epochs and thresholds are compared with Python only by tests, with no differential against Lean.
 - Relevance, decision invariance and reconciliation are not modelled
   (obligations O3 and O4 below are `OPEN`).
