@@ -283,14 +283,11 @@ class Node:
                     peer.node_id
                 )
 
+                # A live connection stays, whoever opened it. Calling back to get the preferred one
+                # closed a connection in use, and what was on it was lost. The rule for the preferred
+                # one is for two calls at once, in `_register_peer_connection`.
                 if connection is not None and connection.connected:
-                    prefer_outgoing = self.node_id < peer.node_id
-                    connection_is_preferred = (
-                        getattr(connection, "initiated_locally", True)
-                        == prefer_outgoing
-                    )
-                    if connection_is_preferred or not prefer_outgoing:
-                        continue
+                    continue
 
                 with self._reconnect_state_lock:
                     state = self._reconnect_state.setdefault(
