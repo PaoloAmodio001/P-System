@@ -26,6 +26,16 @@ def psystem(*args: str) -> str:
 
 
 _PORTS_GIVEN: set[int] = set()
+# Every node started in this process and not yet stopped: see tests/test_no_orphans.py.
+_RUNNING: set[subprocess.Popen] = set()
+
+
+def stop_leftovers() -> None:
+    """Kill what a test left running, whatever way it ended. The conftest calls this after each test."""
+    for process in list(_RUNNING):
+        process.kill()
+        process.wait(timeout=10)
+        _RUNNING.discard(process)
 
 
 def free_port() -> int:
@@ -168,6 +178,7 @@ port = {self.api_ports[index]}
             stderr=log,
             text=True,
         )
+        _RUNNING.add(self.processes[index])
         # The line it prints when it is up.
         line = self.processes[index].stdout.readline()
         assert line, (self.directory(index) / "node.log").read_text()[-2000:]
@@ -181,16 +192,20 @@ port = {self.api_ports[index]}
         process = self.processes.pop(index)
         process.send_signal(signal.SIGKILL)
         process.wait(timeout=10)
+        _RUNNING.discard(process)
 
     def stop(self, index: int) -> int:
         process = self.processes.pop(index)
         process.send_signal(signal.SIGTERM)
-        return process.wait(timeout=20)
+        code = process.wait(timeout=20)
+        _RUNNING.discard(process)
+        return code
 
     def stop_all(self) -> None:
         for process in list(self.processes.values()):
             process.kill()
             process.wait(timeout=10)
+            _RUNNING.discard(process)
         self.processes.clear()
 
     def log_lines(self, index: int) -> list[dict]:
