@@ -1,5 +1,12 @@
 # Changelog
 
+## Not released
+
+- **An event no longer stops with every node up.** A node no longer calls back a peer that called it, which closed a connection in use, and it asks again for the votes of what it took, within limits: `docs/piano-bizantino.md`. `EMPIRICAL`: no liveness is claimed. `v1.0.0-rc1` has this defect.
+- **What a node asks votes for survives its restart.** Store schema 6, and older stores migrate on opening. An older binary refuses schema 6.
+- **Metrics and alerts on a stuck event:** `psystem_events_gathering`, `psystem_gathering_oldest_seconds`, `psystem_vote_requests_resent_total`, `psystem_connections_replaced_total`, `PSystemEventStuck`, `PSystemConnectionsReplaced`.
+- **The CI keeps what a failed test left,** as an artifact.
+
 ## 1.0.0 (not tagged)
 
 Quorum mode complete on a real network, and a service around it. **Not ready for production**: it has had no external audit and

@@ -83,7 +83,7 @@ Il dato `burst` da solo sarebbe poco: su eventi così rari, 0 su 150 è debole. 
 
 **Limiti rimasti.**
 
-- **Riavvio:** chi raccoglie perde quanto aveva in memoria. Tocca al client inviare di nuovo.
+- **Riavvio:** chi raccoglie perde quanto aveva in memoria. Tocca al client inviare di nuovo. **Superato sul branch `robustezza`, qui sotto.**
 - **Nodo morto:** finché chi ha ricevuto l'evento non torna, nessuno raccoglie per lui. Il client deve inviare altrove.
 - **Chiusura di un'epoca:** svuota la raccolta, e i relativi eventi non vengono più chiesti.
 - **Mittente con due versioni:** può non arrivare mai a un quorum. Il rinvio continua ogni 30 s finché la voce non cade per i motivi sopra.
@@ -92,6 +92,31 @@ Il dato `burst` da solo sarebbe poco: su eventi così rari, 0 su 150 è debole. 
 - **Chiamate davvero simultanee:** la regola chiude ancora una delle due connessioni. Non osservato dopo la correzione, ma non escluso: lì copre il rinvio.
 - **Non rimisurato:** `docs/BENCHMARKS.md`.
 - **`v1.0.0-rc1` contiene il difetto.**
+
+### Branch `robustezza`, 2026-11-07. Rinvio dopo un riavvio, metriche e allarme
+
+Parte da `main` dopo il merge della PR #4 (`a269b6c`). **La linea `prove-forti` e la demo sono sospese per decisione di Paolo.**
+
+**Modifiche.**
+
+- **Store, schema 6:** tabella `gathering`, con `event_id` ed `epoch`. Evento e firma del mittente sono già in `votes` e `vote_evidence`. La riga si scrive nella stessa transazione del voto, quindi nessun fsync in più: una risposta `202` implica che la riga è su disco. I file dello schema 5 si migrano all'apertura. **Un binario precedente rifiuta lo schema 6: un ritorno indietro richiede un backup fatto prima.**
+- **Driver:** al riavvio riprende gli eventi e li chiede subito. Il proprio voto si firma di nuovo quando tocca all'evento, e non all'avvio, perché un firmatario esterno rallenterebbe la partenza. I voti raccolti dagli altri erano in memoria: si richiedono.
+- **Metriche:** `psystem_events_gathering`, `psystem_gathering_oldest_seconds`, `psystem_vote_requests_resent_total`, `psystem_connections_replaced_total`. `/metrics` esisteva già.
+- **Allarmi:** `PSystemEventStuck` e `PSystemConnectionsReplaced`, con la procedura in `docs/OPERATIONS.md`. Soglie a giudizio. `psystem_gathering_oldest_seconds` non era nel piano: un conteggio segue il traffico e non distingue un evento fermo.
+- **Test esistenti:** i collegamenti fermati dal proxy hanno una finestra di 0,2 s, trovata qui. I test deterministici di `fix-blocco` ora aspettano che si chiuda.
+
+**Risultati, `EMPIRICAL`.** `test_a_node_killed_while_gathering_finishes_when_it_comes_back`: `kill -9` dopo il `202`, con nessuna risposta arrivata. Prima della modifica `4 EVENT_NOT_RUN` per 20 s; dopo, tutti eseguono senza che il client invii di nuovo.
+
+**Riavvio di uno store ripristinato:** non firma nulla, come richiede `mark_restored`, ma raccoglie i voti degli altri, e gli serve un voto in più. Le prove di sicurezza non cambiano: chiedere voti non è un voto, e l'evento è firmato dal mittente.
+
+**Limiti.**
+
+- **Voti divisi:** un evento con voti divisi resta nei rinvii fino alla fine dell'epoca. Nessuno può sapere che non arriverà mai a un quorum, e nessun nodo sceglie. Costa una richiesta ogni 30 s per evento, sopravvive al riavvio, e tiene acceso `PSystemEventStuck`. Se l'epoca non si chiude mai, resta per sempre. Per farlo cessare serve una chiusura, che è una decisione del governo.
+- **L'età si azzera a un riavvio:** `psystem_gathering_oldest_seconds` conta da quando il processo ha iniziato a chiedere.
+- **Nodo perso per sempre:** nessuno chiede per lui. Il mittente deve inviare altrove. Il file ha le righe, ma nessuno le legge.
+- **Chiusura di un'epoca:** cancella le righe, e quegli eventi vanno inviati di nuovo. Resta il limite di `fix-blocco`.
+- **Eventi senza prova del mittente, da file molto vecchi:** non si riprendono.
+- **Non rimisurato:** `docs/BENCHMARKS.md`. La scrittura di un certificato ora fa una `DELETE` in più, nella stessa transazione.
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
