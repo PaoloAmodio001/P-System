@@ -117,6 +117,10 @@ Logs go to standard error, one JSON object per line. Metrics at `/metrics`:
 | `psystem_certificates_waiting` | Growing: certificates that cannot run yet, usually a missing parent |
 | `psystem_equivocations` | Senders signing two versions: a client bug or an attack |
 | `psystem_store_commit_seconds_total` / `psystem_store_commits_total` | Average write time: disk trouble |
+| `psystem_events_gathering` | Events this node took with no certificate yet. It follows the traffic |
+| `psystem_gathering_oldest_seconds` | **Growing: an event is stuck.** See "An event is stuck". A restart starts it again |
+| `psystem_vote_requests_resent_total` | Growing fast: messages are being lost, or an event cannot get a quorum |
+| `psystem_connections_replaced_total` | Growing: two nodes keep calling each other at once, or something cuts connections |
 
 ## Failures
 
@@ -126,8 +130,16 @@ With at most `f` down nothing stops. Restart it: it catches up by itself, from a
 
 ### More than `f` nodes are down
 
-No certificates form and nothing unsafe happens. Events accepted meanwhile stay unfinished: their
-senders send them again once a quorum is back.
+No certificates form and nothing unsafe happens. Events accepted meanwhile stay unfinished. The node that
+took each of them asks again once a quorum is back. If that node is lost for good, the sender sends the event elsewhere.
+
+### An event is stuck
+
+The node asks again for the votes of what it took, at least every 30 s, and across a restart. It stops with a certificate, or when the epoch ends.
+
+1. `psystem_peers_connected` below `2f`, or nodes down: bring them back. The event goes on by itself.
+2. `psystem_equivocations` above 0: the sender may have signed two versions, and the votes may be split. **No alternative may ever reach a quorum, and no node chooses.** The event stays until the epoch ends. To clear it, close the epoch: that is a decision of governance.
+3. Neither: look at `psystem_connections_replaced_total` and at the logs of the peers.
 
 ### The disk is full, or fails
 
@@ -235,6 +247,8 @@ epoch. Close one soon, since until then the committee has one member fewer. **Ne
 by hand**: nothing can detect it, and that node then counts as faulty.
 
 ## Upgrading
+
+The store moved to schema 6, and an older binary refuses it: to go back, use a backup taken before the upgrade, and see "Restoring".
 
 Nothing has been tested with two versions in one committee. Stop a node, take a backup, upgrade and start: the
 store migrates on opening, inside one transaction. A migration has no way back: keep the backup. A change of

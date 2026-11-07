@@ -257,3 +257,85 @@ def test_a_file_of_schema_5_opens_with_nothing_gathering(tmp_path):
     version = store._connection.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     assert version == ("6",)
     store.close()
+
+
+# --- What an operator sees -------------------------------------------------------------------------
+
+
+def test_the_numbers_for_the_metrics(drivers):
+    assert drivers.first.gathering_count == 0
+    assert drivers.first.gathering_oldest_seconds == 0.0
+    drivers.first.submit(transfer(0))
+    drivers.clock.now = 100.0 + 1.0
+    drivers.first.submit(transfer(1))
+    assert drivers.first.gathering_count == 2
+    drivers.clock.now = 100.0 + 7.0
+    assert drivers.first.gathering_oldest_seconds == 7.0
+    assert drivers.first.requests_resent == 0
+    drivers.first.retry()
+    assert drivers.first.requests_resent == 2
+
+
+def test_a_certificate_takes_an_event_out_of_the_numbers(drivers):
+    event = transfer(0)
+    drivers.first.submit(event)
+
+    for index in (1, 2):
+        drivers.first.handle_message(vote_of(drivers, index, event.transfer))
+
+    drivers.clock.now = 100.0 + 5.0
+    assert drivers.first.gathering_count == 0
+    assert drivers.first.gathering_oldest_seconds == 0.0
+
+
+class Connected:
+    connected = True
+
+    def __init__(self, initiated_locally):
+        self.initiated_locally = initiated_locally
+
+    def close(self):
+        pass
+
+
+def test_replacing_a_live_connection_is_counted_and_refusing_one_is_not():
+    node = Node("a-node", State())
+
+    try:
+        assert node._register_peer_connection("z-node", Connected(False))
+        assert node.connections_replaced == 0
+        assert node._register_peer_connection("z-node", Connected(True))
+        assert node.connections_replaced == 1
+        assert not node._register_peer_connection("z-node", Connected(False))
+        assert node.connections_replaced == 1
+    finally:
+        node.peer_connections.clear()
+        node.stop()
+
+
+def test_the_metrics_of_a_real_node_say_what_is_stuck(proxied):
+    made = proxied
+    made.start_all()
+    clients = [Client(made.api_url(index)) for index in range(made.count)]
+    measure.wait_connected(clients)
+    sender = measure.Sender(Identity.load(made.sender_key))
+
+    for peer in (1, 2, 3):
+        for link in ((0, peer), (peer, 0)):
+            made.links[link].stalled = True
+
+    time.sleep(UNTIL_A_STALL_HOLDS)
+    clients[0].submit(sender.next())
+    assert wait_until(lambda: measure.read_metrics(clients[0])["psystem_vote_requests_resent_total"] > 0, 15)
+    numbers = measure.read_metrics(clients[0])
+    assert numbers["psystem_events_gathering"] == 1
+    assert numbers["psystem_gathering_oldest_seconds"] > 0
+    assert numbers["psystem_connections_replaced_total"] == 0
+
+
+def test_the_alert_on_a_stuck_event_is_explained_to_the_operator():
+    alerts = (ROOT / "deploy" / "prometheus" / "alerts.yml").read_text()
+    operations = (ROOT / "docs" / "OPERATIONS.md").read_text()
+    assert "alert: PSystemEventStuck" in alerts
+    assert "psystem_gathering_oldest_seconds" in alerts
+    assert "### An event is stuck" in operations

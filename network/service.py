@@ -100,6 +100,10 @@ def metrics_text(node: Node) -> str:
             ("psystem_snapshot_events", "gauge", "Events the last snapshot covers", 0 if replica.base is None else len(replica.base.ids)),
             ("psystem_certificates_held", "gauge", "Certificates this node still holds", len(replica.log)),
             ("psystem_epoch_votes", "gauge", "Votes of this node in this epoch: close an epoch before about 50000", store.epoch_vote_count()),
+            ("psystem_events_gathering", "gauge", "Events this node took that have no certificate yet", driver.gathering_count),
+            ("psystem_gathering_oldest_seconds", "gauge", "How long the oldest of them has waited, since this process started", round(driver.gathering_oldest_seconds, 3)),
+            ("psystem_vote_requests_resent_total", "counter", "Requests for votes sent again", driver.requests_resent),
+            ("psystem_connections_replaced_total", "counter", "Connections to a peer replaced while alive: what was on them is lost and asked for again", node.connections_replaced),
         ]
 
     lines = []
