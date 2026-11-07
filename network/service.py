@@ -14,6 +14,7 @@ import re
 import ssl
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
@@ -174,10 +175,13 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def _reply(self, status: int, body: dict) -> None:
+        if "error" in body and "request_id" not in body:
+            body = {**body, "request_id": self.request_id}
         data = json.dumps(body, sort_keys=True).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Request-ID", self.request_id)
         self.end_headers()
         self.wfile.write(data)
 
@@ -186,8 +190,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Request-ID", self.request_id)
         self.end_headers()
         self.wfile.write(data)
+
+    @property
+    def request_id(self) -> str:
+        request_id = getattr(self, "_request_id", None)
+        if request_id is None:
+            request_id = self.headers.get("X-Request-ID", "")
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", request_id):
+                request_id = uuid.uuid4().hex
+            self._request_id = request_id
+        return request_id
 
     def _within_rate(self) -> bool:
         if self.server.limiter.allow(self.client_address[0]):
@@ -195,11 +210,12 @@ class _Handler(BaseHTTPRequestHandler):
 
         # The body, if any, stays unread, so this connection cannot be used again.
         self.close_connection = True
-        data = json.dumps({"error": "TOO MANY REQUESTS"}).encode()
+        data = json.dumps({"error": "TOO MANY REQUESTS"}, sort_keys=True).encode()
         self.send_response(429)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Retry-After", "1")
+        self.send_header("X-Request-ID", self.request_id)
         self.end_headers()
         self.wfile.write(data)
         return False

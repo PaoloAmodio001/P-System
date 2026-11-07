@@ -21,6 +21,7 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -172,10 +173,20 @@ class Wallet:
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, body: dict) -> None:
+    """An HTTP error with a stable status, machine-readable body and request id."""
+
+    def __init__(
+        self,
+        status: int,
+        body: dict,
+        request_id: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(f"{status}: {body}")
         self.status = status
         self.body = body
+        self.request_id = request_id or body.get("request_id")
+        self.retry_after = retry_after
 
 
 def signed_to_json(signed: SignedTransfer) -> dict:
@@ -243,7 +254,7 @@ class ChainVerifier:
 
 
 class Client:
-    """One node of the API. Nothing here retries: what to do after an error is the caller's."""
+    """One node of the API; retries are opt-in and always reuse the same signed event."""
 
     def __init__(
         self,
@@ -255,11 +266,15 @@ class Client:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.last_request_id: str | None = None
         self._context = ssl.create_default_context(cafile=ca_file) if ca_file else None
 
-    def _request(self, method: str, path: str, body=None) -> dict:
+    def _request(self, method: str, path: str, body=None, request_id: str | None = None) -> dict:
         data = None if body is None else json.dumps(body).encode()
         headers = {"Content-Type": "application/json"} if data is not None else {}
+        request_id = request_id or uuid.uuid4().hex
+        headers["X-Request-ID"] = request_id
+        self.last_request_id = request_id
 
         if self.token is not None:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -280,9 +295,28 @@ class Client:
                     timeout=self.timeout,
                     context=self._context,
                 ) as response:
+                    self.last_request_id = response.headers.get("X-Request-ID", request_id)
                     return json.loads(response.read())
             except urllib.error.HTTPError as error:
-                raise ApiError(error.code, json.loads(error.read() or b"{}")) from error
+                raw = error.read() or b"{}"
+                try:
+                    body = json.loads(raw)
+                except (ValueError, TypeError):
+                    body = {"error": "INVALID JSON ERROR RESPONSE"}
+                retry_after = None
+                if error.headers.get("Retry-After") is not None:
+                    try:
+                        retry_after = float(error.headers["Retry-After"])
+                    except ValueError:
+                        pass
+                response_request_id = error.headers.get("X-Request-ID")
+                self.last_request_id = response_request_id or request_id
+                raise ApiError(
+                    error.code,
+                    body,
+                    response_request_id,
+                    retry_after,
+                ) from error
         except http.client.HTTPException as error:
             raise ConnectionError(f"NODE STOPPED ANSWERING: {error!r}") from error
 
@@ -294,15 +328,83 @@ class Client:
         return self._request("GET", f"/v1/accounts/{urllib.parse.quote(account, safe='')}")
 
     def submit(self, signed: SignedTransfer) -> dict:
-        """202 says the node took it, and nothing about a certificate."""
+        """Submit this exact event; repeating it is the safe retry operation."""
         return self._request("POST", "/v1/transfers", signed_to_json(signed))
 
     def submit_many(self, events: list[SignedTransfer]) -> dict:
+        """Submit these exact events; callers must retry the same signed objects."""
         return self._request(
             "POST",
             "/v1/transfers:batch",
             [signed_to_json(event) for event in events],
         )
+
+    def submit_with_retry(
+        self,
+        signed: SignedTransfer,
+        attempts: int = 3,
+        delay: float = 0.25,
+    ) -> dict:
+        """Retry the same signed bytes after transient delivery failures.
+
+        This never creates or signs an event. It retries only connection failures and transient
+        HTTP responses; malformed or locally refused events are returned to the caller immediately.
+        """
+        if attempts < 1:
+            raise ValueError("attempts must be positive")
+        if delay < 0:
+            raise ValueError("delay must not be negative")
+
+        request_id = uuid.uuid4().hex
+        for attempt in range(attempts):
+            try:
+                return self._request("POST", "/v1/transfers", signed_to_json(signed), request_id)
+            except ApiError as error:
+                if error.status not in (429, 503) or attempt + 1 == attempts:
+                    raise
+                wait = error.retry_after if error.retry_after is not None else delay * (2**attempt)
+                time.sleep(max(0.0, wait))
+                continue
+            except (ConnectionError, TimeoutError, urllib.error.URLError):
+                if attempt + 1 == attempts:
+                    raise
+            time.sleep(delay * (2**attempt))
+
+        raise AssertionError("unreachable")
+
+    def submit_many_with_retry(
+        self,
+        events: list[SignedTransfer],
+        attempts: int = 3,
+        delay: float = 0.25,
+    ) -> dict:
+        """Retry a batch without changing any signed event or its order."""
+        if attempts < 1:
+            raise ValueError("attempts must be positive")
+        if delay < 0:
+            raise ValueError("delay must not be negative")
+
+        request_id = uuid.uuid4().hex
+        for attempt in range(attempts):
+            try:
+                return self._request(
+                    "POST",
+                    "/v1/transfers:batch",
+                    [signed_to_json(event) for event in events],
+                    request_id,
+                )
+            except ApiError as error:
+                if error.status not in (429, 503) or attempt + 1 == attempts:
+                    raise
+                wait = error.retry_after if error.retry_after is not None else delay * (2**attempt)
+                time.sleep(max(0.0, wait))
+                continue
+            except (ConnectionError, TimeoutError, urllib.error.URLError):
+                if attempt + 1 == attempts:
+                    raise
+            time.sleep(delay * (2**attempt))
+
+        raise AssertionError("unreachable")
 
     def certificate(self, event_id: str) -> dict | None:
         try:

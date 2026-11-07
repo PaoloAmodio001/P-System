@@ -11,7 +11,9 @@ connections at once: more are closed. Behind a proxy all clients are one address
 
 `/healthz` and `/readyz` are public probes. With a token, every other path needs `Authorization: Bearer <token>`. The token protects the
 operator from noise and from read access. It does not protect accounts: a transfer is valid because its
-sender signed it, whoever delivers it.
+sender signed it, whoever delivers it. Every response includes `X-Request-ID`; clients may send an
+ASCII `X-Request-ID` (1-128 characters) to correlate a retry with operator logs. The Python SDK generates
+one for each request and exposes the last value as `Client.last_request_id`.
 
 ## Reads
 
@@ -53,7 +55,10 @@ proves something: see "Proof" below.
 | `503` | The node cannot write to its disk. Nothing was signed |
 
 Sending the same event again is always safe, and is what to do after an error or a timeout. Sending
-another event for the same nonce can lock the account for good: use `sdk.client.Wallet`.
+another event for the same nonce can lock the account for good: use `sdk.client.Wallet`. The SDK's
+`submit_with_retry` and `submit_many_with_retry` retry only connection failures, `429`, and `503`,
+and always serialize the same signed objects. They do not retry `400`, `401`, or `409`, and they do
+not imply certification: inspect a certificate and verify it with `ChainVerifier`.
 
 ## Assets
 

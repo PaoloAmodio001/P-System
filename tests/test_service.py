@@ -89,6 +89,27 @@ def spend(sender, nonce=0, receiver="bob", amount=1) -> SignedTransfer:
 # --- The interface ----------------------------------------------------------------------
 
 
+def test_sdk_exposes_the_response_request_id(service):
+    running, _, _ = service
+    client = Client(url(running))
+    client.status()
+    assert client.last_request_id
+
+
+def test_every_response_has_a_request_id_and_accepts_a_correlation_id(service):
+    running, _, _ = service
+    request = urllib.request.Request(
+        url(running) + "/healthz", headers={"X-Request-ID": "client-42"}
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert json.loads(response.read()) == {"status": "ok"}
+        assert response.headers["X-Request-ID"] == "client-42"
+
+    request = urllib.request.Request(url(running) + "/v1/status")
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.headers["X-Request-ID"]
+
+
 def test_status_says_what_an_operator_needs(service):
     running, _, _ = service
     status = Client(url(running)).status()

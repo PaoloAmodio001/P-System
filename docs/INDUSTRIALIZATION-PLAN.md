@@ -64,8 +64,10 @@ raccolti; le linee 8-10 richiedono anche infrastruttura e persone esterne.
 
 - Le aggiunte compatibili entrano in `/v1`; rimozioni o cambi semantici richiedono `/v2`.
 - Un retry del client deve ripetere lo stesso evento, non crearne uno nuovo.
-- Ogni operazione di scrittura espone un identificatore stabile e distingue `accepted` da
-  `certified`/`executed`.
+- Ogni risposta espone `X-Request-ID`; il client può fornire lo stesso identificatore per correlare
+  log e tentativi, ma questo identificatore non è una chiave di idempotenza del protocollo.
+- `event_id` è la chiave naturale dell'idempotenza dei trasferimenti: l'evento firmato, non una
+  richiesta HTTP, deve essere ripetuto. Le risposte distinguono `accepted` da `certified`/`executed`.
 - Le letture di un singolo nodo sono diagnostiche; solo un certificato è prova verificabile.
 
 ## Criteri di uscita complessivi

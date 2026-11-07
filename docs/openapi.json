@@ -18,9 +18,34 @@
     "required": [
      "error"
     ],
+    "additionalProperties": false,
     "properties": {
      "error": {
       "type": "string"
+     },
+     "request_id": {
+      "type": "string",
+      "description": "Request correlation identifier"
+     }
+    }
+   },
+   "AcceptedTransfer": {
+    "type": "object",
+    "required": [
+     "accepted",
+     "event_ids"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "accepted": {
+      "type": "boolean"
+     },
+     "event_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "pattern": "^[0-9a-f]{64}$"
+      }
      }
     }
    },
@@ -504,11 +529,11 @@
     },
     "responses": {
      "202": {
-      "description": "Taken",
+      "description": "Taken; certification is asynchronous",
       "content": {
        "application/json": {
         "schema": {
-         "type": "object"
+         "$ref": "#/components/schemas/AcceptedTransfer"
         }
        }
       }
@@ -606,11 +631,11 @@
     },
     "responses": {
      "202": {
-      "description": "Taken",
+      "description": "Taken; certification is asynchronous",
       "content": {
        "application/json": {
         "schema": {
-         "type": "object"
+         "$ref": "#/components/schemas/AcceptedTransfer"
         }
        }
       }
@@ -703,11 +728,17 @@
     },
     "responses": {
      "202": {
-      "description": "Taken",
+      "description": "Taken; closure is asynchronous",
       "content": {
        "application/json": {
         "schema": {
-         "type": "object"
+         "type": "object",
+         "additionalProperties": false,
+         "required": ["accepted", "change_id"],
+         "properties": {
+          "accepted": {"type": "boolean"},
+          "change_id": {"type": "string"}
+         }
         }
        }
       }
