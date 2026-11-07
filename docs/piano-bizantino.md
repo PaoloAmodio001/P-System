@@ -130,6 +130,9 @@ Il lavoro viene strutturato per fasi indipendenti, senza merge automatico su `ma
   implica disponibilità del quorum.
 - **Preflight di deployment:** `psystem validate --config ... --json` controlla configurazione, identità
   della genesi e dipendenze TLS senza aprire o migrare lo store. systemd lo esegue prima del nodo.
+- **Secondo incremento:** il benchmark quorum accetta `--senders N` e genera flussi indipendenti con
+  nonce separati, riportando conteggi per mittente, radici e conteggi finali dei nodi. Il default resta
+  compatibile con la misura storica; i numeri multi-mittente non sono ancora pubblicati.
 - **Stato:** `EMPIRICAL` fino alla verifica della suite e della CI. Restano `OPEN` audit, prove su macchine
   separate, esercizio indipendente e pilota.
 

@@ -3,6 +3,7 @@
 Measured on 2026-11-06, on commit `25844e1`, whose `core/`, `network/`, `sdk/` and `crypto/` are those of `5012d3a`, except the containers, measured on 2026-11-05. Each number below comes from a raw file in `benchmarks/results/`, named in its section, and `tests/test_documents.py` compares them. **These numbers belong to this machine and this moment.** Measures on one machine and on containers come first. Measures on separate machines do not exist yet, and have a section of their own to say so. They come from one laptop, with all the nodes on it, and nobody else has repeated them. Nothing here is compared with another system.
 
     python benchmarks/quorum_benchmark.py --dir /a/directory/on/the/disk/to/measure --out results.json
+    python benchmarks/quorum_benchmark.py --dir /a/directory/on/the/disk/to/measure --senders 4 --out multi-sender.json
 
 ## The machine
 
@@ -53,6 +54,19 @@ The same benchmark on the two disks, with 4 nodes:
 | ext4 | 15.0 ms | 19.3 per second |
 
 **So the limit is `fsync`.** Signatures and network matter much less. That is why votes and certificates that arrive together share one write, and why `submit_many` exists: batches gave ten times the throughput here with `n = 4`, and four times with `n = 13`. It does not weaken durability: nothing is sent before the commit, and `tests/test_quorum_group_commit.py` checks that a group decides what the same messages decide one by one.
+
+## Multi-sender workload
+
+`--senders N` extends the network benchmark with `N` independent account streams. Events are
+created in deterministic round-robin order, with a separate nonce sequence for each sender; the
+default remains one sender for comparability with the historical measurements. The output records
+`senders`, per-sender event counts, event counts on every node and state roots. The benchmark uses
+the real TLS node path and `submit_many`; it does not implement a second protocol model.
+
+This is measurement preparation, not a result: no multi-sender numbers are recorded here until a
+run is made and its raw output is committed. The run is bounded by the requested event count and
+batch size. Results on one host remain `EMPIRICAL` capacity evidence only, not availability,
+safety, separate-host scalability or production validation.
 
 ## What these numbers allow you to say
 

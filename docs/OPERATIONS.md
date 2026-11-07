@@ -110,6 +110,13 @@ Under systemd: the unit runs `/usr/local/bin/psystem` as the user `psystem`, wit
 Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a `docker-compose.yml`. It publishes the API of node
 `i` on `127.0.0.1:(8080 + i)`, with a token in `node-i/api.token`, in clear: fit for one machine and nothing more.
 
+## Capacity measurements
+
+`benchmarks/quorum_benchmark.py` supports bounded multi-sender measurements with `--senders N`.
+These results describe capacity on the measured host only. They do not prove availability, safety,
+quorum liveness or production readiness, and must not be substituted for the separate-machine
+procedure in `docs/MACCHINE-SEPARATE.md`.
+
 ## Monitoring
 
 Logs go to standard error, one JSON object per line. Use `/healthz` for process liveness and
