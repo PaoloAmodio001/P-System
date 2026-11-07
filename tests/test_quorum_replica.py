@@ -130,7 +130,7 @@ def test_failed_write_gives_no_signature(path, members, committee, monkeypatch):
         network.quorum.Vote, "create", lambda *args: signed.append(args)
     )
 
-    def fail(_event, _signed=None):
+    def fail(_event, _signed=None, _gathering=False):
         raise VoteStoreError("disk full")
 
     monkeypatch.setattr(replica._store, "record_vote", fail)
