@@ -98,3 +98,23 @@ upgrade a claim in `docs/CLAIM-TRACEABILITY.md`.
   pass. The test is part of `pytest -q` before a release.
 - Rollback: remove the marker and the skip only if CI provides a dedicated Docker runner.
 - Evidence: `tests/test_readme_end_to_end.py`, `EMPIRICAL when Docker is available`.
+
+## D-007: Liveness remains conditional; no timeout or conflict choice is added
+
+- Date: 2026-11-07
+- Context: The liveness proposal in `docs/LIVENESS-PROPOSAL.md` was checked against the current
+  protocol. Durable votes, bounded resends, gathering across a restart and certificate
+  synchronization already exist. The only code gap found was the permanent buffer of an event
+  that can never execute, closed in D-001. A sender that equivocates, a missing parent, missing
+  funds and a split governance still block.
+- Options:
+  1. Add a timeout that picks an alternative after a while. This is a new protocol rule, can
+     choose between conflicting versions and needs a consensus argument.
+  2. Keep the conditional property, document the assumptions and rely on retry and
+     synchronization.
+- Choice: option 2. No timeout, no automatic epoch recovery, no new promise. The proposal is
+  `EMPIRICAL` and the safety of a chosen alternative remains outside the model.
+- Rollback: none; a future timeout requires a Lean model, a protocol version and a positive test,
+  not a hidden retry.
+- Evidence: `docs/LIVENESS-PROPOSAL.md`, `tests/test_stuck_event.py`,
+  `tests/test_stuck_event_mutations.py`, `tests/test_quorum_differential_processes.py`.
