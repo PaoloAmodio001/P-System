@@ -470,6 +470,31 @@ def test_a_limiter_stays_in_bounded_memory():
     assert str(MAX_TRACKED_CLIENTS + 4) in limiter._clients
 
 
+def test_concurrent_tokens_do_not_double_consume():
+    import threading
+
+    limiter = RateLimiter(rate=0, burst=10, clock=Clock())
+    results = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(20)
+
+    def worker():
+        barrier.wait()
+        allowed = limiter.allow("client")
+        with lock:
+            results.append(allowed)
+
+    threads = [threading.Thread(target=worker) for _ in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sum(1 for r in results if r) == 10
+    assert sum(1 for r in results if not r) == 10
+    assert limiter.rejected == 10
+
+
 def test_a_pacer_lets_a_burst_through_and_then_waits():
     clock = Clock()
     waits = []
@@ -955,3 +980,40 @@ def test_a_node_that_dies_halfway_through_an_answer_is_a_failed_connection(start
     finally:
         thread.join(5)
         listener.close()
+
+
+def test_exhausted_tokens_return_structured_429(layout):
+    service = service_with(layout, api=("requests_per_second = 1", "burst = 1"))
+    service.start()
+    try:
+        urllib.request.urlopen(url(service), timeout=5).read()
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(url(service), timeout=5)
+        assert caught.value.code == 429
+        body = json.loads(caught.value.read())
+        assert body == {"error": "TOO MANY REQUESTS"}
+    finally:
+        service.stop()
+
+
+def test_invalid_token_returns_structured_401(layout):
+    (layout / "token").write_text("a" * 32)
+    (layout / "token").chmod(0o600)
+    service = service_with(
+        layout,
+        api=('host = "127.0.0.1"', 'token_file = "token"'),
+    )
+    service.start()
+    try:
+        request = urllib.request.Request(
+            url(service),
+            headers={"Authorization": "Bearer " + "b" * 32},
+        )
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=5)
+        assert caught.value.code == 401
+        body = json.loads(caught.value.read())
+        assert isinstance(body, dict)
+        assert body.get("error") == "TOKEN REQUIRED"
+    finally:
+        service.stop()
