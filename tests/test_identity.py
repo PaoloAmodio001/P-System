@@ -46,3 +46,15 @@ def test_wrong_key_rejected():
         signature,
         data,
     )
+
+
+def test_load_refuses_key_file_readable_by_others(tmp_path):
+    import pytest
+
+    key = tmp_path / "id.key"
+    Identity.create().save(key)
+    key.chmod(0o644)
+    with pytest.raises(ValueError, match="READABLE BY OTHERS"):
+        Identity.load(key)
+    with pytest.raises(ValueError, match="chmod 600"):
+        Identity.load(key)

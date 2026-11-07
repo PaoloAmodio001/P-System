@@ -64,7 +64,10 @@ class Identity:
         path = Path(path)
 
         if path.stat().st_mode & 0o077:
-            raise ValueError(f"KEY FILE IS READABLE BY OTHERS: {path}")
+            raise ValueError(
+                f"KEY FILE IS READABLE BY OTHERS: {path}. "
+                f"Remediation: chmod 600 {path} (do not auto-correct; fix permissions explicitly)."
+            )
 
         try:
             key = serialization.load_pem_private_key(path.read_bytes(), passphrase or None)
