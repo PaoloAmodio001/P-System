@@ -1881,6 +1881,7 @@ class QuorumDriver:
     RESEND_FIRST_SECONDS = 2.0
     RESEND_LONGEST_SECONDS = 30.0
     RESEND_MOST_IN_A_ROUND = 256
+    COLLECTION_TIMEOUT_SECONDS = 300.0
 
     """
     The protocol around a replica: takes messages, returns messages to send. It
@@ -2267,12 +2268,41 @@ class QuorumDriver:
                 # until it runs, since a restart would lose that certificate.
                 if known is None or known.event.canonical() != canonical:
                     forgotten.append(event.event_id())
+                continue
+
+            if now - pending.started >= self.COLLECTION_TIMEOUT_SECONDS:
+                votes_count = 0
+                aggregating = self._aggregating.get(canonical)
+                if aggregating is not None:
+                    votes_count = len(aggregating[1])
+                LOG.warning(
+                    "certificate_collection_timeout",
+                    extra={
+                        "sender": event.sender,
+                        "nonce": event.nonce,
+                        "event_id": event.event_id(),
+                        "epoch": self.committee.epoch,
+                        "age_seconds": now - pending.started,
+                        "votes": votes_count,
+                    },
+                )
+                del self._to_resend[canonical]
+                self._aggregating.pop(canonical, None)
+                forgotten.append(event.event_id())
+                continue
+
+            if forgotten:
+                try:
+                    self.replica.forget_gathering(forgotten)
+                except VoteStoreError as error:
+                    # A row too many only asks again, after a restart, and is forgotten then.
+                    LOG.error("cannot forget what was gathering", extra={"reason": str(error)})
+                forgotten = []
 
         if forgotten:
             try:
                 self.replica.forget_gathering(forgotten)
             except VoteStoreError as error:
-                # A row too many only asks again, after a restart, and is forgotten then.
                 LOG.error("cannot forget what was gathering", extra={"reason": str(error)})
 
         # The one waiting longest first, so that events that will never get a quorum, however many,
@@ -2665,11 +2695,25 @@ class QuorumDriver:
 
         event, votes = aggregating
 
+        if not self.committee.has_validator(vote.validator):
+            self._cost += BAD_SIGNATURE_COST
+            LOG.warning(
+                "vote.rejected",
+                extra={
+                    "reason": "validator_outside_committee_epoch",
+                    "validator": vote.validator,
+                    "epoch": self.committee.epoch,
+                    "sender": event.sender,
+                    "nonce": event.nonce,
+                },
+            )
+            return _NOTHING
+
         if not vote.verify(self.committee, event):
             self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
-        # By validator, so that the same one twice counts once.
+        # By validator, so that the same one twice counts once (idempotent).
         votes[vote.validator] = vote
         certificate = self._complete(event, votes)
 
