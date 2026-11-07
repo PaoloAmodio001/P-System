@@ -20,7 +20,9 @@ from urllib.parse import unquote
 
 from core.attestation import EpochChange
 from core.decision_status import DecisionStatus
+from core.exceptions import SupplyViolation
 from core.signed_event import SignedTransfer
+from network.audit import AuditLog
 from network.deployment import NodeConfig
 from network.message import (
     decode_epoch_change,
@@ -208,6 +210,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.server.limiter.allow(self.client_address[0]):
             return True
 
+        self._audit("api.rate_limited", path=self.path.split("?", 1)[0])
         # The body, if any, stays unread, so this connection cannot be used again.
         self.close_connection = True
         data = json.dumps({"error": "TOO MANY REQUESTS"}, sort_keys=True).encode()
@@ -227,7 +230,28 @@ class _Handler(BaseHTTPRequestHandler):
             return True
 
         given = self.headers.get("Authorization", "")
-        return hmac.compare_digest(given.encode(), f"Bearer {token}".encode())
+        authorized = hmac.compare_digest(given.encode(), f"Bearer {token}".encode())
+
+        if not authorized:
+            self._audit("api.unauthorized", path=self.path.split("?", 1)[0])
+
+        return authorized
+
+    def _audit(self, action: str, **fields) -> None:
+        audit = getattr(self.server, "audit", None)
+
+        if audit is None:
+            return
+
+        try:
+            audit.append(
+                action,
+                request_id=self.request_id,
+                client=self.client_address[0],
+                **fields,
+            )
+        except (OSError, ValueError, TypeError) as error:
+            LOG.error("audit write failed", extra={"reason": str(error)})
 
     def _read_json(self):
         try:
@@ -418,6 +442,17 @@ class _Handler(BaseHTTPRequestHandler):
                 accepted = self.node.submit(events[0])
             else:
                 accepted = self.node.submit_many(events) > 0
+        except SupplyViolation as error:
+            self._reply(
+                422,
+                {
+                    "error": "SUPPLY_VIOLATION",
+                    "violated": error.violated,
+                    "delta": error.delta,
+                    "event_ids": [event.transfer.event_id() for event in events],
+                },
+            )
+            return
         except VoteStoreError as error:
             LOG.error("durable write failed", extra={"reason": str(error)})
             self._reply(503, {"error": "THE NODE CANNOT WRITE TO ITS DISK"})
@@ -446,6 +481,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(409, {"accepted": False})
             return
 
+        self._audit("epoch.change.ordered", change_id=change.change_id)
         self._reply(202, {"accepted": True, "change_id": change.change_id})
 
 
@@ -509,6 +545,8 @@ class Service:
         self._api.node = self.node
         self._api.token = config.api.token
         self._api.limiter = RateLimiter(config.api.requests_per_second, config.api.burst)
+        self.audit = AuditLog(config.store.with_name(f"{config.store.name}.audit.jsonl"))
+        self._api.audit = self.audit
 
         if config.api.tls_certificate is not None:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -535,6 +573,14 @@ class Service:
         self._api_thread = threading.Thread(target=self._api.serve_forever, daemon=True)
         self._api_thread.start()
         self._api.started = True
+        self.audit.append(
+            "service.started",
+            node_id=self.config.node_id,
+            port=self.node.port,
+            api_port=self.api_address[1],
+            epoch=self.node.committee_epoch,
+            genesis_hash=self.config.genesis.file_hash,
+        )
         LOG.info(
             "node started",
             extra={
@@ -551,6 +597,8 @@ class Service:
         self._api.shutdown()
         self._api.server_close()
         self.node.stop()
+        self.audit.append("service.stopped", node_id=self.config.node_id)
+        self.audit.close()
         LOG.info("node stopped", extra={"node_id": self.config.node_id})
 
     def wait_until_stopped(self, stop_event: threading.Event) -> None:

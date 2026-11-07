@@ -1,7 +1,22 @@
-from core.state import State
+from core.exceptions import SupplyViolation
+from core.state import State, account_asset
 from core.event import Transfer, deduplicate_events
 from core.resolver import ConflictResolver
 
+
+
+
+def check_supply_conservation(event: Transfer) -> None:
+    """Raise SupplyViolation if the event crosses declared asset account sets."""
+    sender_asset = account_asset(event.sender)
+    receiver_asset = account_asset(event.receiver)
+    if sender_asset != receiver_asset:
+        violated = {}
+        if sender_asset is not None:
+            violated[sender_asset] = -event.amount
+        if receiver_asset is not None:
+            violated[receiver_asset] = event.amount
+        raise SupplyViolation(violated=violated, delta=event.amount)
 
 class StateDeriver:
     @staticmethod
@@ -56,6 +71,7 @@ class StateDeriver:
     @staticmethod
     def _execution_failure(state: State, event: Transfer) -> str | None:
         """Return why `event` cannot execute on `state`, or None."""
+        check_supply_conservation(event)
         expected_nonce = state.nonce(event.sender)
 
         if event.nonce != expected_nonce:
@@ -106,6 +122,7 @@ class StateDeriver:
 
             if event.sender == event.receiver:
                 raise ValueError("INVALID TRANSFER")
+            check_supply_conservation(event)
 
         by_id = {event.event_id(): event for event in ordered}
         pending_parents = {
@@ -157,6 +174,7 @@ class StateDeriver:
 
     @staticmethod
     def _apply_one(state: State, event: Transfer) -> None:
+        check_supply_conservation(event)
         state.balances[event.sender] = state.balance(event.sender) - event.amount
 
         state.balances[event.receiver] = (
