@@ -22,7 +22,7 @@ from core.attestation import EpochChange
 from core.decision_status import DecisionStatus
 from core.exceptions import SupplyViolation
 from core.signed_event import SignedTransfer
-from network.audit import AuditLog
+from network.audit import AuditError, AuditLog
 from network.deployment import NodeConfig
 from network.message import (
     decode_epoch_change,
@@ -545,7 +545,14 @@ class Service:
         self._api.node = self.node
         self._api.token = config.api.token
         self._api.limiter = RateLimiter(config.api.requests_per_second, config.api.burst)
-        self.audit = AuditLog(config.store.with_name(f"{config.store.name}.audit.jsonl"))
+        audit_path = config.store.with_name(f"{config.store.name}.audit.jsonl")
+        try:
+            self.audit = AuditLog(audit_path)
+        except AuditError as error:
+            raise RuntimeError(
+                f"AUDIT INTEGRITY CHECK FAILED AT STARTUP: {audit_path}: {error}. "
+                "The node will not start and no further writes were made."
+            ) from None
         self._api.audit = self.audit
 
         if config.api.tls_certificate is not None:
