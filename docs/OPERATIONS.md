@@ -139,6 +139,17 @@ API socket is not exposed; once exposed, a halted node returns `503` from both e
 | `psystem_vote_requests_resent_total` | Growing fast: messages are being lost, or an event cannot get a quorum |
 | `psystem_connections_replaced_total` | Growing: two nodes keep calling each other at once, or something cuts connections |
 
+The security audit log is next to the store, `<store>.audit.jsonl`, mode 0600. It records `service.started`,
+`service.stopped`, `api.unauthorized`, `api.rate_limited` and `epoch.change.ordered`, with a SHA-256 chain. Check it after
+an incident, before rotating or deleting it:
+
+```
+python -c "from pathlib import Path; from network.audit import AuditLog; print(AuditLog.verify(Path('votes.sqlite.audit.jsonl')))"
+```
+
+An edit makes the command fail. Deleting the file is not detectable from the node: keep a copy off the machine if the
+operator needs evidence against a local attacker.
+
 ## Failures
 
 ### A node is down
@@ -156,6 +167,8 @@ The node asks again for the votes of what it took, at least every 30 s, and acro
 
 1. `psystem_peers_connected` below `2f`, or nodes down: bring them back. The event goes on by itself.
 2. `psystem_equivocations` above 0: the sender may have signed two versions, and the votes may be split. **No alternative may ever reach a quorum, and no node chooses.** The event stays until the epoch ends. To clear it, close the epoch: that is a decision of governance.
+
+**Nonce locked permanently (split votes, no unlock).** In standard mode (`3f+1`), if validators report divergent votes for the same `(sender, nonce)` and the epoch closes without `unlock` (`5f+1`), the closure installs conflicting locks and that nonce has no safe transition out. The node logs `nonce.locked_permanently` (sender, nonce, epoch, reason=`split_votes_no_unlock`, divergent_votes, versions). Operator response: treat it as a stuck sender/nonce; do not attempt nonce recovery by rewriting state. Resolution requires governance/application handling (for example a new epoch/account flow outside that nonce) and, for future epochs, consider `--unlock` only with its safety/capacity tradeoffs understood. Do not implement automatic timeout recovery.
 3. Neither: look at `psystem_connections_replaced_total` and at the logs of the peers.
 
 ### The disk is full, or fails

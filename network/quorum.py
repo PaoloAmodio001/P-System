@@ -1684,7 +1684,64 @@ class QuorumReplica:
         return self._store.reported_change()
 
     def install_closure(self, closure: EpochClosure) -> None:
+        closing = self._store.committee
+        epoch = closing.epoch
         self._store.install_closure(closure)
+        self._log_permanently_locked_nonces(closing, closure, epoch)
+
+    def _log_permanently_locked_nonces(
+        self,
+        committee: Committee,
+        closure: EpochClosure,
+        epoch: int,
+    ) -> None:
+        by_key: dict[tuple[str, int], dict[bytes, int]] = {}
+        for report in closure.reports:
+            seen: set[tuple[tuple[str, int], bytes]] = set()
+            for signed in report.votes:
+                event = signed.transfer
+                key = (event.sender, event.nonce)
+                canonical = event.canonical()
+                marker = (key, canonical)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                by_key.setdefault(key, {})
+                by_key[key][canonical] = by_key[key].get(canonical, 0) + 1
+
+        if committee.unlock:
+            threshold = 2 * committee.f + 1
+            for (sender, nonce), counts in sorted(by_key.items()):
+                supported = sum(1 for n in counts.values() if n >= threshold)
+                if len(counts) > 1 and supported == 0:
+                    # split but freed by unlock (not permanently locked)
+                    LOG.info(
+                        "nonce.split_unlocked",
+                        extra={
+                            "sender": sender,
+                            "nonce": nonce,
+                            "epoch": epoch,
+                            "divergent_votes": sum(counts.values()),
+                            "versions": len(counts),
+                        },
+                    )
+            return
+
+        for (sender, nonce), counts in sorted(by_key.items()):
+            if len(counts) <= 1:
+                continue
+            divergent = sum(counts.values())
+            LOG.error(
+                "nonce.locked_permanently",
+                extra={
+                    "sender": sender,
+                    "nonce": nonce,
+                    "epoch": epoch,
+                    "reason": "split_votes_no_unlock",
+                    "divergent_votes": divergent,
+                    "versions": len(counts),
+                },
+            )
 
     def committee_before_last(self) -> Committee:
         return self._store.committee_at(self.committee.epoch - 1)
