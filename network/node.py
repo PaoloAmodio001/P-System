@@ -122,6 +122,7 @@ class Node:
         self._reconnect_state: dict[str, PeerReconnectState] = {}
 
         # Background supervisor for automatic peer reconnection.
+        self._new_connection = False
         self._reconnect_thread = None
         self._reconnect_running = False
         self._reconnect_stop_event = threading.Event()
@@ -283,14 +284,11 @@ class Node:
                     peer.node_id
                 )
 
+                # A live connection stays, whoever opened it. Calling back to get the preferred one
+                # closed a connection in use, and what was on it was lost. The rule for the preferred
+                # one is for two calls at once, in `_register_peer_connection`.
                 if connection is not None and connection.connected:
-                    prefer_outgoing = self.node_id < peer.node_id
-                    connection_is_preferred = (
-                        getattr(connection, "initiated_locally", True)
-                        == prefer_outgoing
-                    )
-                    if connection_is_preferred or not prefer_outgoing:
-                        continue
+                    continue
 
                 with self._reconnect_state_lock:
                     state = self._reconnect_state.setdefault(
@@ -799,6 +797,7 @@ class Node:
         # non vede mai una connessione nuova con attempts residui.
         self._record_reconnect_success(node_id)
         self.peer_connections[node_id] = connection
+        self._new_connection = True
 
     def _peer_disconnected(self, connection) -> None:
         with self._peer_connections_lock:
@@ -1428,6 +1427,11 @@ class Node:
         def call():
             if self._quorum.closed:
                 return _NOTHING_SENT
+
+            if self._new_connection:
+                self._new_connection = False
+                self._quorum.driver.resend_soon()
+
             return self._quorum.driver.retry()
 
         self._send_quorum_output(self._driver_call(call), None)

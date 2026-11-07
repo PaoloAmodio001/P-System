@@ -1692,11 +1692,26 @@ class DriverOutput:
 _NOTHING = DriverOutput()
 
 
+@dataclass
+class _Resend:
+    """An event this node asks votes for, and when to ask again."""
+
+    signed: SignedTransfer
+    due: float
+    wait: float
+
+
 class QuorumDriver:
     # How long a closure in progress waits before what it needs is sent again.
     EPOCH_RETRY_SECONDS = 10.0
     # How long a snapshot is asked for before starting another: members behind catch up meanwhile.
     SNAPSHOT_ASK_SECONDS = 60.0
+    # An event with no certificate is asked for again after this long, then twice as long each time
+    # up to the second number, because it may never get one. At most this many requests in a round,
+    # so a node that is behind on many events pays for it slowly. Values chosen by judgement.
+    RESEND_FIRST_SECONDS = 2.0
+    RESEND_LONGEST_SECONDS = 30.0
+    RESEND_MOST_IN_A_ROUND = 256
 
     """
     The protocol around a replica: takes messages, returns messages to send. It
@@ -1710,6 +1725,12 @@ class QuorumDriver:
     is lost, nobody completes the certificate until someone submits the event
     elsewhere. What it aggregated is in memory and lost at a restart, and the
     remedy is to submit again: a new vote gives the same signature.
+
+    While it lives, it asks again for what has no certificate, since a message can be lost with
+    its connection and the synchronization carries only certificates. A validator can answer as
+    often as it is asked: `voteAllowed` admits the event it already voted for and no other, and
+    `no_double_spend` holds for any list of inputs, so a repeated request is one more input. This
+    makes a certificate more likely. It promises none: see `honest_sender_certifies`.
 
     The buffer has a limit, and that does not make the result depend on the order of arrival: a
     certificate left out comes back with synchronization, and one that can run is never left out.
@@ -1763,6 +1784,7 @@ class QuorumDriver:
         self.signed_events: dict[str, SignedTransfer] = {}
         self._first_signed: dict[tuple[str, int], SignedTransfer] = {}
         self._aggregating: dict[bytes, tuple[Transfer, dict[int, Vote]]] = {}
+        self._to_resend: dict[bytes, _Resend] = {}
         self._buffer: dict[str, QuorumCertificate] = {}
         # The same, by sender and nonce: only the next nonce of a sender can run.
         self._waiting: dict[str, dict[int, str]] = {}
@@ -2014,7 +2036,47 @@ class QuorumDriver:
         """Call it now and then: what is in progress goes on."""
         epoch = self._retry_epoch()
         snapshot = self._snapshot_tick()
-        return DriverOutput(broadcasts=(*epoch.broadcasts, *snapshot.broadcasts))
+        return DriverOutput(
+            broadcasts=(*epoch.broadcasts, *snapshot.broadcasts, *self._resend_requests()),
+        )
+
+    def resend_soon(self) -> None:
+        """A new connection: what was lost on the old one need not wait for its turn."""
+        for pending in self._to_resend.values():
+            pending.due = self._clock()
+            pending.wait = self.RESEND_FIRST_SECONDS
+
+    def _resend_requests(self) -> list[dict]:
+        # A halt empties the aggregation, so nothing is asked for after one.
+        now = self._clock()
+        state = self.replica.state
+
+        for canonical, pending in list(self._to_resend.items()):
+            event = pending.signed.transfer
+
+            # An event certified by another route, or another version certified, or a closure that
+            # took away the votes: no request can help any more.
+            if (
+                canonical not in self._aggregating
+                or (event.sender, event.nonce) in self._known
+                or state.nonce(event.sender) > event.nonce
+            ):
+                del self._to_resend[canonical]
+                self._aggregating.pop(canonical, None)
+
+        # The one waiting longest first, so that events that will never get a quorum, however many,
+        # do not take the turn of the others: once asked, they go to the back.
+        due = heapq.nsmallest(
+            self.RESEND_MOST_IN_A_ROUND,
+            (pending for pending in self._to_resend.values() if pending.due <= now),
+            key=lambda pending: (pending.due, pending.signed.transfer.nonce),
+        )
+
+        for pending in due:
+            pending.wait = min(2 * pending.wait, self.RESEND_LONGEST_SECONDS)
+            pending.due = now + pending.wait
+
+        return [encode_vote_request(pending.signed) for pending in due]
 
     def _retry_epoch(self) -> DriverOutput:
         """
@@ -2307,6 +2369,14 @@ class QuorumDriver:
         if certificate is not None:
             return DriverOutput(broadcasts=(encode_certificate(certificate),))
 
+        self._to_resend.setdefault(
+            event.canonical(),
+            _Resend(
+                signed,
+                self._clock() + self.RESEND_FIRST_SECONDS,
+                self.RESEND_FIRST_SECONDS,
+            ),
+        )
         return DriverOutput(broadcasts=(encode_vote_request(signed),))
 
     def record_evidence(self, signed: SignedTransfer) -> bool:

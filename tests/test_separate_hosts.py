@@ -5,6 +5,12 @@ when and what. What can run here is that the files are what a node reads, that t
 are what they should be, and that a measure says what really happened, on real processes.
 """
 
+import json
+import os
+import signal
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +22,7 @@ from scripts import make_host_deployment as hosts_module
 from scripts import measure_network as measure_module
 from scripts import netem_lab as lab
 from sdk.client import Client
+from tests import failure_evidence as evidence
 from tests.deployment_helpers import Deployment, wait_until
 
 HOSTS = {f"node-{i}": f"10.0.0.{i + 1}" for i in range(4)}
@@ -140,7 +147,9 @@ def running(tmp_path):
         else Client(made.api_url(index))
         for index in range(made.count)
     ]
-    measure_module.wait_connected(clients)
+    with evidence.evidence_on_failure(made, clients, made.sender["account"], lambda: 0, "not-connected"):
+        measure_module.wait_connected(clients)
+
     yield made, clients
     made.stop_all()
 
@@ -155,14 +164,18 @@ def test_a_measure_on_real_processes_says_what_happened(running):
     def heal():
         made.start(3, create=False)
 
-    results = measure_module.measure_all(clients, sender, 3, 50, 20, isolate, heal)
-    assert results["same_state_on_all"]
-    assert results["latency"]["events"] == 3
-    assert results["latency"]["median_ms"] > 0
-    assert results["throughput"]["events_per_second"] > 0
-    assert results["recovery"]["events_missed"] == 20
     account = sender.identity.identity_id
-    assert all(client.account(account)["next_nonce"] == 73 for client in clients)
+
+    with evidence.evidence_on_failure(
+        made, clients, account, lambda: sender.next_nonce, "a-measure-on-real-processes"
+    ):
+        results = measure_module.measure_all(clients, sender, 3, 50, 20, isolate, heal)
+        assert results["same_state_on_all"]
+        assert results["latency"]["events"] == 3
+        assert results["latency"]["median_ms"] > 0
+        assert results["throughput"]["events_per_second"] > 0
+        assert results["recovery"]["events_missed"] == 20
+        assert all(client.account(account)["next_nonce"] == 73 for client in clients)
 
 
 def test_isolation_that_cuts_off_nothing_is_an_error(running):
@@ -194,14 +207,20 @@ def test_waiting_ends_with_an_error_and_not_for_ever():
         measure_module.wait_for([client], "x", 1, 0.05)
 
 
-class Answering:
+class Answering(Client):
     """A client that says one thing."""
 
-    def __init__(self, nonce):
+    def __init__(self, nonce, root="same", executed=None, url="http://127.0.0.1:9"):
+        super().__init__(url, timeout=0.05)
         self.nonce = nonce
+        self.root = root
+        self.executed = nonce if executed is None else executed
 
     def account(self, _account):
         return {"next_nonce": self.nonce}
+
+    def status(self):
+        return {"state_root": self.root, "executed": self.executed}
 
 
 def test_waiting_is_for_every_node_and_not_only_the_first():
@@ -256,3 +275,270 @@ def test_a_sender_counts_its_nonces():
     sender = measure_module.Sender(identity, 5)
     assert sender.next().transfer == Transfer(identity.identity_id, "receiver", 1, 5)
     assert sender.next_nonce == 6
+
+
+# --- What a failure says ---------------------------------------------------------------------------
+
+
+def verdicts(diagnosis):
+    return [node["verdict"] for node in diagnosis["nodes"]]
+
+
+def test_no_answer_is_not_the_same_as_an_event_not_run():
+    silent = Client("http://127.0.0.1:9", timeout=0.05)
+    diagnosis = measure_module.diagnose([silent, Answering(1), Answering(5)], "x", 5)
+    assert verdicts(diagnosis) == [
+        measure_module.API_NOT_ANSWERING,
+        measure_module.EVENT_NOT_RUN,
+        measure_module.EVENT_RUN,
+    ]
+
+
+def test_an_error_from_the_api_is_an_answer():
+    class Refusing(Answering):
+        def account(self, _account):
+            raise measure_module.ApiError(503, {"error": "no"})
+
+    assert verdicts(measure_module.diagnose([Refusing(0)], "x", 1)) == [measure_module.API_ERROR]
+
+
+def test_waiting_ends_with_what_each_node_said():
+    silent = Client("http://127.0.0.1:9", timeout=0.05)
+
+    with pytest.raises(measure_module.TimedOut, match="2 NODES NOT AT NONCE 5") as caught:
+        measure_module.wait_for([silent, Answering(3), Answering(5)], "x", 5, 0.05)
+
+    assert f"1 {measure_module.API_NOT_ANSWERING}" in str(caught.value)
+    assert f"1 {measure_module.EVENT_NOT_RUN}" in str(caught.value)
+    nodes = caught.value.diagnosis["nodes"]
+    assert nodes[0]["while_waiting"]["unanswered"] == nodes[0]["while_waiting"]["polls"] > 0
+    assert nodes[0]["while_waiting"]["last_nonce"] is None
+    assert nodes[1]["while_waiting"]["unanswered"] == 0
+    assert nodes[1]["while_waiting"]["last_nonce"] == 3
+
+
+def test_a_watch_knows_when_a_node_last_moved():
+    watch = measure_module.Watch()
+    assert watch.see(3) == 3
+    assert watch.see(None) is None
+    moved = watch.last_progress
+    watch.see(3)
+    assert watch.last_progress == moved
+    watch.see(4)
+    assert watch.last_progress > moved
+    assert watch.report()["unanswered"] == 1
+
+
+def test_roots_that_differ_at_the_same_point_are_a_disagreement():
+    diagnosis = measure_module.diagnose([Answering(5, "a"), Answering(5, "b"), Answering(5, "a")], "x", 5)
+    assert diagnosis["states"]["disagreements"][0]["next_nonce"] == 5
+    assert "STATE ROOTS DIFFER" in measure_module.summary_of(diagnosis)
+
+
+def test_a_node_behind_is_no_disagreement_and_is_not_said_to_agree():
+    behind = Answering(3, "old", url="http://127.0.0.1:8")
+    diagnosis = measure_module.diagnose([Answering(5, "a"), Answering(5, "a"), behind], "x", 5)
+    assert diagnosis["states"]["disagreements"] == []
+    assert diagnosis["states"]["not_compared"] == [behind.base_url]
+    assert "DIFFER" not in measure_module.summary_of(diagnosis)
+
+
+def test_a_node_that_moved_during_the_reading_is_not_compared():
+    class Moving(Answering):
+        def account(self, _account):
+            self.nonce += 1
+            return {"next_nonce": self.nonce}
+
+    moving = Moving(4, "other", executed=6, url="http://127.0.0.1:8")
+    diagnosis = measure_module.diagnose([Answering(6, "a"), Answering(6, "a"), moving], "x", 6)
+    assert diagnosis["nodes"][2]["moving"]
+    assert diagnosis["states"]["disagreements"] == []
+    assert moving.base_url in diagnosis["states"]["not_compared"]
+
+
+def test_a_failure_is_kept_even_with_a_log_that_cannot_be_had(tmp_path):
+    log = tmp_path / "n0" / "node.log"
+    log.parent.mkdir()
+    log.write_text("what it said\n")
+    missing = tmp_path / "n1" / "node.log"
+    out = tmp_path / "failure"
+    collect = 'echo fetched > "$PSYSTEM_FAILURE_DIR/fetched.log"; exit 7'
+    measure_module.save_failure(out, ValueError("x"), {"nodes": []}, [log, missing], collect)
+    assert (out / "n0-node.log").read_text() == "what it said\n"
+    assert (out / "fetched.log").read_text() == "fetched\n"
+    report = json.loads((out / "diagnosis.json").read_text())
+    assert "ValueError" in report["error"]
+    assert [entry["log"] for entry in report["logs_missing"]] == [str(missing), collect]
+
+
+def test_the_script_says_what_failed_and_keeps_it(tmp_path, monkeypatch, capsys):
+    key = tmp_path / "sender.key"
+    Identity.create().save(key)
+    token = tmp_path / "token"
+    token.write_text("t\n")
+    out = tmp_path / "failure"
+    monkeypatch.setattr(sys, "argv", [
+        "measure_network.py",
+        "--sender-key", str(key),
+        "--api", f"http://127.0.0.1:9={token}",
+        "--failure-dir", str(out),
+        "--collect-logs", 'touch "$PSYSTEM_FAILURE_DIR/collected"',
+    ])
+    assert measure_module.main() == measure_module.MEASURE_FAILED
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    said = json.loads(printed.err.splitlines()[-1])
+    assert verdicts(said["at_the_end"]) == [measure_module.API_NOT_ANSWERING]
+    assert json.loads((out / "diagnosis.json").read_text())["error"] == said["error"]
+    assert (out / "collected").exists()
+
+
+def test_the_lab_asks_each_node_for_its_threads_before_its_log():
+    text = lab.collect_logs_command()
+
+    for index in range(lab.COUNT):
+        assert f"{lab.PROJECT}-node-{index}-1" in text
+
+    assert text.index("docker kill -s USR1") < text.index("docker logs")
+    assert "$PSYSTEM_FAILURE_DIR" in text
+
+
+@pytest.fixture
+def stuck(tmp_path, monkeypatch):
+    """A real event that cannot run: two of four nodes dead, so no quorum, and the two left only wait."""
+    monkeypatch.setenv("PSYSTEM_FAILURE_DIR", str(tmp_path / "kept"))
+    made = Deployment(tmp_path)
+    made.start_all()
+    clients = [Client(made.api_url(index), timeout=1.0) for index in range(made.count)]
+    measure_module.wait_connected(clients)
+    sender = measure_module.Sender(Identity.load(made.sender_key))
+    clients[0].submit(sender.next())
+    measure_module.wait_for(clients, sender.identity.identity_id, 1, 30.0)
+    made.kill(2)
+    made.kill(3)
+    clients[0].submit(sender.next())
+    yield made, clients, sender, tmp_path / "kept"
+    made.stop_all()
+
+
+def test_on_real_processes_a_dead_node_and_an_event_stuck_are_told_apart(stuck):
+    made, clients, sender, _ = stuck
+    account = sender.identity.identity_id
+
+    with pytest.raises(measure_module.TimedOut) as caught:
+        measure_module.wait_for(clients, account, sender.next_nonce, 0.5)
+
+    assert verdicts(caught.value.diagnosis) == [
+        measure_module.EVENT_NOT_RUN,
+        measure_module.EVENT_NOT_RUN,
+        measure_module.API_NOT_ANSWERING,
+        measure_module.API_NOT_ANSWERING,
+    ]
+    assert caught.value.diagnosis["states"]["disagreements"] == []
+    assert caught.value.diagnosis["nodes"][0]["metrics"]["psystem_peers_connected"] == 1
+
+
+def test_on_real_processes_an_api_that_hangs_is_not_an_event_not_run(running):
+    # The process is alive and the port is open, and it does not answer: not what a dead node looks like.
+    made, clients = running
+    made.processes[1].send_signal(signal.SIGSTOP)
+
+    try:
+        slow = [Client(made.api_url(index), timeout=0.5) for index in range(made.count)]
+        diagnosis = measure_module.diagnose(slow, made.sender["account"], 1)
+    finally:
+        made.processes[1].send_signal(signal.SIGCONT)
+
+    assert verdicts(diagnosis)[1] == measure_module.API_NOT_ANSWERING
+    assert verdicts(diagnosis)[0] == measure_module.EVENT_NOT_RUN
+    assert evidence.process_states(made)["node-1"] == "running"
+
+
+def test_a_test_that_fails_leaves_what_its_nodes_said(stuck, capsys):
+    made, clients, sender, kept = stuck
+    account = sender.identity.identity_id
+
+    with pytest.raises(measure_module.TimedOut) as caught:
+        with evidence.evidence_on_failure(made, clients, account, lambda: sender.next_nonce, "stuck"):
+            measure_module.wait_for(clients, account, sender.next_nonce, 0.5)
+
+    directory = next(kept.iterdir())
+    report = json.loads((directory / "diagnosis.json").read_text())
+    assert report["error"] == repr(caught.value)
+    assert report["when_it_gave_up"]["nonce"] == 2
+    assert report["processes"]["node-0"] == "running"
+    assert report["processes"]["node-2"] == "not running: stopped by the test"
+    # A store of a node that died by SIGKILL still has what it wrote.
+    assert (directory / "node-2-votes.sqlite").exists()
+
+    # Where the event stopped: on the two nodes that can vote, with no certificate on either.
+    row = next(row for row in report["stores"]["not_certified_everywhere"] if row["nonce"] == 1)
+    assert row["certified_by"] == []
+    assert {"node-0", "node-1"} <= set(row["voted_by"])
+    assert report["stores"]["different_events_for_a_nonce"] == []
+
+    # Both dumps of the threads got into the log that was kept, and into what pytest prints.
+    assert (directory / "n0-node.log").read_text().count("most recent call first") >= 2
+    printed = capsys.readouterr().out
+    assert str(directory) in printed
+    assert "LOG OF n0" in printed
+
+
+def test_a_test_that_passes_leaves_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("PSYSTEM_FAILURE_DIR", str(tmp_path / "kept"))
+
+    with evidence.evidence_on_failure(None, [], "x", lambda: 0, "fine"):
+        pass
+
+    assert not (tmp_path / "kept").exists()
+
+
+def test_a_failure_goes_on_also_when_the_evidence_cannot_be_saved(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("PSYSTEM_FAILURE_DIR", str(tmp_path))
+
+    with pytest.raises(ZeroDivisionError):
+        with evidence.evidence_on_failure(None, [], "x", lambda: 0, "broken"):
+            1 / 0
+
+    assert "EVIDENCE WAS NOT SAVED" in capsys.readouterr().out
+
+
+def test_stores_show_two_events_for_one_nonce():
+    compared = evidence.compare_stores(
+        {
+            "a": {"voted": {0: "one", 1: "two"}, "certified": {0: "one"}},
+            "b": {"voted": {0: "one", 1: "other"}, "certified": {0: "one"}},
+        },
+        3,
+    )
+    assert compared["voted_by_none"] == [2]
+    assert compared["different_events_for_a_nonce"] == [1]
+    assert compared["not_certified_everywhere"] == [
+        {"nonce": 1, "voted_by": ["a", "b"], "certified_by": []}
+    ]
+    assert compared["highest_nonce_seen"] == 1
+
+
+def test_a_copy_of_a_store_is_of_the_committed_data(tmp_path):
+    source = tmp_path / "source.sqlite"
+
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE t (x)")
+        connection.execute("INSERT INTO t VALUES (1)")
+
+    target = tmp_path / "copy.sqlite"
+    evidence.copy_store(source, target)
+
+    with sqlite3.connect(target) as connection:
+        assert connection.execute("SELECT x FROM t").fetchall() == [(1,)]
+
+
+def test_the_wait_of_a_measure_can_be_set_for_a_search():
+    done = subprocess.run(
+        [sys.executable, "-c", "from scripts.measure_network import LONG_WAIT_SECONDS as w; print(w)"],
+        cwd=evidence.ROOT,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PSYSTEM_MEASURE_WAIT_SECONDS": "7"},
+    )
+    assert done.stdout.strip() == "7.0", done.stderr

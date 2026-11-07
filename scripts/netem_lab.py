@@ -169,6 +169,15 @@ def heal_command(interface: str) -> str:
     return f"docker exec --privileged -u root {PROJECT}-router-1 ip link set {interface} up"
 
 
+def collect_logs_command() -> str:
+    """For a failed measure: the threads of each node, with SIGUSR1, then its log. Run by a shell."""
+    names = " ".join(f"{PROJECT}-node-{index}-1" for index in range(COUNT))
+    return (
+        f"for name in {names}; do docker kill -s USR1 $name; done; sleep 2; "
+        f'for name in {names}; do docker logs $name > "$PSYSTEM_FAILURE_DIR/$name.log" 2>&1; done'
+    )
+
+
 def measure(options) -> int:
     import os
 
@@ -192,6 +201,8 @@ def measure(options) -> int:
             "--recovery-events", str(options.recovery_events),
             "--isolate", isolate_command(interface),
             "--heal", heal_command(interface),
+            "--failure-dir", str(base / "measure-failure"),
+            "--collect-logs", collect_logs_command(),
         ]
 
         for index in range(COUNT):
@@ -203,7 +214,7 @@ def measure(options) -> int:
         output = subprocess.run(arguments, capture_output=True, text=True, timeout=3600)
 
         if output.returncode != 0:
-            raise RuntimeError(f"THE MEASURE FAILED: {output.stderr[-2000:]}")
+            raise RuntimeError(f"THE MEASURE FAILED, SEE {base / 'measure-failure'}: {output.stderr[-2000:]}")
 
         result = {
             "delay_ms_each_way": options.delay,

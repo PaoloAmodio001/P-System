@@ -55,7 +55,7 @@ authors of the code, and it is what an audit should start from and attack.
   tokens beyond `hmac.compare_digest`.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
-- **Liveness.** `honest_sender_certifies` assumes delivery, and says that the signatures make a valid certificate, not that anyone gathers them. Nothing promises progress against an adversarial network,
+- **Liveness.** `honest_sender_certifies` assumes delivery, and says that the signatures make a valid certificate, not that anyone gathers them. A node asks again for the events it took that have no certificate, within limits, which is EMPIRICAL and promises nothing: it does this only while it lives, and only for what it took. Nothing promises progress against an adversarial network,
   and a governance that signs two orders for one epoch can split the reports, which stops that epoch from closing for good.
 - **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. A signer can add locks nobody signed to a snapshot: that can only stop the node that takes it from voting on those nonces. A node that pruned cannot prove a conflict under its floor.
 - **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.

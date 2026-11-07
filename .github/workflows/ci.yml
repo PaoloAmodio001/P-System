@@ -57,3 +57,14 @@ jobs:
             echo "Tests were skipped" >&2
             exit 1
           fi
+
+      # Logs, stores and threads of the nodes of a test that failed: see tests/failure_evidence.py.
+      # Only what is in the folder, and that comes from the tests that use that file.
+      - name: Keep what a failed test left
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-failures/
+          if-no-files-found: ignore
+          retention-days: 30

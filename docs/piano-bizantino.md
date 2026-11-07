@@ -4,12 +4,94 @@
 
 Riepilogo: `docs/notte-2026-11-06.md`. Nessuna modifica a `core/`, `network/`, `formal/`, `sdk/`. **Modifiche:** procedura per quattro macchine, pagina per il revisore, elenco di ciò che manca, revisione delle prove Lean, dipendenze, proposta su `CLAUDE.md`, misure rifatte con i file grezzi, test corretti, nodi dei test che muoiono con il genitore, controllo degli assiomi della CI. **Problemi:** la CI della PR #3 è rossa per un difetto del controllo, non delle prove. Due difetti del prodotto annotati e non corretti. **Aperto:** merge e tag, enunciati Lean deboli. I difetti D1 e D2 sono stati corretti dopo, in `339a6b0`.
 
-**`OPEN`: un evento fermo per 10 minuti in un test su processi veri, una volta in CI, causa non accertata.** `tests/test_separate_hosts.py::test_a_measure_on_real_processes_says_what_happened`, sul commit `858be80`, [log della CI](https://github.com/PaoloAmodio001/P-System/actions/runs/42216234420). Il test ha visto, nella misura di throughput: `scripts.measure_network.TimedOut: 4 NODES NOT AT NONCE 53`, dopo i 600 secondi di `wait_for`. `1 failed, 3241 passed`.
+**`OPEN`: un evento fermo in un test su processi veri, una volta in CI, causa in CI non accertata.** `tests/test_separate_hosts.py::test_a_measure_on_real_processes_says_what_happened`, sul commit `858be80`, [log della CI](https://github.com/PaoloAmodio001/P-System/actions/runs/42216234420): `TimedOut: 4 NODES NOT AT NONCE 53` dopo 600 secondi di `wait_for`. `1 failed, 3241 passed`. Di quel giro non esistono né log né stati, quindi nulla di ciò che segue è una prova su quel fallimento.
 
-- **Progresso, per quanto si è visto.** Per tutti i 600 secondi nessuno dei quattro nodi ha riportato il nonce 53. Nessun disaccordo è stato osservato. **Il test però non lo esclude:** l'eccezione arriva prima del confronto `same_state_on_all`, e i log dei nodi di quel giro non esistono. Inoltre `next_nonce_of` conta come 0 anche un nodo la cui API non risponde, quindi "non eseguito" e "API ferma" non si distinguono.
-- **Riproduzione: non riuscita.** 60 esecuzioni su 60 passate su `339a6b0`, in un clone pulito, su 2 CPU con 2 processi che le occupano, con i log conservati in caso di fallimento. Le CI di `339a6b0` sono verdi.
-- **Ipotesi, non dimostrata:** quando un nodo sostituisce una connessione, `PeerConnection.close()` svuota la coda dei messaggi, nessuno li rinvia, e un evento può non raggiungere il quorum.
-- **Non corretto:** né il test né il prodotto, finché la causa non è capita. Per capirla servono i log dei nodi al prossimo fallimento: la CI oggi non li conserva.
+### Branch `diagnosi-blocco`, 2026-11-06. Solo test e script, nessuna modifica al prodotto
+
+**Modifiche.**
+
+- `scripts/measure_network.py`: alla scadenza, per ogni nodo, `API_NOT_ANSWERING`, `API_ERROR`, `EVENT_NOT_RUN` o `EVENT_RUN`, cosa ha detto durante l'attesa, e il confronto degli stati. Le radici si confrontano solo tra nodi allo stesso punto; gli altri sono elencati come non confrontati. Lo script esce con 3, con la diagnosi su stderr e in `--failure-dir`; `--node-log` e `--collect-logs` portano i log.
+- `tests/failure_evidence.py`: a ogni fallimento del test copia in `test-failures/` (o `$PSYSTEM_FAILURE_DIR`) log, store e diagnosi, con due dump dei thread via `SIGUSR1`. Confronta gli store nonce per nonce: chi ha votato, chi ha il certificato. Stampa il riassunto, così finisce nel log della CI.
+- `scripts/netem_lab.py`: passa i nuovi argomenti. **Il comando per Docker è controllato solo come testo, non eseguito.**
+- `scripts/probe_stuck_event.py`: le sonde qui sotto, ripetibili.
+
+**Misure, `EMPIRICAL`, su questa macchina con 4 CPU, Python 3.14, codice di `620c5eb` più la diagnosi.** Comandi: `python scripts/probe_stuck_event.py <modo>`.
+
+| Prova | Risultato |
+|---|---|
+| Il test intero ripetuto: libero, 2 CPU occupate, 1 CPU affollata | 160 esecuzioni, nessun evento fermo. Una sola fallita, all'avvio, per una porta presa da un'esecuzione parallela della prova stessa |
+| `cut --links 1`: 1 connessione di `node-0` tagliata durante una raffica di 50 | 0 ferme su 8 (e 0 su 8 con la prima sonda) |
+| `cut --links 2`: 2 connessioni | **8 ferme su 8**, con radici concordi e tutti con 3 peer, senza movimento per altri 15 s. La prima sonda: 16 ferme su 16 con 2 o 3 tagli, senza movimento per 90 s |
+| `resend`: gli stessi eventi inviati di nuovo a `node-0` | Sbloccati in circa 0,15 s, 4 su 4 |
+| `links`: **nessun guasto**, connessioni tra nodi finite dopo il ritorno di `wait_connected` | In 15 esecuzioni su 15, 20 connessioni in tutto, entro 0,19 s |
+| `burst --pause 0.02`: **nessun guasto**, raffica subito dopo `wait_connected` | **1 ferma su 100**; con le stesse condizioni 1 su 25 in una prova precedente. Con 0,05 s, 0,1 s, o da 0 s su 1 CPU occupata: 0 su 25 ciascuna. Con 0 s su 4 CPU libere: 0 su 15. Dopo tre eventi singoli, su 1 CPU occupata: 0 su 25 |
+
+**Cosa si è visto nei casi fermi.** Il nonce più basso è stato votato da tutti e quattro i nodi e nessuno ha il certificato. Solo `node-0` poteva formarlo, quindi i voti non gli sono arrivati o non li ha contati. Nessun disaccordo sugli stati, tutte le API rispondono, tutti vedono 3 peer. Il tempo osservato è al massimo 90 s: "per sempre" non è misurato, ma nel nodo non ho trovato nulla che rinvii i voti.
+
+**Ipotesi sul meccanismo, sostenuta ma non osservata direttamente.** Una connessione tra nodi si chiude poco dopo che i nodi si vedono. Ciò che era in coda o in volo si perde e nessuno lo rinvia: `PeerConnection.close()` svuota la coda, e la sincronizzazione porta certificati, non voti. Servono 2 peer su 3 persi per lo stesso nonce. Misurato: tagliare 2 connessioni basta, e senza guasti alcune connessioni si chiudono davvero. **Non misurato:** che nel caso senza guasti le connessioni chiuse siano proprio quelle di quel blocco, il motivo per cui si chiudono (i doppi collegamenti simultanei sono un'ipotesi), e se si perda la coda o i byte in volo. Il nodo non registra queste chiusure nel log, quindi **anche la nuova diagnosi non le mostrerà direttamente**: mostrerà il segno lasciato negli store.
+
+**Non dimostrato.**
+
+- **Che sia la causa del caso in CI.** La forma è la stessa, ma lì i tre eventi singoli erano già passati, e con eventi singoli prima della raffica non l'ho riprodotto. La finestra osservata qui è di 0,2 s: in CI potrebbe essere più lunga, oppure la causa è un'altra.
+- **Che la frequenza sia quella in CI.** 1 su 100 è una sonda costruita per cadere nella finestra.
+
+**Controlli su `48a6631`:** `pytest -q` 3297 passati in 1 h 10 min, comprese le mutazioni della diagnosi, e `lake build` riuscito. Prima del merge in `main`, su `ea2fa46`: CI verde e differenziali con `PSYSTEM_DIFF_SEEDS=15`, 97 passati.
+
+**Sicurezza:** nessun effetto osservato. **Liveness:** è un blocco di un mittente onesto, senza guasti, che il modello non esclude: non è una violazione di una proprietà dichiarata, ma limita l'uso reale, ed è presente in `v1.0.0-rc1`.
+
+### Branch `fix-blocco`, 2026-11-06. Correzione del blocco, nel prodotto
+
+Parte da `diagnosi-blocco`. **Stato del caso in CI: resta `OPEN`.** Il difetto qui sotto è reale e corretto; che fosse quello del giro in CI è compatibile, non dimostrato. Da ora la CI conserva le prove di un fallimento come artifact.
+
+**Causa, misurata.** Con contatori attorno a `PeerConnection`, in un lanciatore fuori dal repository: in 200 esecuzioni, tutte le 486 chiusure riguardano una connessione aperta dal nodo con id più alto. Il nodo più basso la riceve e poi, dal proprio `_reconnect_loop`, richiama, anche se la connessione funziona, e chiude quella in uso. In un blocco catturato (1 su 200), due connessioni di `node-0` sostituite a 8 ms di distanza hanno perso:
+
+| Dove | Messaggi |
+|---|---|
+| Coda svuotata alla chiusura | 9 voti |
+| Scritti e non letti dall'altro | 38 richieste, 1 voto |
+| Risposta a una connessione già chiusa, dedotto dai contatori | circa 50 voti |
+
+Spostare la coda sulla connessione che resta non sarebbe bastato.
+
+**Perché esisteva il richiamo.** `6ef4d53` non ha corpo nel messaggio e il piano non ne parla. I suoi test riguardano le chiamate simultanee, che la regola in `_register_peer_connection` risolve anche senza richiamo. Effetto collaterale trovato leggendo il codice: il richiamo sostituiva anche una connessione entrante morta in silenzio. Ora il nodo la scopre alla scrittura successiva della sincronizzazione.
+
+**Modifiche.**
+
+1. `network/node.py`: una connessione viva resta, chiunque l'abbia aperta.
+2. `network/quorum.py`: chi raccoglie i voti chiede di nuovo per gli eventi senza certificato: dopo 2 s, poi il doppio fino a 30 s, al massimo 256 richieste per giro, prima chi aspetta da più tempo. Una nuova connessione azzera l'attesa. Si smette con il certificato, con un'altra versione certificata, con l'arresto o la chiusura dell'epoca. I valori sono scelti a giudizio.
+3. `.github/workflows/ci.yml`: `test-failures/` come artifact se un test fallisce.
+
+**Prima e dopo, `EMPIRICAL`.**
+
+| Prova | Prima | Dopo |
+|---|---|---|
+| `test_a_burst_is_not_lost_to_a_call_back`, deterministico | `4 EVENT_NOT_RUN` per 20 s | Passa |
+| `test_a_burst_lost_with_two_connections_runs_all_the_same`, deterministico, senza il rinvio | `4 EVENT_NOT_RUN` per 20 s | Passa |
+| `links`: esecuzioni con una connessione chiusa dopo `wait_connected` | 15 su 15 | 0 su 30 |
+| `cut --links 2` e `--links 3`, durata 30 s | 8 su 8 ferme, per ciascuna | 0 su 16 |
+| `burst --pause 0.02` | 1 su 100, 1 su 25, 1 su 200 | 0 su 150 |
+
+Il dato `burst` da solo sarebbe poco: su eventi così rari, 0 su 150 è debole. Contano le prove deterministiche.
+
+**Il caso per cui il richiamo poteva servire.** `test_two_nodes_that_call_each_other_end_on_one_connection`: due nodi che si chiamano a vicenda finiscono su una sola connessione e ci restano, 5 su 5. `test_a_dead_connection_from_the_higher_id_does_not_keep_it_out`: una connessione morta non tiene fuori il peer, con la sincronizzazione. Il primo e il secondo passano anche prima della correzione.
+
+**Certificato formato e non consegnato: recuperato, `EMPIRICAL`.** `test_a_certificate_nobody_got_comes_with_the_synchronization`: il nodo che lo forma non lo invia a nessuno, e gli altri lo ricevono dalla sincronizzazione. Con la sincronizzazione spenta resta su un solo nodo: il test di controllo lo verifica.
+
+**Rivotare non viola i lock.** `voteAllowed` ammette l'evento già votato e nessun altro. `voteLock_runNode` e `no_double_spend` valgono per qualsiasi lista di input, quindi una richiesta ripetuta è solo un input in più. Nessun nuovo teorema. In Python `record_vote` non scrive una seconda riga e rifiuta un'altra versione, e una seconda firma dello stesso nodo conta una volta. Il differenziale già conteggia `vote repeated`.
+
+**Legame con `honest_sender_certifies`.** Nel blocco catturato, sui primi nonce, l'ipotesi di consegna valeva e la conclusione era vera, ma nessun certificato esisteva: il teorema non modella chi raccoglie le firme. La correzione lavora lì, e non dimostra né l'ipotesi né la raccolta. Il teorema resta `CONDITIONAL`, con la consegna come ipotesi esplicita, e il rinvio resta `EMPIRICAL`. Nessuna garanzia di liveness.
+
+**Limiti rimasti.**
+
+- **Riavvio:** chi raccoglie perde quanto aveva in memoria. Tocca al client inviare di nuovo.
+- **Nodo morto:** finché chi ha ricevuto l'evento non torna, nessuno raccoglie per lui. Il client deve inviare altrove.
+- **Chiusura di un'epoca:** svuota la raccolta, e i relativi eventi non vengono più chiesti.
+- **Mittente con due versioni:** può non arrivare mai a un quorum. Il rinvio continua ogni 30 s finché la voce non cade per i motivi sopra.
+- **Recupero lento su molti eventi:** 256 a giro, ogni 5 s con la configurazione predefinita: circa 51 eventi al secondo.
+- **Connessione morta in silenzio:** si scopre solo scrivendo, e se la rete scarta i pacchetti senza errore serve il timeout di TCP, perché non c'è keepalive. Senza sincronizzazione (`sync_interval = None`, non ammesso dalla configurazione del servizio) un peer resta fuori: `test_without_a_synchronization_a_dead_connection_keeps_a_peer_out`.
+- **Chiamate davvero simultanee:** la regola chiude ancora una delle due connessioni. Non osservato dopo la correzione, ma non escluso: lì copre il rinvio.
+- **Non rimisurato:** `docs/BENCHMARKS.md`.
+- **`v1.0.0-rc1` contiene il difetto.**
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
