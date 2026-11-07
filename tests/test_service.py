@@ -114,6 +114,43 @@ def test_healthz(service):
     assert raw(running, "GET", "/healthz")[0] == 200
 
 
+def test_readyz_is_public_without_authentication(service):
+    running, _, _ = service
+    status, body = raw(running, "GET", "/readyz")
+    assert status == 200
+    assert json.loads(body) == {"status": "ready"}
+
+
+def test_readyz_is_ready_after_start(service):
+    running, _, _ = service
+    status, body = raw(running, "GET", "/readyz")
+    assert status == 200
+    assert json.loads(body) == {"status": "ready"}
+
+
+def test_readyz_says_503_when_halted(service):
+    from network.message import encode_certificate
+    from core.attestation import QuorumCertificate, Vote
+
+    running, sender, members = service
+    committee = running.config.genesis.committee
+    ordered = sorted(members, key=lambda m: m.public_key)
+
+    def certificate(receiver):
+        event = spend(sender, 0, receiver).transfer
+        return QuorumCertificate(
+            event,
+            tuple(Vote.create(committee, ordered[i], event) for i in range(3)),
+        )
+
+    running.node._handle_peer_message(encode_certificate(certificate("a")))
+    running.node._handle_peer_message(encode_certificate(certificate("b")))
+
+    status, body = raw(running, "GET", "/readyz")
+    assert status == 503
+    assert json.loads(body)["status"] == "not_ready"
+
+
 def test_healthz_says_503_when_halted(service):
     from network.message import encode_certificate
     from core.attestation import QuorumCertificate, Vote

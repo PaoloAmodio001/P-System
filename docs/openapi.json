@@ -233,6 +233,36 @@
     }
    }
   },
+  "/readyz": {
+   "get": {
+    "security": [
+     {}
+    ],
+    "summary": "Ready to accept requests. Not limited, no token.",
+    "responses": {
+     "200": {
+      "description": "Ready",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "Not ready or halted",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/metrics": {
    "get": {
     "summary": "Metrics in the text format of Prometheus",

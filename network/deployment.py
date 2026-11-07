@@ -9,6 +9,7 @@ turn into a default.
 
 import hashlib
 import json
+import ssl
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -257,6 +258,60 @@ def _read_identity(data: dict, base: Path) -> Identity | RemoteIdentity:
         return Identity.load(base / _require(data, "identity_key", str), passphrase)
     except (OSError, ValueError, TypeError) as error:
         raise DeploymentError(f"CANNOT READ IDENTITY KEY: {error}") from error
+
+
+def validate_node_config(config: NodeConfig) -> dict:
+    """Validate static deployment dependencies without opening the store or sockets."""
+    files = {
+        "tls_certificate": Path(config.tls.certificate),
+        "tls_private_key": Path(config.tls.private_key),
+        "tls_authority": Path(config.tls.ca_file),
+    }
+
+    if config.tls.revoked_file is not None:
+        files["tls_revoked"] = Path(config.tls.revoked_file)
+
+    if config.api.tls_certificate is not None:
+        files["api_tls_certificate"] = config.api.tls_certificate
+        files["api_tls_private_key"] = config.api.tls_key
+
+    for name, path in files.items():
+        if path is None:
+            continue
+        try:
+            if not path.is_file():
+                raise DeploymentError(f"{name}: FILE DOES NOT EXIST: {path}")
+            with path.open("rb"):
+                pass
+        except OSError as error:
+            raise DeploymentError(f"{name}: CANNOT READ {path}: {error}") from error
+
+    try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
+        context.maximum_version = ssl.TLSVersion.TLSv1_3
+        context.load_cert_chain(config.tls.certificate, config.tls.private_key)
+        context.load_verify_locations(config.tls.ca_file)
+    except (OSError, ssl.SSLError, ValueError) as error:
+        raise DeploymentError(f"NODE TLS CONFIGURATION IS INVALID: {error}") from error
+
+    if config.api.tls_certificate is not None:
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(config.api.tls_certificate, config.api.tls_key)
+        except (OSError, ssl.SSLError, ValueError) as error:
+            raise DeploymentError(f"API TLS CONFIGURATION IS INVALID: {error}") from error
+
+    return {
+        "node_id": config.node_id,
+        "genesis_hash": config.genesis.file_hash,
+        "committee_id": config.genesis.committee.committee_id,
+        "protocol_version": 2,
+        "store": str(config.store),
+        "store_exists": config.store.is_file(),
+        "api": {"host": config.api.host, "port": config.api.port},
+        "identity_mode": "remote_signer" if isinstance(config.identity, RemoteIdentity) else "local_key",
+    }
 
 
 def read_node_config(path: Path) -> NodeConfig:

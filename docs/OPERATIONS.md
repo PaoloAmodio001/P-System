@@ -90,9 +90,16 @@ list that cannot be read refuses every peer. It stops the TLS certificate and no
 Then, once:
 
 ```sh
+psystem validate --config n0/node.toml --json
 psystem init-store --config n0/node.toml
 psystem node --config n0/node.toml
 ```
+
+`validate` is a read-only preflight. It checks the configuration, genesis identity, referenced TLS
+files and certificate loading without opening the vote store, migrating it, binding sockets or
+starting peers. Compare `genesis_hash` and `committee_id` between organizations before creating a
+store. A report with `store_exists: false` is expected only on the first initialization; `init-store`
+is the only command that creates the store.
 
 `node` never creates a store. If the file is missing or cannot be opened it stops with exit code 2, and that must stop
 there: `deploy/systemd/psystem.service` does not restart on it. A validator that starts again with no votes
@@ -105,7 +112,10 @@ Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a 
 
 ## Monitoring
 
-Logs go to standard error, one JSON object per line. Metrics at `/metrics`:
+Logs go to standard error, one JSON object per line. Use `/healthz` for process liveness and
+`/readyz` for service readiness. Readiness means that startup completed and the node is not halted;
+it does not mean that a quorum is available or that a submitted event is certified. During startup the
+API socket is not exposed; once exposed, a halted node returns `503` from both endpoints. Metrics are at `/metrics`:
 
 | Metric | Watch for |
 |---|---|

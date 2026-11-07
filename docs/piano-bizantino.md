@@ -118,6 +118,21 @@ Parte da `main` dopo il merge della PR #4 (`a269b6c`). **La linea `prove-forti` 
 - **Eventi senza prova del mittente, da file molto vecchi:** non si riprendono.
 - **Non rimisurato:** `docs/BENCHMARKS.md`. La scrittura di un certificato ora fa una `DELETE` in più, nella stessa transazione.
 
+### Linea successiva: industrializzazione operativa, branch `industrializzazione-operazioni`
+
+Avviata il 2026-11-07 su richiesta di Paolo di proseguire senza altre campagne di test intermedie.
+Il lavoro viene strutturato per fasi indipendenti, senza merge automatico su `main`.
+
+- **Piano:** `docs/INDUSTRIALIZATION-PLAN.md` ordina le linee di prodotto: operazioni, backup e upgrade,
+  API e integrazione, metriche, prestazioni, scalabilità, deployment e sicurezza.
+- **Primo incremento:** `/readyz` separa la liveness (`/healthz`) dalla readiness operativa. È pubblico,
+  non limitato, restituisce `503` in halt; durante l'avvio il socket HTTP non è ancora esposto e non
+  implica disponibilità del quorum.
+- **Preflight di deployment:** `psystem validate --config ... --json` controlla configurazione, identità
+  della genesi e dipendenze TLS senza aprire o migrare lo store. systemd lo esegue prima del nodo.
+- **Stato:** `EMPIRICAL` fino alla verifica della suite e della CI. Restano `OPEN` audit, prove su macchine
+  separate, esercizio indipendente e pilota.
+
 ## Stato al 2026-11-04: da leggere per riprendere
 
 **Vedi anche il riepilogo del programma verso la 1.0, qui sotto. Stato al 2026-11-05. Fatte: fase A, gran parte di B, D, E, F e G per la parte che non richiede persone esterne. Di C fatti gli asset; gli oggetti con stato proprio richiedono ancora un caso d'uso reale. Non raggiungibile da qui: H, e tutto ciò che richiede terzi. Il sistema non è pronto per l'industrializzazione: vedi `ROADMAP.md` e `docs/VALIDATION-PLAN.md`.** Paolo ha dato il via su tutto il 2026-11-05. Il secondo passo dello stesso giorno è qui sotto.

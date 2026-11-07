@@ -252,6 +252,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(503 if halted else 200, {"status": "halted" if halted else "ok"})
             return
 
+        if path == "/readyz":
+            # Readiness is deliberately weaker than quorum availability: it says that the
+            # service has completed startup and can accept requests. Certificates, not this
+            # endpoint, establish protocol finality.
+            ready = self.server.started and not self.node._quorum.closed and not self.node._quorum.driver.halted
+            self._reply(200 if ready else 503, {"status": "ready" if ready else "not_ready"})
+            return
+
         if not self._within_rate():
             return
 
@@ -429,6 +437,7 @@ class _ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
     ssl_context: ssl.SSLContext | None = None
+    started = False
 
     def __init__(self, *args, **kwargs) -> None:
         self._places = threading.BoundedSemaphore(MAX_CONNECTIONS)
@@ -509,6 +518,7 @@ class Service:
 
         self._api_thread = threading.Thread(target=self._api.serve_forever, daemon=True)
         self._api_thread.start()
+        self._api.started = True
         LOG.info(
             "node started",
             extra={
@@ -521,6 +531,7 @@ class Service:
         )
 
     def stop(self) -> None:
+        self._api.started = False
         self._api.shutdown()
         self._api.server_close()
         self.node.stop()

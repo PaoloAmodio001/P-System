@@ -73,7 +73,8 @@ A peer needs a certificate to send anything. Having one is not being a member: v
 
 | Path | What it reaches |
 |---|---|
-| `GET /healthz` | No token and no limit |
+| `GET /healthz` | Liveness probe; no token and no limit |
+| `GET /readyz` | Readiness probe; no token and no limit |
 | `GET /metrics`, `/v1/status`, `/v1/accounts`, `/v1/certificates`, `/v1/closures` | Reads, with a token if configured |
 | `POST /v1/transfers`, `/v1/transfers:batch` | `Node.submit`, with a signature of the sender checked |
 | `POST /v1/epoch-changes` | `propose_epoch_change`, with the signatures of governance checked |

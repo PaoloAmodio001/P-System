@@ -6,10 +6,10 @@ required, and the configuration is refused without it. Outside one machine set `
 the start. The machine-readable description is `docs/openapi.json`, and a test keeps it equal to the code.
 
 Each client address has `requests_per_second` (default 1000) with a `burst` (default twice that). Beyond it
-the answer is `429` with `Retry-After: 1`. A batch costs its size. `/healthz` is not limited. At most 256
+the answer is `429` with `Retry-After: 1`. A batch costs its size. `/healthz` and `/readyz` are not limited. At most 256
 connections at once: more are closed. Behind a proxy all clients are one address, so limit there.
 
-With a token, every path but `/healthz` needs `Authorization: Bearer <token>`. The token protects the
+`/healthz` and `/readyz` are public probes. With a token, every other path needs `Authorization: Bearer <token>`. The token protects the
 operator from noise and from read access. It does not protect accounts: a transfer is valid because its
 sender signed it, whoever delivers it.
 
@@ -21,6 +21,7 @@ proves something: see "Proof" below.
 | Path | Answer |
 |---|---|
 | `GET /healthz` | `200 {"status":"ok"}`, or `503 {"status":"halted"}` |
+| `GET /readyz` | `200 {"status":"ready"}`, or `503 {"status":"not_ready"}` when halted; during startup the HTTP socket is not yet exposed |
 | `GET /metrics` | Text format of Prometheus |
 | `GET /v1/status` | `node_id`, `epoch`, `committee_id`, `genesis_hash`, `executed`, `state_root`, `halted`, `conflicted`, `is_member`, `peers`, `guilty_members` |
 | `GET /v1/accounts/{account}` | `balance`, `next_nonce`. An account of an asset holds a slash: write it `%2F` |

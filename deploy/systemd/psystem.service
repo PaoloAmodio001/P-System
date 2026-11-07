@@ -12,6 +12,7 @@ Wants=network-online.target
 User=psystem
 Group=psystem
 WorkingDirectory=/var/lib/psystem/%i
+ExecStartPre=/usr/local/bin/psystem validate --config /var/lib/psystem/%i/node.toml --json
 ExecStart=/usr/local/bin/psystem node --config /var/lib/psystem/%i/node.toml
 Restart=on-failure
 RestartSec=5
