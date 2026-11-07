@@ -71,6 +71,11 @@ from network.message import (
 LOG = logging.getLogger("psystem.quorum")
 
 
+def is_executable_event(event: Transfer) -> bool:
+    """The part of executability that no later state can change."""
+    return event.amount > 0 and event.sender != event.receiver
+
+
 class VoteStoreError(Exception):
     """
     The store cannot be trusted or could not record a write.
@@ -1628,6 +1633,9 @@ class QuorumReplica:
         if not self.is_member:
             return None
 
+        if not is_executable_event(event):
+            return None
+
         if not self._store.record_vote(event, signed, gathering):
             return None
 
@@ -1736,8 +1744,7 @@ class QuorumReplica:
 
     def _is_executable(self, event: Transfer) -> bool:
         return (
-            event.amount > 0
-            and event.sender != event.receiver
+            is_executable_event(event)
             and StateDeriver._execution_failure(self.state, event) is None
         )
 
@@ -2640,6 +2647,16 @@ class QuorumDriver:
         """
         event = certificate.event
         key = (event.sender, event.nonce)
+
+        if not is_executable_event(event):
+            # A quorum forged, or formed on votes from a version without this check. The state
+            # would never run it, and keeping it would block the sender's nonce for good.
+            LOG.warning(
+                "valid certificate for an event that can never execute dropped",
+                extra={"sender": event.sender, "nonce": event.nonce},
+            )
+            return False
+
         known = self._known.get(key)
 
         if known is not None and known.event.canonical() != event.canonical():

@@ -669,3 +669,7 @@ Dopo la conferma, si parte da fase 0 e fase 1, un commit per modifica logica.
 - [Astro](https://arxiv.org/abs/2004.13184)
 - [Bythos](https://ilyasergey.net/assets/pdf/papers/bythos-ccs24.pdf)
 - [Broadcast con fiducia eterogenea in Lean 4](https://arxiv.org/html/2407.02167v1)
+
+## Production readiness, branch `production-readiness`, 2026-11-07
+
+**Fase 1, test dei casi scoperti.** **Modifiche:** sei test nuovi (`test_certified_but_not_executable.py`, `test_pruning_conflict_halt.py`, `test_governance_double_order.py`, `test_stolen_key_two_versions.py`, `test_crash_recovery.py`, `test_readme_end_to_end.py`), il worker di crash esteso a voto/snapshot/chiusura, `docs/DECISIONS.md` e le righe di `docs/CLAIM-TRACEABILITY.md`. Corretto un difetto reale: un certificato per un evento mai eseguibile (importo zero o transfer a sé) veniva trattenuto per sempre e bloccava il nonce del mittente; ora il validatore onesto non vota e il driver scarta il certificato. **Risultati:** 22 passati e 1 xfail nei sei file; `pytest -q -m "not slow"` 2550 passati, 860 deselezionati, 1 xfail; `lake build` 27 job. **Problemi:** il doppio ordine di governance nella stessa epoca resta un blocco noto, coperto da `xfail(strict=True)`; il conflitto sotto snapshot potato resta senza prova di frode; i crash test usano `SIGKILL`, non la perdita di alimentazione. **Aperto:** Fasi 2-7, liveness e refinement.

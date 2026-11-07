@@ -14,7 +14,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.attestation import Committee, QuorumCertificate, Vote  # noqa: E402
+from core.attestation import (  # noqa: E402
+    Committee,
+    EpochChange,
+    EpochClosure,
+    EpochReport,
+    Governance,
+    QuorumCertificate,
+    Snapshot,
+    Vote,
+)
 from core.event import Transfer  # noqa: E402
 from core.signed_event import SignedTransfer  # noqa: E402
 from core.state import State  # noqa: E402
@@ -50,6 +59,20 @@ HALT_EVENTS = (
 VOTE_SENDER = Identity(Ed25519PrivateKey.from_private_bytes(bytes([21]) * 32))
 VOTED_EVENT = Transfer(VOTE_SENDER.identity_id, "bob", 1, 0)
 ALTERNATIVE_EVENT = Transfer(VOTE_SENDER.identity_id, "carol", 1, 0)
+GOVERNANCE = Governance(tuple(sorted(identity.public_key for identity in HALT_IDENTITIES[:3])), 2)
+CHANGE = EpochChange.create(
+    HALT_COMMITTEE,
+    HALT_MEMBERS,
+    1,
+    GOVERNANCE,
+    HALT_IDENTITIES[:2],
+)
+REPORTS = tuple(
+    EpochReport.create(HALT_COMMITTEE, HALT_IDENTITIES[index], CHANGE.change_id, ())
+    for index in (0, 1, 2)
+)
+CLOSURE = EpochClosure(CHANGE, REPORTS)
+SNAPSHOT = Snapshot(0, State(HALT_GENESIS), ())
 
 
 def halt_committee_with_genesis(balances: dict) -> Committee:
@@ -161,8 +184,44 @@ def run_halt_mode(mode: str, path: Path) -> None:
     report("NOT_REACHED")
 
 
+def run_crash_window(mode: str, path: Path) -> None:
+    if mode == "crash-after-vote-before-sign":
+        store = SqliteVoteStore(path, COMMITTEE, VALIDATOR, create=True)
+        assert store.record_vote(event("bob", 0))
+        report("AFTER_VOTE")
+        kill_self()
+
+    if mode == "crash-snapshot-before-commit":
+        CrashBeforeCommit(path, HALT_COMMITTEE, HALT_VALIDATOR, create=True).record_snapshot(
+            SNAPSHOT
+        )
+        report("NOT_REACHED")
+
+    if mode == "crash-snapshot-after-commit":
+        CrashAfterCommit(path, HALT_COMMITTEE, HALT_VALIDATOR, create=True).record_snapshot(
+            SNAPSHOT
+        )
+        report("NOT_REACHED")
+
+    if mode == "crash-closure-before-commit":
+        CrashBeforeCommit(
+            path, HALT_COMMITTEE, HALT_VALIDATOR, create=True, governance=GOVERNANCE
+        ).install_closure(CLOSURE)
+        report("NOT_REACHED")
+
+    if mode == "crash-closure-after-commit":
+        CrashAfterCommit(
+            path, HALT_COMMITTEE, HALT_VALIDATOR, create=True, governance=GOVERNANCE
+        ).install_closure(CLOSURE)
+        report("NOT_REACHED")
+
+
 def main() -> None:
     mode, path, *rest = sys.argv[1:]
+
+    if mode.startswith(("crash-after-vote", "crash-snapshot", "crash-closure")):
+        run_crash_window(mode, Path(path))
+        return
 
     if mode in ("hold-node-halted", "hold-node-voted"):
         run_node_mode(mode, Path(path))
