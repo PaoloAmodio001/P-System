@@ -307,3 +307,12 @@ protocol version needs all the nodes at once, and they refuse each other meanwhi
 They last a year by default, and an expired one stops connections. Issue a new one with the same `node_id` and
 restart the node. To stop one sooner, use `tls_revoked`, as in "Setting up". That stops the certificate and not the member: remove a member by changing committee. If a key of the
 authority is lost, start from a new authority.
+
+## Rotating signing keys
+
+This is for the node/member **signing key** (identity), not TLS certificates (see "Rotating certificates").
+
+- **Comando:** `python3 scripts/rotate_key.py --old <path-old-key> --new <path-new-key>`
+- **Cosa fa:** genera una nuova chiave di firma con permessi `0600` e stampa una procedura coordinata di sostituzione.
+- **Cosa NON fa:** **non** esegue la rotazione su committee/nodi/deployment. La sostituzione effettiva richiede coordinamento (cambio committee/epoch, aggiornamento configurazione/genesis secondo il flusso operativo, riavvio e verifica nodi) — vedere anche "Changing the committee" e "Governance".
+- **Quando usarlo:** sospetta compromissione della chiave o rotazione periodica secondo policy; da eseguire solo come parte di una procedura coordinata e tracciata.

@@ -149,3 +149,43 @@ upgrade a claim in `docs/CLAIM-TRACEABILITY.md`.
   reviewers understand commit scope.
 - Rollback: none (history annotation only).
 - Evidence: `CORREZIONI-2026-11-08.md` (session 1 report), `git show --name-only 39ac019`.
+
+## D-010: CI pytest failure (non 504) — mutation-detection pattern drift
+
+- Date: 2026-11-08
+- Context: Verifica run CI su `production-readiness` per baseline validazione (richiesta sessione 7).
+  Run `42476682166` (push) e `42476686333` (PR), workflow `CI/verify`, conclusione `failure` dopo
+  ~1h21m. Step Lean (`Install Lean` da mirror `releases.lean-lang.org`, `lake build`, rifiuto
+  shortcut/assiomi) **passati**; fallimento nello step `Run the complete suite, differentials and
+  mutations included` con `22 failed, 3416 passed, 1 xfailed in 4833.34s` (run 42476682166).
+  Non è un 504 su elan/Lean.
+- Evidence (CI, da `gh run view --log-failed`, estrazione parziale): failure di tipo
+  `test_mutation_is_detected[...]` con `AssertionError` su `SOURCE.count(old) == 1` (pattern
+  `old/new` non più presenti nel sorgente corrente). Nomi/casi estratti dal log visibile:
+  `vote not committed`, `certificate not committed`, `vote not written to disk`,
+  `same event again refused`, `non member votes`,
+  `certificate not remembered, so no conflict with the buffer`, `conflict with the buffer missed`,
+  `submit asks even when its own vote is refused`,
+  `network.quorum: the signature comes first`,
+  `network.quorum: the signature comes first when submitting`,
+  `network.quorum: asked again with a certificate held`,
+  `network.quorum: asked again with the votes gone`,
+  `network.quorum: the votes stay after a certificate`,
+  `key readable by others`. File coinvolti (osservati): `test_quorum_vote_store_mutations.py`,
+  `test_saturation_mutations.py`, `test_service_mutations.py`, `test_stuck_event_mutations.py`
+  (elenco completo 22 nomi richiede log job completo se serve).
+- Local comparison (2026-11-08, stesso branch con soli commit docs locali):
+  `tests/test_quorum_vote_store_mutations.py -k test_mutation_is_detected` → `3 failed, 36 passed, 1 deselected`
+  (`same event again refused`, `vote not committed`, `certificate not committed`), stessa classe di errore.
+  `tests/test_stuck_event_mutations.py -k test_mutation_is_detected` → `3 failed, 9 passed`
+  (asked again with certificate held / votes gone / votes stay after certificate).
+  Altri file mutation-detection lenti in locale (timeout esecuzione parziale), ma evidenza CI sufficiente.
+  **Conclusione:** fallimento riproducibile localmente (almeno per i file verificati), non differenza
+  CI/locale; probabile drift tra stringhe di mutazione e codice `network/quorum.py`/moduli correlati.
+- Choice: documentare e **non aggiornare i test per farli passare** in questa sessione. Nessun
+  `continue-on-error`, nessun skip. Non congelare baseline finché CI non è verde.
+- Rollback: none (decision record). Il fix tecnico (riallineare pattern mutazioni al codice corrente,
+  o revisione mirata) richiede analisi separata con criterio esplicito e senza indebolire le mutazioni.
+- Next step to unblock: identificare le 22 failure esatte dal log completo job 128719494386/run 42476682166;
+  riallineare/valutare pattern di mutazione rispetto ai sorgenti attuali; rieseguire CI fino a verde;
+  solo dopo congelare `validation-baseline-*` e pushare tag.
