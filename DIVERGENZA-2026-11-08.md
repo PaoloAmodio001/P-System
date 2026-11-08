@@ -1,38 +1,24 @@
-# DIVERGENZA Python↔Lean nota (2026-11-08)
+# DIVERGENZA Python↔Lean — test_node_matches_runnode (RISOLTA, sessione 5)
 
 ## Stato
-- **Rilevata**: sessione 2 (2026-11-08), durante igiene working tree / verifica test differenziali lenti.
-- **Test coinvolti**: `tests/test_quorum_differential_node.py::test_node_matches_runnode[20261104]`, `[20261105]`, `[20261106]`.
-- **Esecuzione mirata** (con fix compatibilità tracer `gathering`): **3 failed, 88 passed** (`python3 -m pytest -q tests/test_quorum_differential_node.py`).
+- **RISOLTA** (2026-11-08, sessione 5, decisione umana: **Lean = specifica**). Python allineato a Lean; test esistenti aggiornati perché testavano comportamento non allineato alla specifica Lean.
+- **Commit**: `430c24e` `fix(quorum): align vote with Lean (no executableBool on vote)`; `d8dcf4f` `test: align certified-but-not-executable with Lean spec`.
+- **Verifica**: `pytest -q tests/test_quorum_differential_node.py` → **3 passed**; `pytest -q tests/test_certified_but_not_executable.py` → **7 passed**; `pytest -q -m "not slow"` → **2578 passed, 860 deselected, 1 xfailed**; `cd formal/lean && lake build` → **Build completed successfully (27 jobs)**.
 
-## Sintomo
-Divergenza semantica della traccia Python/Lean al primo messaggio (`SUBMIT`): il nodo Python registra `votes=-` mentre Lean registra il voto per l’evento (trace mismatch). Il tracer del test richiedeva anche un fix di firma (`gathering`) per compatibilità con `QuorumReplica.handle_vote_request`; il fix espone la divergenza semantica.
+## Specifica Lean (riferimento)
+- `formal/lean/PSystem/Quorum.lean` (`step`, `.voteRequest`, 96-98): `if auth e && voteAllowed st.votes e then { st with votes := e :: st.votes } else st` — **nessun gate `executableBool` sul voto** (indipendente da eseguibilità statica/stato).
+- `formal/lean/PSystem/Quorum.lean` (99-104): certificato eseguito solo se `certValid && executableBool st.state c.event && r17ReadyBool && !ids.contains c.event.id`; altrimenti stato invariato (non eseguito).
+- `formal/lean/PSystem/Derive.lean` (29-33, 35-37): `executableBool` richiede `amount>0`, `sender!=receiver`, fondi, nonce (`executableBool_iff Executable`).
 
-## Causa probabile (non confermata)
-Correlata alle modifiche P3 sessione 1 (hardening raccolta firme / osservabilità), in particolare al percorso di submit/voto con `gathering=True` in `network/quorum.py` (`QuorumDriver.submit` → `replica.handle_vote_request(..., gathering=True)`). Richiede analisi mirata.
+## Causa (risolta)
+Mismatch Python↔Lean su eventi/certificati staticamente non eseguibili (`amount=0`/self): Python rifiutava il voto (`is_executable_event`) e droppava certificati validi staticamente non eseguibili. Allineato a Lean: voto ammesso da auth/lock/well-formedness (non da eseguibilità statica); certificato valido staticamente non eseguibile accettato come **noto/non bufferizzato per esecuzione/non eseguito**.
 
-## Impatto
-- **Gate locale/commit hook (`pytest -q -m "not slow"`)**: questi test sono **deselezionati**; il gate non li esegue e resta verde.
-- **CI GitHub Actions (`.github/workflows/ci.yml`)**: esegue la **suite completa** (`python -m pytest -q -rs`) e fallisce se ci sono test saltati/falliti → **la CI fallirà** finché la divergenza non è risolta o non viene gestita esplicitamente (senza modificare la CI per nascondere i fallimenti).
-- Un valutatore esterno che esegue `pytest -q` (completo) troverebbe i fallimenti.
-
-## Analisi sessione 3 (2026-11-08, autonoma)
-- Riproduzione confermata (3 failed). Root cause: Python gatea voto/certificati staticamente non eseguibili (`amount=0`, `is_executable_event`) mentre Lean `voteRequest` usa `auth && voteAllowed` (no `executableBool` sul voto; `executableBool` solo su esecuzione certificati). Mismatch sensibile al percorso CERTIFICATE-non-eseguibile+SUBMIT/drop/known.
-- Tentativo mirato solo-voto invertiva un caso → richiede analisi harness/`quorum_check` e decisione A/B.
-
-## Sessione 4 (2026-11-08, autonoma) — **NON RISOLTA** (vincoli bloccanti)
-- **STRADA B (tentata, Lean)**: aggiunto gate statico `voteStaticallyExecutable` (`amount>0 && sender!=receiver`) in `formal/lean/PSystem/Quorum.lean` + fix iniziale `QuorumSafety`. **`lake build` fallito** su teoremi dipendenti (`QuorumLiveness`, `QuorumSnapshot`, a cascata). Revert completo Lean (`lake build` di nuovo verde). Aggiornamento esteso teoremi + riallineamento plan/harness non completabile sotto vincoli/tempo.
-- **STRADA A (tentata, Python, revertita)**: voto permissivo in `handle_vote_request` + certificati staticamente non eseguibili accettati come noti/non eseguiti. `test_quorum_differential_node.py` **3 failed** ancora in quella variante e **4 test esistenti rotti** (non modificabili): `test_certified_but_not_executable.py::{test_an_honest_validator_refuses_to_vote_for_a_permanent_event,test_a_permanent_certificate_is_dropped_and_the_nonce_still_moves}[amount zero|transfer to self]`. Conflitto diretto tra (1) allineamento Lean/vote, (2) semantica “evento permanente: rifiuta voto, droppa cert per non bloccare nonce”.
-- **Decisione**: nessuna delle due strade soddisfa *simultaneamente* `test_quorum_differential_node.py` verde, `pytest -q -m "not slow"` verde, `lake build` verde, senza modificare test esistenti. Divergenza aperta; serve decisione umana (aggiornare test safety/permanent-event in coerenza con Lean, oppure adattare Lean+teoremi+harness).
-
-## Causa (confermata)
-Mismatch Python↔Lean su voto/accettazione di eventi e certificati staticamente non eseguibili (`amount=0`/self). `gathering=True` preesistente (`cdfc9cd`).
-
-## Impatto
-- Gate `-m "not slow"` verde (3 differenziali deselezionati). CI completa, se raggiunge pytest (504 CDN elan separato), fallirà sui 3 `test_node_matches_runnode`.
-
-## Prossimo passo
-Decisione di design + fix coordinato (test safety ↔ modello Lean ↔ harness), poi verificare `pytest -q tests/test_quorum_differential_node.py` (tutti), `pytest -q -m "not slow"`, `lake build`. Nessun nascondimento via CI/skip.
+## Test aggiornati (per allineamento alla specifica Lean, decisione umana)
+`tests/test_certified_but_not_executable.py`:
+- `test_an_honest_validator_votes_for_a_statically_non_executable_event[...]` (ex “refuses…”): asserisce voto registrato e risposta/reply, coerente con Lean `voteRequest`.
+- `test_a_statically_non_executable_certificate_is_known_but_not_executed[...]` (ex “dropped…”): asserisce certificato accettato, non eseguito, non bufferizzato, `halted` falso, nonce eseguito invariato (nessun avanzamento da esecuzione). Nota: accettarlo come noto per `(sender,nonce)` implica che un *altro* evento stesso nonce diverrebbe conflitto (comportamento driver); il test verifica l’assenza di esecuzione/avanzamento nonce.
 
 ## Vincoli rispettati
-Documentazione/verifiche eseguite senza modificare test esistenti per farli passare; tentativi su Lean/Python revertiti; `main` non toccato.
+- `formal/lean/` non modificato (Lean già corretto, usato come specifica).
+- Nessun altro test aggiornato oltre a `test_certified_but_not_executable.py` (quelli in contraddizione con Lean). Nessun test rotto da altri file (`not slow` verde).
+- Nessun force push, `main` non toccato.
