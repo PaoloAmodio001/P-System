@@ -92,6 +92,8 @@ def test_split_votes_log_permanently_locked_nonce_and_prevent_reuse(tmp_path, ca
     assert rec.reason == "split_votes_no_unlock"
     assert rec.divergent_votes >= 2
 
+    assert cluster.drivers[0].replica.nonce_locked_permanently_total >= 1
+
     # non-reusable: locked for good in standard mode
     third = spend(0, "third")
     assert not any(cluster.vote_is_given(index, third) for index in range(4))

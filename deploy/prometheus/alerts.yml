@@ -48,6 +48,11 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Close this epoch: closing takes time and memory in proportion to its votes"
+      - alert: PSystemNonceLockedPermanently
+        expr: increase(psystem_nonce_locked_permanently_total[1h]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Split votes left a (sender, nonce) permanently locked in a standard (no-unlock) epoch; check nonce.locked_permanently logs and operator guidance"
       - alert: PSystemSlowDisk
         expr: rate(psystem_store_commit_seconds_total[5m]) / rate(psystem_store_commits_total[5m]) > 0.5
         for: 10m

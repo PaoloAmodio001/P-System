@@ -1375,6 +1375,7 @@ class QuorumReplica:
         self.state = initial_state.copy()
         self.log: list[QuorumCertificate] = []
         self._executed_ids: set[str] = set()
+        self.nonce_locked_permanently_total = 0
         # What the state started from, if not the genesis: signatures over these events are not read
         # again, which is the whole cost of a restart. `resume_is_derive` says nothing is lost.
         self.base = store.snapshot()
@@ -1731,6 +1732,7 @@ class QuorumReplica:
             if len(counts) <= 1:
                 continue
             divergent = sum(counts.values())
+            self.nonce_locked_permanently_total += 1
             LOG.error(
                 "nonce.locked_permanently",
                 extra={

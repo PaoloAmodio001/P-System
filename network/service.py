@@ -106,6 +106,7 @@ def metrics_text(node: Node) -> str:
             ("psystem_events_gathering", "gauge", "Events this node took that have no certificate yet", driver.gathering_count),
             ("psystem_gathering_oldest_seconds", "gauge", "How long the oldest of them has waited, since this process started", round(driver.gathering_oldest_seconds, 3)),
             ("psystem_vote_requests_resent_total", "counter", "Requests for votes sent again", driver.requests_resent),
+            ("psystem_nonce_locked_permanently_total", "counter", "Nonces permanently locked by split votes in standard (no-unlock) epoch closures", replica.nonce_locked_permanently_total),
             ("psystem_connections_replaced_total", "counter", "Connections to a peer replaced while alive: what was on them is lost and asked for again", node.connections_replaced),
         ]
 
