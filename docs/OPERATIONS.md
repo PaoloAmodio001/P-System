@@ -150,6 +150,8 @@ python -c "from pathlib import Path; from network.audit import AuditLog; print(A
 An edit makes the command fail. Deleting the file is not detectable from the node: keep a copy off the machine if the
 operator needs evidence against a local attacker.
 
+**Audit log startup integrity cost (current).** `AuditLog` verifies the entire existing chain at startup/open (O(n) in number of lines) and fails explicitly with no further writes on tampering. Synthetic measurement (this environment, 2026-11-08, 200k JSONL entries / ~36 MB, `AuditLog.verify`): ~1.22 s (~6.1 s per 1M lines). Perceptible impact is expected around hundreds of thousands to millions of lines depending on hardware/storage; plan rotation/archival accordingly. **Future work (not implemented):** periodic checkpoints every N lines storing `hash(hash_prefix_state)` to bound startup verification cost while preserving tamper evidence between checkpoints.
+
 ## Failures
 
 ### A node is down
