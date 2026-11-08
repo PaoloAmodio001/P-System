@@ -1637,9 +1637,9 @@ class QuorumReplica:
         if not self.is_member:
             return None
 
-        if not is_executable_event(event):
-            return None
-
+        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted
+        # by `auth && voteAllowed`, independent of static/state executability.
+        # Executability is enforced at certificate execution (executableBool/r17Ready).
         if not self._store.record_vote(event, signed, gathering):
             return None
 
@@ -2761,15 +2761,6 @@ class QuorumDriver:
         event = certificate.event
         key = (event.sender, event.nonce)
 
-        if not is_executable_event(event):
-            # A quorum forged, or formed on votes from a version without this check. The state
-            # would never run it, and keeping it would block the sender's nonce for good.
-            LOG.warning(
-                "valid certificate for an event that can never execute dropped",
-                extra={"sender": event.sender, "nonce": event.nonce},
-            )
-            return False
-
         known = self._known.get(key)
 
         if known is not None and known.event.canonical() != event.canonical():
@@ -2801,6 +2792,18 @@ class QuorumDriver:
             return False
 
         if known is None:
+            # Lean spec (formal/lean/PSystem/Quorum.lean, certificate): execution
+            # requires certValid && executableBool && r17Ready && !executed. A valid
+            # certificate for a statically non-executable event is accepted as known
+            # (idempotent/conflict-tracked) but never buffered/executed.
+            if not is_executable_event(event):
+                self._known[key] = certificate
+                LOG.info(
+                    "valid certificate for a statically non-executable event accepted (not executed)",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+                return True
+
             if not self._has_room_for(event):
                 self.certificates_left_out += 1
                 return False
