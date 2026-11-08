@@ -86,11 +86,14 @@ def test_split_votes_log_permanently_locked_nonce_and_prevent_reuse(tmp_path, ca
     records = [r for r in caplog.records if r.message == "nonce.locked_permanently"]
     assert records, "expected nonce.locked_permanently log"
     rec = records[0]
+    assert rec.levelno >= logging.WARNING
     assert rec.sender == ALICE
     assert rec.nonce == 0
     assert rec.epoch == 0
     assert rec.reason == "split_votes_no_unlock"
     assert rec.divergent_votes >= 2
+    assert isinstance(rec.versions, int) and rec.versions >= 2
+    assert "signature" not in str(getattr(rec, "__dict__", {})).lower()
 
     assert cluster.drivers[0].replica.nonce_locked_permanently_total >= 1
 
