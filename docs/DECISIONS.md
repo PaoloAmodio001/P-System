@@ -137,3 +137,15 @@ upgrade a claim in `docs/CLAIM-TRACEABILITY.md`.
   protocol state depends on it.
 - Evidence: `tests/test_audit.py` for the chain, permissions and tamper detection;
   `tests/test_service.py` for start, stop, unauthorized and rate-limited entries. EMPIRICAL.
+
+## D-009: Commit 39ac019 includes pre-existing audit WIP
+
+- Date: 2026-11-08
+- Context: Commit `39ac019` (`feat(core): enforce asset supply conservation at runtime`) was
+  created while pre-existing WIP changes were present in the working tree. The commit includes
+  WIP in `network/service.py` and `docs/CLAIM-TRACEABILITY.md` that was not separable at hunk
+  level without risking the P1 fix.
+- Choice: keep history as-is (no rewrite/rebase/force push). Document the contamination so
+  reviewers understand commit scope.
+- Rollback: none (history annotation only).
+- Evidence: `CORREZIONI-2026-11-08.md` (session 1 report), `git show --name-only 39ac019`.
