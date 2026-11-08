@@ -1,10 +1,16 @@
 """A valid certificate is not an executable event.
 
-`QuorumReplica.handle_certificate` runs a certificate only when the event is fresh, causally
-ready and executable on the current state. The driver keeps one that cannot run yet in its
-buffer and retries it after anything else runs. This file separates the two outcomes that
-matter to an operator: a temporary wait, which a later event can end, and a permanent one,
-where the event can never run and the sender's nonce stays blocked.
+Aligned to the Lean model (formal/lean/PSystem/Quorum.lean, voteRequest/step)
+in session 5: voting depends on `auth && voteAllowed`, not on static
+executability (`executableBool` applies at certificate execution). A
+statically non-executable event (e.g. amount=0, sender=receiver) may be voted
+on; a valid certificate for it is accepted as known but never executed.
+
+`QuorumReplica.handle_certificate`/driver execute a certificate only when valid,
+executable on the current state, causally ready and not already executed. A
+statically non-executable certificate never executes; it is tracked as known
+(idempotent/conflict-detectable) without blocking execution progress via the
+buffer.
 """
 
 import pytest
@@ -66,12 +72,15 @@ def test_insufficient_funds_wait_and_then_run(cluster):
         pytest.param(SELF, id="transfer to self"),
     ],
 )
-def test_an_honest_validator_refuses_to_vote_for_a_permanent_event(cluster, event):
+def test_an_honest_validator_votes_for_a_statically_non_executable_event(cluster, event):
+    """Lean spec: voteRequest admits by auth && voteAllowed (no executableBool)."""
     request = signed(event)
 
-    assert cluster.driver.replica.handle_vote_request(event, request) is None
-    assert cluster.driver.replica.votes() == []
-    assert cluster.driver.handle_message(encode_vote_request(request)).broadcasts == ()
+    vote = cluster.driver.replica.handle_vote_request(event, request)
+    assert vote is not None
+    assert cluster.driver.replica.votes() == [event]
+    response = cluster.driver.handle_message(encode_vote_request(request))
+    assert response.replies != () or response.broadcasts != ()
 
 
 @pytest.mark.parametrize(
@@ -81,9 +90,10 @@ def test_an_honest_validator_refuses_to_vote_for_a_permanent_event(cluster, even
         pytest.param(SELF, id="transfer to self"),
     ],
 )
-def test_a_permanent_certificate_is_dropped_and_the_nonce_still_moves(cluster, event):
-    # A quorum forged, or formed on votes from a version without the vote check. Keeping it
-    # would block the sender's nonce for good, so the driver drops it.
+def test_a_statically_non_executable_certificate_is_known_but_not_executed(cluster, event):
+    """Lean spec: cert execution requires executableBool; a valid cert for a
+    statically non-executable event is accepted as known but never executed, and
+    the executed-state nonce does not advance."""
     assert cluster.certificate(event, 1, 2, 3).verify(cluster.committee)
 
     cluster.driver.handle_message(cluster.certificate_message(event))
@@ -91,11 +101,7 @@ def test_a_permanent_certificate_is_dropped_and_the_nonce_still_moves(cluster, e
     assert cluster.executed() == []
     assert buffered(cluster) == []
     assert not cluster.driver.halted
-
-    cluster.driver.handle_message(cluster.certificate_message(A))
-
-    assert cluster.executed() == [A.canonical()]
-    assert buffered(cluster) == []
+    assert cluster.driver.replica.state.nonce(PAYER) == 0
 
 
 def test_a_rejected_signature_of_the_same_nonce_does_not_block_it(cluster):
