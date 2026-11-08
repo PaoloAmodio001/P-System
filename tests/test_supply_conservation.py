@@ -68,3 +68,41 @@ def test_cross_asset_event_rejected_before_certification(tmp_path):
     assert replica.votes() == []
     assert replica.executed == []
     assert replica.state.nonce(event.sender) == 0
+
+
+def _make_driver(tmp_path):
+    from core.signed_event import SignedTransfer
+    from network.quorum import QuorumDriver
+
+    committee, members = committee_and_members()
+    store = SqliteVoteStore(
+        tmp_path / "d.sqlite", committee, members[0].public_key, create=True
+    )
+    replica = QuorumReplica(members[0], State(), store, lambda _e: True)
+    return QuorumDriver(replica), SignedTransfer, store
+
+
+@pytest.mark.parametrize("entry", ["derive", "replica", "driver"])
+def test_supply_violation_rejected_uniformly_across_entry_points(tmp_path, entry):
+    event = Transfer(account(ISSUER, COIN), account(ALICE, OTHER), 10, 0)
+
+    def invoke():
+        if entry == "derive":
+            StateDeriver.apply_events(State(), [event])
+        elif entry == "replica":
+            replica, _, _ = open_replica(tmp_path)
+            replica.handle_vote_request(event, None)
+        else:
+            driver, SignedTransfer, store = _make_driver(tmp_path)
+            try:
+                # issuer signs (owns sender account); conservation check fires before auth outcome matters
+                signed = SignedTransfer.create(ISSUER, event)
+                driver.submit(signed)
+            finally:
+                store.close()
+
+    with pytest.raises(SupplyViolation) as exc:
+        invoke()
+    assert COIN in exc.value.violated
+    assert OTHER in exc.value.violated
+    assert exc.value.delta == 10
