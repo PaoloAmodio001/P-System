@@ -209,6 +209,14 @@ never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same
 operation. Rotating the key of an **account** does not exist: the account is the key.
 
+## Governance
+
+- **Validator selection**: no formal, protocol-enforced selection process is defined in this repository. The committee (validator keys and `f`) is chosen by the operator/deployer and fixed in genesis / epoch changes. A poorly chosen or non-independent committee can violate the safety assumption (see `README.md` and threat model): with more than `f` faulty/colluding members, conflicting certificates can be produced and the network may fork/halt.
+- **Replacement / rotation**: replace or rotate a member’s key via an epoch change (`EpochChange` signed by governance, applied as in “Changing the committee”). Rotating an **account** key is not supported (the account is the key).
+- **Independence criteria**: not enforced by code. Operators should ensure validators are operated independently (organizations, infrastructure, jurisdictions, key custody) so that compromising `f` or fewer is not correlated; document your criteria out of band.
+- **Committee deadlock / stall**: if governance issues two different orders for the same epoch, or the committee cannot produce/complete required quorum actions, the epoch may never close (voting may be stopped with no in-protocol escape). Recovery is operational/out-of-band: preserve evidence, coordinate among operators, and if required start a **new network from a new genesis** with an agreed committee/history (see “Halt”). Treat governance key custody and single-order-per-epoch discipline as critical.
+
+
 ## Four machines
 
 To measure on real hosts. **Nobody has done this yet.** This puts all keys on one machine first, which is fine for a measurement and wrong for a real deployment.
@@ -245,6 +253,13 @@ The API is on all interfaces with a token and no TLS: on a network you do not co
 ## Choosing unlocking
 
 `psystem genesis --unlock` gives 5 signatures out of 6 with `f = 1`, against 3 out of 4. With one member down and one faulty, nothing certifies. What you get is that an account that equivocated gets its nonce back at the next change of committee, instead of staying stuck on it for good. It cannot be changed later: it is in the identity of the chain.
+
+
+
+## Liveness
+
+- **Nonce locked permanently (standard / fail-closed, no-unlock)**: in the standard configuration, a split-vote/divergent situation for a `(sender, nonce)` can leave that nonce **permanently locked**. This is expected **fail-closed** behavior (safety over liveness): the system avoids accepting conflicting execution. Operators should monitor `nonce.locked_permanently` logs and the `psystem_nonce_locked_permanently_total` counter / `PSystemNonceLockedPermanently` alert (`increase(...[1h]) > 0`), and follow incident guidance.
+- **Unlocking for deployments that require liveness**: deployments that need the nonce to be recoverable across epoch boundaries can use the **unlock** variant (`n = 5f+1`, quorum `3f+1` as documented for unlocking). At the next committee change/epoch closure under that model, an equivocated/split nonce can be unlocked according to the protocol rules. **Trade-offs**: different committee size and quorum (`n=5f+1` vs `3f+1`), different trust/fault assumptions and operational cost; it cannot be changed after genesis (chain identity/parameters). Choose at genesis via the documented unlocking configuration (e.g. `psystem genesis --unlock` where supported) and validate against `docs/PROTOCOL.md`, `docs/LIVENESS-PROPOSAL.md`, and threat/benchmark constraints before production use.
 
 ## Snapshots and pruning
 
