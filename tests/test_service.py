@@ -10,6 +10,7 @@ import pytest
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from crypto.identity import Identity
+from network.audit import AuditLog
 from network.deployment import DeploymentError, parse_genesis, read_node_config, write_genesis
 from network.node_tls_identity import create_authority, issue_node_certificate
 from network.quorum import QuorumConfig
@@ -779,3 +780,51 @@ def test_init_store_creates_once(layout):
     running = Service(read_node_config(config))
     running.start()
     running.stop()
+
+
+def test_the_audit_log_records_start_an_unauthorized_call_and_stop(layout):
+    base, _, _ = layout
+    (base / "token").write_text("a" * 32)
+    (base / "token").chmod(0o600)
+    running = Service(
+        read_node_config(
+            write_config(base, api='host = "127.0.0.1"\nport = 0\ntoken_file = "token"')
+        ),
+        create=True,
+    )
+    running.start()
+
+    try:
+        assert raw(running, "GET", "/v1/status")[0] == 401
+    finally:
+        running.stop()
+
+    path = base / "votes.sqlite.audit.jsonl"
+    assert AuditLog.verify(path) == 3
+    actions = [json.loads(line)["action"] for line in path.read_text().splitlines()]
+    assert actions == ["service.started", "api.unauthorized", "service.stopped"]
+
+
+def test_the_audit_log_records_a_rate_limited_request(layout):
+    base, _, _ = layout
+    running = Service(
+        read_node_config(
+            write_config(
+                base,
+                api='host = "127.0.0.1"\nport = 0\nrequests_per_second = 0.01\nburst = 1',
+            )
+        ),
+        create=True,
+    )
+    running.start()
+
+    try:
+        assert raw(running, "GET", "/metrics")[0] == 200
+        assert raw(running, "GET", "/metrics")[0] == 429
+    finally:
+        running.stop()
+
+    path = base / "votes.sqlite.audit.jsonl"
+    actions = [json.loads(line)["action"] for line in path.read_text().splitlines()]
+    assert actions == ["service.started", "api.rate_limited", "service.stopped"]
+    assert AuditLog.verify(path) == 3
