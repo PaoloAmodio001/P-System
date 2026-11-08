@@ -28,7 +28,7 @@ jobs:
       # The version comes from formal/lean/lean-toolchain.
       - name: Install Lean
         run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
