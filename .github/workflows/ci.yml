@@ -25,12 +25,24 @@ jobs:
       - name: Install the Python dependencies
         run: python -m pip install -r requirements-dev.txt
 
+      - name: Cache elan and Lean toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+          key: ${{ runner.os }}-elan-v4.2.1-${{ hashFiles('formal/lean/lean-toolchain') }}
+
       # Elan pinned; Lean toolchain version comes from formal/lean/lean-toolchain.
+      # On cache hit the toolchain is present; download still runs if elan-init missing.
       - name: Install Lean
         env:
           ELAN_ARCHIVE_URL: https://github.com/leanprover/elan/releases/download/v4.2.1/elan-x86_64-unknown-linux-gnu.tar.gz
           ELAN_ARCHIVE_SHA256: 4e717523217af592fa2d7b9c479410a31816c065d66ccbf0c2149337cfec0f5c
         run: |
+          if [ -x "$HOME/.elan/bin/elan" ]; then
+            echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
           archive="$RUNNER_TEMP/elan.tar.gz"
           curl --fail --location --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors --retry-delay 15 --output "$archive" "$ELAN_ARCHIVE_URL"
           printf '%s  %s\n' "$ELAN_ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
