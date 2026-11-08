@@ -208,6 +208,15 @@ def test_metrics_are_in_the_text_format(service):
     assert "# TYPE psystem_executed_events gauge" in text
     assert "psystem_halted 0" in text
     assert "psystem_store_commits_total 1" in text
+
+
+def test_metrics_expose_nonce_locked_permanently_counter(service):
+    running, _, _ = service
+    status, body = raw(running, "GET", "/metrics")
+    text = body.decode()
+    assert status == 200
+    assert "# TYPE psystem_nonce_locked_permanently_total counter" in text
+    assert "psystem_nonce_locked_permanently_total 0" in text
     for line in text.splitlines():
         assert line.startswith("#") or len(line.split(" ")) == 2
 
