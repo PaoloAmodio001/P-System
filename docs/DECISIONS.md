@@ -118,3 +118,22 @@ upgrade a claim in `docs/CLAIM-TRACEABILITY.md`.
   not a hidden retry.
 - Evidence: `docs/LIVENESS-PROPOSAL.md`, `tests/test_stuck_event.py`,
   `tests/test_stuck_event_mutations.py`, `tests/test_quorum_differential_processes.py`.
+
+## D-008: The local audit trail is append-only with a hash chain
+
+- Date: 2026-11-07
+- Context: The JSON logs on standard error are for operators, not evidence. There was no file
+  that records authentication failures, rate-limit refusals, service start/stop and accepted
+  epoch orders independently of the process log.
+- Options:
+  1. Send every audit entry to an external collector. This adds a network dependency and a
+     deployment requirement that the repository cannot test.
+  2. Write a local append-only file with mode 0600 and a SHA-256 chain, and document that it is
+     not WORM storage.
+- Choice: option 2. `network/audit.py` writes `<store>.audit.jsonl`; `Service` records start,
+  stop, unauthorized calls, rate-limited calls and accepted epoch orders. `AuditLog.verify`
+  detects an edit, not a deletion. No token, key or request body is written.
+- Rollback: remove the `AuditLog` from `Service` and the file remains a plain artifact; no
+  protocol state depends on it.
+- Evidence: `tests/test_audit.py` for the chain, permissions and tamper detection;
+  `tests/test_service.py` for start, stop, unauthorized and rate-limited entries. EMPIRICAL.

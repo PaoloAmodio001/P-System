@@ -32,7 +32,8 @@ authors of the code, and it is what an audit should start from and attack.
 | Anyone who reaches the port | Hold connections open | Deadline and limit on handshakes. **Reduced, not removed** | `tests/test_node_server_handshake.py` |
 | Holder of any node certificate | Fill a node with signed events | Nonce window, funds check, bound on evidence. **Reduced, not removed** | `tests/test_service.py` |
 | Intruder in a node with a separate signer | Make the member equivocate | Second vote lock in the signer | `tests/test_hardening.py` EMPIRICAL |
-| Anyone who reaches the API | Flood it | Rate limit per address, bound on connections | `tests/test_hardening.py` EMPIRICAL |
+| Anyone who reaches the API | Flood it, or try requests without the token | Rate limit per address, bound on connections, token with `hmac.compare_digest`; refusals are recorded in the local audit log | `tests/test_hardening.py`, `tests/test_service.py` EMPIRICAL |
+| Anyone who can write the data directory | Edit or delete the audit trail | The entries form a SHA-256 chain, and the file is mode 0600; an edit is detected by `AuditLog.verify`. **Deletion is not prevented** | `tests/test_audit.py` EMPIRICAL |
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
 | Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
@@ -53,6 +54,10 @@ authors of the code, and it is what an audit should start from and attack.
 - **Revocation** is a list of fingerprints on each node, kept by hand. It stops a TLS certificate, not a member key. No CRL or OCSP.
 - **Timing.** Python and `cryptography` have not been examined for side channels, and neither has the comparison of API
   tokens beyond `hmac.compare_digest`.
+- **Audit trail.** The node writes a local append-only file next to its store (`<store>.audit.jsonl`), mode 0600, with a
+  SHA-256 chain. It records start and stop, unauthorized API calls, rate-limited calls and accepted epoch orders. An edit
+  is detectable, but deletion of the file or of a whole prefix is not, there is no remote collector and no WORM storage.
+  A full disk also stops the audit write; the failure is logged, and the request continues.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
 - **Liveness.** `honest_sender_certifies` assumes delivery, and says that the signatures make a valid certificate, not that anyone gathers them. A node asks again for the events it took that have no certificate, within limits, which is EMPIRICAL and promises nothing: it does this only while it lives, and only for what it took. Nothing promises progress against an adversarial network,
