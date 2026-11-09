@@ -32,7 +32,7 @@ from core.attestation import (
     is_well_formed_event,
 )
 from core.derive import StateDeriver
-from core.attestation import is_authorized_transfer
+from core.attestation import can_ever_execute, is_authorized_transfer
 from core.event import Transfer
 from core.equivocation import EquivocationProof
 from core.signed_event import SignedTransfer
@@ -1697,8 +1697,7 @@ class QuorumReplica:
         return (
             event.event_id() not in ids
             and set(event.parents) <= ids
-            and event.amount > 0
-            and event.sender != event.receiver
+            and can_ever_execute(event)
             and StateDeriver._execution_failure(state, event) is None
         )
 
@@ -1709,11 +1708,7 @@ class QuorumReplica:
         return set(event.parents) <= self._executed_ids
 
     def _is_executable(self, event: Transfer) -> bool:
-        return (
-            event.amount > 0
-            and event.sender != event.receiver
-            and StateDeriver._execution_failure(self.state, event) is None
-        )
+        return can_ever_execute(event) and StateDeriver._execution_failure(self.state, event) is None
 
     def _execute(self, certificate: QuorumCertificate) -> None:
         StateDeriver._apply_one(self.state, certificate.event)
@@ -2733,8 +2728,8 @@ class QuorumRuntime:
     because the store is allowed to be opened twice: the vote lock itself holds
     across processes. flock is not reliable on NFS.
 
-    The replica gets no rule of its own for `auth`: the driver checks the signature
-    and the sender before an event reaches it.
+    The driver checks the signature and the sender before an event reaches the replica. The `auth` of
+    the replica refuses what no state can run (`can_ever_execute`): the model holds for any `auth`.
     """
 
     def __init__(self, config: QuorumConfig, initial_state: State) -> None:
@@ -2766,7 +2761,7 @@ class QuorumRuntime:
                 config.identity,
                 initial_state,
                 self._store,
-                lambda _event: True,
+                can_ever_execute,
             )
         except BaseException:
             self._store.close()
@@ -2863,7 +2858,7 @@ class QuorumRuntime:
             self._identity,
             self._initial_state,
             self._store,
-            lambda _event: True,
+            can_ever_execute,
         )
         self.driver = self._new_driver()
 

@@ -104,6 +104,16 @@ def is_well_formed_event(event) -> bool:
     )
 
 
+def can_ever_execute(event: Transfer) -> bool:
+    """
+    False for an event that no state can run: a zero amount, or a transfer to its own sender. The two
+    parts of `executable` in the model that do not depend on the state. An honest validator votes for
+    neither: a certificate for one would hold the nonce of its sender for good, and run nothing. As a
+    rule of `auth`, every theorem of the model holds with it, since they hold for any `auth`.
+    """
+    return event.amount > 0 and event.sender != event.receiver
+
+
 @dataclass(frozen=True)
 class Committee:
     """

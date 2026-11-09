@@ -16,7 +16,8 @@ the model, by the rules of the protocol:
   signature, or signed by someone else, is no input at all: the model has no message,
   and `auth` there depends only on the event.
 - An event whose sender is not an identity can never be authorized. That one is a line
-  `U` for Lean, so `auth` refuses it there too.
+  `U` for Lean, so `auth` refuses it there too. So is an event that no state can run, a zero
+  amount or a transfer to self: the `auth` of the node refuses it (`can_ever_execute`).
 - After each valid certificate, those seen since the last restart run one at a time, always
   the smallest id that can run, until none can. Lean says which that is, so the oracle has no
   rule of execution of its own. The model needs no buffer: it runs what it is given, and
@@ -121,8 +122,17 @@ class Plan:
     stats: dict[str, int] = field(default_factory=dict)
 
 
-def _authorized(event: Transfer, kind: str = VALID) -> bool:
+def _never_runs(event: Transfer) -> bool:
+    # The rule of the node, written here again: a zero amount or a transfer to self gets no vote.
+    return event.amount == 0 or event.sender == event.receiver
+
+
+def _signed_by_its_sender(event: Transfer, kind: str = VALID) -> bool:
     return kind == VALID and event.sender in SENDER_BY_ID
+
+
+def _authorized(event: Transfer, kind: str = VALID) -> bool:
+    return _signed_by_its_sender(event, kind) and not _never_runs(event)
 
 
 def _entries_are_valid(entries, quorum: int) -> bool:
@@ -144,7 +154,7 @@ def _lean_header(case: NodeCase) -> list[str]:
     lines += [
         f"U {_event_id_as_nat(event)}"
         for event in case.pool
-        if event.sender not in SENDER_BY_ID
+        if event.sender not in SENDER_BY_ID or _never_runs(event)
     ]
     return lines
 
@@ -258,11 +268,15 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
 
         elif kind == "SUBMIT":
             _, event = message
-            if not halted and _authorized(event):
+            if not halted and _signed_by_its_sender(event):
                 key = (event.sender, event.nonce)
                 if known.get(key) == event.canonical():
                     broadcast = ["CERTIFICATE"]
                     count("submits of a certified event")
+                elif not _authorized(event):
+                    # The vote of the node is refused by `auth`, the U line.
+                    plan.inputs.append(f"V {_lean_event(event)}")
+                    count("submits refused by auth")
                 elif vote_for(event):
                     votes = collecting.setdefault(event.canonical(), (event, set()))[1]
                     votes.add(own)
@@ -643,7 +657,8 @@ def _random_event(rng, pool, expected_nonce) -> Transfer:
     return Transfer(
         sender=sender,
         receiver=receiver,
-        amount=rng.choice([0, 1, 1, 2, 2, 3, 4]),
+        # A zero amount gets no vote, so it is rare: the lock needs two versions that can run.
+        amount=rng.choice([0, 1, 1, 1, 2, 2, 2, 3, 4, 4]),
         nonce=nonce,
         parents=parents,
     )
