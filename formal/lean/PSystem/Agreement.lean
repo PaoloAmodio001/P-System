@@ -11,7 +11,7 @@ Main results:
   events, as sets, compute the same result: either the same state, or both
   reject the batch.
 - `derive_perm_invariant`: the result does not depend on the order in which
-  the events arrived (the rule in CLAUDE.md).
+  the events arrived.
 
 Hypotheses are only about the inputs: same events known, distinct ids in
 each list (Python: `deduplicate_events`). There is no hypothesis about the
