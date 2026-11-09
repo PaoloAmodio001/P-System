@@ -31,9 +31,8 @@ from core.attestation import (
     Vote,
     is_well_formed_event,
 )
-from core.exceptions import SupplyViolation
-from core.derive import StateDeriver, check_supply_conservation
-from core.attestation import is_authorized_transfer
+from core.derive import StateDeriver
+from core.attestation import is_authorized_transfer, stays_in_one_asset
 from core.event import Transfer
 from core.equivocation import EquivocationProof
 from core.signed_event import SignedTransfer
@@ -1629,8 +1628,6 @@ class QuorumReplica:
         if not is_well_formed_event(event):
             return None
 
-        check_supply_conservation(event)
-
         if not self._auth(event):
             return None
 
@@ -2612,8 +2609,6 @@ class QuorumDriver:
         if self.halted or not self._is_admitted(signed.transfer):
             return _NOTHING
 
-        check_supply_conservation(signed.transfer)
-
         if not self._is_authorized(signed):
             return _NOTHING
 
@@ -2668,11 +2663,6 @@ class QuorumDriver:
     def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
         # The cheap check first: a request this node would refuse anyway costs no signature.
         if not self._is_admitted(signed.transfer):
-            return _NOTHING
-
-        try:
-            check_supply_conservation(signed.transfer)
-        except SupplyViolation:
             return _NOTHING
 
         if not self._is_authorized(signed):
@@ -2994,7 +2984,7 @@ class QuorumRuntime:
                 config.identity,
                 initial_state,
                 self._store,
-                lambda _event: True,
+                stays_in_one_asset,
             )
         except BaseException:
             self._store.close()
@@ -3091,7 +3081,7 @@ class QuorumRuntime:
             self._identity,
             self._initial_state,
             self._store,
-            lambda _event: True,
+            stays_in_one_asset,
         )
         self.driver = self._new_driver()
 

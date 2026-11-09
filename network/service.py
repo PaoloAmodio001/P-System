@@ -20,6 +20,7 @@ from urllib.parse import unquote
 
 from core.attestation import EpochChange
 from core.decision_status import DecisionStatus
+from core.derive import check_supply_conservation
 from core.exceptions import SupplyViolation
 from core.signed_event import SignedTransfer
 from network.audit import AuditError, AuditLog
@@ -438,11 +439,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(400, {"error": str(error)})
             return
 
+        # Refused here with its reason. The node would refuse it anyway, by `auth`, with no answer.
         try:
-            if single:
-                accepted = self.node.submit(events[0])
-            else:
-                accepted = self.node.submit_many(events) > 0
+            for event in events:
+                check_supply_conservation(event.transfer)
         except SupplyViolation as error:
             self._reply(
                 422,
@@ -454,6 +454,12 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+
+        try:
+            if single:
+                accepted = self.node.submit(events[0])
+            else:
+                accepted = self.node.submit_many(events) > 0
         except VoteStoreError as error:
             LOG.error("durable write failed", extra={"reason": str(error)})
             self._reply(503, {"error": "THE NODE CANNOT WRITE TO ITS DISK"})

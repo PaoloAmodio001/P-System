@@ -511,12 +511,21 @@ class EpochChange:
         )
 
 
+def stays_in_one_asset(event: Transfer) -> bool:
+    """
+    The part of `auth` that depends on the event alone: sender and receiver hold the same asset. With it
+    every event stays inside the accounts of one asset or out of them, the hypothesis of
+    `asset_supply_conserved`. The model checks it only in `auth`, so the vote, and not the execution.
+    """
+    return account_asset(event.sender) == account_asset(event.receiver)
+
+
 def _is_signed_by_its_sender(signed: SignedTransfer) -> bool:
     return (
         is_well_formed_event(signed.transfer)
         and signed.verify()
         and signed.identity_id == account_owner(signed.transfer.sender)
-        and account_asset(signed.transfer.sender) == account_asset(signed.transfer.receiver)
+        and stays_in_one_asset(signed.transfer)
     )
 
 

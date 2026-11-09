@@ -7,7 +7,11 @@ from core.resolver import ConflictResolver
 
 
 def check_supply_conservation(event: Transfer) -> None:
-    """Raise SupplyViolation if the event crosses declared asset account sets."""
+    """
+    Raise SupplyViolation if the event crosses declared asset account sets. A check on input, for the
+    API. The protocol has the same rule in `auth` (`is_authorized_transfer`, `stays_in_one_asset`), as
+    the model does: derivation and execution do not look at assets (formal/lean/PSystem/QuorumAssets.lean).
+    """
     sender_asset = account_asset(event.sender)
     receiver_asset = account_asset(event.receiver)
     if sender_asset != receiver_asset:
@@ -71,7 +75,6 @@ class StateDeriver:
     @staticmethod
     def _execution_failure(state: State, event: Transfer) -> str | None:
         """Return why `event` cannot execute on `state`, or None."""
-        check_supply_conservation(event)
         expected_nonce = state.nonce(event.sender)
 
         if event.nonce != expected_nonce:
@@ -122,7 +125,6 @@ class StateDeriver:
 
             if event.sender == event.receiver:
                 raise ValueError("INVALID TRANSFER")
-            check_supply_conservation(event)
 
         by_id = {event.event_id(): event for event in ordered}
         pending_parents = {
@@ -174,7 +176,6 @@ class StateDeriver:
 
     @staticmethod
     def _apply_one(state: State, event: Transfer) -> None:
-        check_supply_conservation(event)
         state.balances[event.sender] = state.balance(event.sender) - event.amount
 
         state.balances[event.receiver] = (

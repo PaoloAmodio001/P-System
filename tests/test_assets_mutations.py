@@ -94,7 +94,7 @@ CHANGES = {
             "",
         ),
         "an asset can change": (
-            "        and account_asset(signed.transfer.sender) == account_asset(signed.transfer.receiver)\n",
+            "        and stays_in_one_asset(signed.transfer)\n",
             "",
         ),
     },
