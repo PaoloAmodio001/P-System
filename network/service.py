@@ -383,14 +383,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         with self.node._state_lock:
-            found = next(
-                (
-                    certificate
-                    for certificate in self.node._quorum.replica.log
-                    if certificate.event.event_id() == event_id
-                ),
-                None,
-            )
+            found = self.node._quorum.replica.certificate_of(event_id)
 
         if found is None:
             self._reply(404, {"error": "NOT EXECUTED HERE"})

@@ -113,7 +113,7 @@ QUORUM = {
         "",
     ),
     "a covered row left out of the log": (
-        "                self.log.append(certificate)\n                continue\n",
+        "                self.log.append(certificate)\n                self._log_by_id[certificate.event.event_id()] = certificate\n                continue\n",
         "                continue\n",
     ),
     "unreadable snapshot raises something else": (

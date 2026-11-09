@@ -1443,6 +1443,8 @@ class QuorumReplica:
         self._initial_state = initial_state
         self.state = initial_state.copy()
         self.log: list[QuorumCertificate] = []
+        # The same certificates by event id, so that a client asking for one does not scan the log.
+        self._log_by_id: dict[str, QuorumCertificate] = {}
         self._executed_ids: set[str] = set()
         self.nonce_locked_permanently_total = 0
         # What the state started from, if not the genesis: signatures over these events are not read
@@ -1463,6 +1465,7 @@ class QuorumReplica:
                     raise VoteStoreError("LOG OF CERTIFICATES DOES NOT FIT THE SNAPSHOT")
 
                 self.log.append(certificate)
+                self._log_by_id[certificate.event.event_id()] = certificate
                 continue
 
             if not self._can_replay(certificate):
@@ -1635,6 +1638,9 @@ class QuorumReplica:
         if covered:
             self._store.forget_certificates([c.event.event_id() for c in covered])
             self.log = [c for c in self.log if not self.is_covered(c.event)]
+
+            for certificate in covered:
+                self._log_by_id.pop(certificate.event.event_id(), None)
 
         return covered
 
@@ -1880,9 +1886,14 @@ class QuorumReplica:
             and StateDeriver._execution_failure(self.state, event) is None
         )
 
+    def certificate_of(self, event_id: str) -> QuorumCertificate | None:
+        """The certificate of an event this node executed and still holds, without reading the log."""
+        return self._log_by_id.get(event_id)
+
     def _execute(self, certificate: QuorumCertificate) -> None:
         StateDeriver._apply_one(self.state, certificate.event)
         self.log.append(certificate)
+        self._log_by_id[certificate.event.event_id()] = certificate
         self._executed_ids.add(certificate.event.event_id())
 
 
