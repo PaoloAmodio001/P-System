@@ -170,8 +170,8 @@ IN_QUORUM = {
         "        if not self.is_member:\n"
         "            return None\n"
         "\n"
-        "        if not self._store.record_vote(event, signed):\n",
-        "        if not self._store.record_vote(event, signed):\n",
+        "        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted\n",
+        "        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted\n",
     ),
     "proposal not checked": (
         "            or self.halted\n"

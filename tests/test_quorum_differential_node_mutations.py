@@ -142,7 +142,9 @@ IN_QUORUM = {
         "        if known is not None:\n",
     ),
     "conflict with the buffer missed": (
+        "            event_id = event.event_id()\n"
         "            self._known[key] = certificate\n",
+        "            event_id = event.event_id()\n"
         "            if self.replica.state.nonce(event.sender) > event.nonce:\n"
         "                self._known[key] = certificate\n",
     ),
@@ -161,7 +163,7 @@ IN_QUORUM = {
         "            False\n",
     ),
     "vote not written to disk": (
-        "        if not self._store.record_vote(event, signed):\n"
+        "        if not self._store.record_vote(event, signed, gathering):\n"
         "            return None\n",
         "",
     ),
