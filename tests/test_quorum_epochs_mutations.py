@@ -138,17 +138,9 @@ IN_QUORUM = {
         "                rows = [row for row in rows if row[1] is not None]\n",
     ),
     "locks not installed": (
-        "                self._connection.executemany(\n"
-        "                    \"\"\"\n"
-        "                    INSERT OR IGNORE INTO locks (sender, nonce, canonical)\n"
-        "                    VALUES (?, ?, ?)\n"
-        "                    \"\"\",\n"
-        "                    [\n"
-        "                        (event.sender, str(event.nonce), event.canonical().decode())\n"
-        "                        for event in locks\n"
-        "                    ],\n"
-        "                )\n",
-        "",
+        "                self._add_locks(locks)\n"
+        "                # Votes signed for the committee that ended, which the driver forgets as well.\n",
+        "                # Votes signed for the committee that ended, which the driver forgets as well.\n",
     ),
     "committee not changed in memory": (
         "            self.committee = following\n"
@@ -170,8 +162,8 @@ IN_QUORUM = {
         "        if not self.is_member:\n"
         "            return None\n"
         "\n"
-        "        if not self._store.record_vote(event, signed):\n",
-        "        if not self._store.record_vote(event, signed):\n",
+        "        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted\n",
+        "        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted\n",
     ),
     "proposal not checked": (
         "            or self.halted\n"

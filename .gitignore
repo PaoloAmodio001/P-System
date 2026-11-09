@@ -20,6 +20,11 @@ htmlcov/
 # Generated audit reports/logs
 audit-reports/
 full-test-audit-*.log
+*.audit.jsonl
+
+# Local agent configuration
+.claude/
+
 
 # Generated archives
 *.tar.gz

@@ -1,20 +1,22 @@
 cff-version: 1.2.0
 message: "Please cite P-System if you use this software in your research."
-title: "P-System: Deterministic Event Processing for Distributed Systems"
+title: "P-System: a registry of single-owner state with quorum certificates"
 authors:
   - family-names: "Amodio"
     given-names: "Paolo"
-version: "1.0.0"
 license: "Apache-2.0"
 type: software
+repository-code: "https://github.com/PaoloAmodio001/P-System"
 abstract: >-
-  Experimental Python implementation and Lean 4 formal model exploring
-  deterministic event processing, causal ordering, canonical event
-  identity, conflict handling, and local state projection in distributed
-  systems.
+  A registry of single-owner state without global consensus: a committee of
+  3f+1 validators certifies events with quorum certificates of 2f+1
+  signatures, and every node derives the same state from the same set of
+  certified events. Python implementation, with a Lean 4 model of the
+  protocol and machine-checked safety theorems about that model; the link
+  between code and model is tested, not proved.
 keywords:
   - distributed systems
-  - event processing
+  - quorum certificates
+  - Byzantine fault model
   - formal verification
   - Lean 4
-  - causal ordering

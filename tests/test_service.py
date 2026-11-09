@@ -10,6 +10,7 @@ import pytest
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from crypto.identity import Identity
+from network.audit import AuditLog
 from network.deployment import DeploymentError, parse_genesis, read_node_config, write_genesis
 from network.node_tls_identity import create_authority, issue_node_certificate
 from network.quorum import QuorumConfig
@@ -89,6 +90,27 @@ def spend(sender, nonce=0, receiver="bob", amount=1) -> SignedTransfer:
 # --- The interface ----------------------------------------------------------------------
 
 
+def test_sdk_exposes_the_response_request_id(service):
+    running, _, _ = service
+    client = Client(url(running))
+    client.status()
+    assert client.last_request_id
+
+
+def test_every_response_has_a_request_id_and_accepts_a_correlation_id(service):
+    running, _, _ = service
+    request = urllib.request.Request(
+        url(running) + "/healthz", headers={"X-Request-ID": "client-42"}
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert json.loads(response.read()) == {"status": "ok"}
+        assert response.headers["X-Request-ID"] == "client-42"
+
+    request = urllib.request.Request(url(running) + "/v1/status")
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.headers["X-Request-ID"]
+
+
 def test_status_says_what_an_operator_needs(service):
     running, _, _ = service
     status = Client(url(running)).status()
@@ -112,6 +134,43 @@ def test_account_of_a_stranger_is_empty(service):
 def test_healthz(service):
     running, _, _ = service
     assert raw(running, "GET", "/healthz")[0] == 200
+
+
+def test_readyz_is_public_without_authentication(service):
+    running, _, _ = service
+    status, body = raw(running, "GET", "/readyz")
+    assert status == 200
+    assert json.loads(body) == {"status": "ready"}
+
+
+def test_readyz_is_ready_after_start(service):
+    running, _, _ = service
+    status, body = raw(running, "GET", "/readyz")
+    assert status == 200
+    assert json.loads(body) == {"status": "ready"}
+
+
+def test_readyz_says_503_when_halted(service):
+    from network.message import encode_certificate
+    from core.attestation import QuorumCertificate, Vote
+
+    running, sender, members = service
+    committee = running.config.genesis.committee
+    ordered = sorted(members, key=lambda m: m.public_key)
+
+    def certificate(receiver):
+        event = spend(sender, 0, receiver).transfer
+        return QuorumCertificate(
+            event,
+            tuple(Vote.create(committee, ordered[i], event) for i in range(3)),
+        )
+
+    running.node._handle_peer_message(encode_certificate(certificate("a")))
+    running.node._handle_peer_message(encode_certificate(certificate("b")))
+
+    status, body = raw(running, "GET", "/readyz")
+    assert status == 503
+    assert json.loads(body)["status"] == "not_ready"
 
 
 def test_healthz_says_503_when_halted(service):
@@ -149,6 +208,15 @@ def test_metrics_are_in_the_text_format(service):
     assert "# TYPE psystem_executed_events gauge" in text
     assert "psystem_halted 0" in text
     assert "psystem_store_commits_total 1" in text
+
+
+def test_metrics_expose_nonce_locked_permanently_counter(service):
+    running, _, _ = service
+    status, body = raw(running, "GET", "/metrics")
+    text = body.decode()
+    assert status == 200
+    assert "# TYPE psystem_nonce_locked_permanently_total counter" in text
+    assert "psystem_nonce_locked_permanently_total 0" in text
     for line in text.splitlines():
         assert line.startswith("#") or len(line.split(" ")) == 2
 
@@ -721,3 +789,51 @@ def test_init_store_creates_once(layout):
     running = Service(read_node_config(config))
     running.start()
     running.stop()
+
+
+def test_the_audit_log_records_start_an_unauthorized_call_and_stop(layout):
+    base, _, _ = layout
+    (base / "token").write_text("a" * 32)
+    (base / "token").chmod(0o600)
+    running = Service(
+        read_node_config(
+            write_config(base, api='host = "127.0.0.1"\nport = 0\ntoken_file = "token"')
+        ),
+        create=True,
+    )
+    running.start()
+
+    try:
+        assert raw(running, "GET", "/v1/status")[0] == 401
+    finally:
+        running.stop()
+
+    path = base / "votes.sqlite.audit.jsonl"
+    assert AuditLog.verify(path) == 3
+    actions = [json.loads(line)["action"] for line in path.read_text().splitlines()]
+    assert actions == ["service.started", "api.unauthorized", "service.stopped"]
+
+
+def test_the_audit_log_records_a_rate_limited_request(layout):
+    base, _, _ = layout
+    running = Service(
+        read_node_config(
+            write_config(
+                base,
+                api='host = "127.0.0.1"\nport = 0\nrequests_per_second = 0.01\nburst = 1',
+            )
+        ),
+        create=True,
+    )
+    running.start()
+
+    try:
+        assert raw(running, "GET", "/metrics")[0] == 200
+        assert raw(running, "GET", "/metrics")[0] == 429
+    finally:
+        running.stop()
+
+    path = base / "votes.sqlite.audit.jsonl"
+    actions = [json.loads(line)["action"] for line in path.read_text().splitlines()]
+    assert actions == ["service.started", "api.rate_limited", "service.stopped"]
+    assert AuditLog.verify(path) == 3

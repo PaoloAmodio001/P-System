@@ -5,7 +5,7 @@ namespace PSystem.Quorum
 /-!
 # A closure needs no votes
 
-Step 3 of the program, in `docs/proposte/passo-3.md`. A closure is an order of governance and a quorum
+A closure is an order of governance and a quorum
 of reports. Why it need not be unique: `closure_preserves_certified` holds for any quorum of reports,
 and `no_double_spend_views` allows validators with different locks. What must be unique is the next
 committee, and for that a lock on the order is enough.

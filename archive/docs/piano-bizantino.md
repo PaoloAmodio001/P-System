@@ -83,7 +83,7 @@ Il dato `burst` da solo sarebbe poco: su eventi così rari, 0 su 150 è debole. 
 
 **Limiti rimasti.**
 
-- **Riavvio:** chi raccoglie perde quanto aveva in memoria. Tocca al client inviare di nuovo.
+- **Riavvio:** chi raccoglie perde quanto aveva in memoria. Tocca al client inviare di nuovo. **Superato sul branch `robustezza`, qui sotto.**
 - **Nodo morto:** finché chi ha ricevuto l'evento non torna, nessuno raccoglie per lui. Il client deve inviare altrove.
 - **Chiusura di un'epoca:** svuota la raccolta, e i relativi eventi non vengono più chiesti.
 - **Mittente con due versioni:** può non arrivare mai a un quorum. Il rinvio continua ogni 30 s finché la voce non cade per i motivi sopra.
@@ -92,6 +92,54 @@ Il dato `burst` da solo sarebbe poco: su eventi così rari, 0 su 150 è debole. 
 - **Chiamate davvero simultanee:** la regola chiude ancora una delle due connessioni. Non osservato dopo la correzione, ma non escluso: lì copre il rinvio.
 - **Non rimisurato:** `docs/BENCHMARKS.md`.
 - **`v1.0.0-rc1` contiene il difetto.**
+
+### Branch `robustezza`, 2026-11-07. Rinvio dopo un riavvio, metriche e allarme
+
+Parte da `main` dopo il merge della PR #4 (`a269b6c`). **La linea `prove-forti` e la demo sono sospese per decisione di Paolo.**
+
+**Modifiche.**
+
+- **Store, schema 6:** tabella `gathering`, con `event_id` ed `epoch`. Evento e firma del mittente sono già in `votes` e `vote_evidence`. La riga si scrive nella stessa transazione del voto, quindi nessun fsync in più: una risposta `202` implica che la riga è su disco. I file dello schema 5 si migrano all'apertura. **Un binario precedente rifiuta lo schema 6: un ritorno indietro richiede un backup fatto prima.**
+- **Driver:** al riavvio riprende gli eventi e li chiede subito. Il proprio voto si firma di nuovo quando tocca all'evento, e non all'avvio, perché un firmatario esterno rallenterebbe la partenza. I voti raccolti dagli altri erano in memoria: si richiedono.
+- **Metriche:** `psystem_events_gathering`, `psystem_gathering_oldest_seconds`, `psystem_vote_requests_resent_total`, `psystem_connections_replaced_total`. `/metrics` esisteva già.
+- **Allarmi:** `PSystemEventStuck` e `PSystemConnectionsReplaced`, con la procedura in `docs/OPERATIONS.md`. Soglie a giudizio. `psystem_gathering_oldest_seconds` non era nel piano: un conteggio segue il traffico e non distingue un evento fermo.
+- **Test esistenti:** i collegamenti fermati dal proxy hanno una finestra di 0,2 s, trovata qui. I test deterministici di `fix-blocco` ora aspettano che si chiuda.
+
+**Risultati, `EMPIRICAL`.** `test_a_node_killed_while_gathering_finishes_when_it_comes_back`: `kill -9` dopo il `202`, con nessuna risposta arrivata. Prima della modifica `4 EVENT_NOT_RUN` per 20 s; dopo, tutti eseguono senza che il client invii di nuovo.
+
+**Riavvio di uno store ripristinato:** non firma nulla, come richiede `mark_restored`, ma raccoglie i voti degli altri, e gli serve un voto in più. Le prove di sicurezza non cambiano: chiedere voti non è un voto, e l'evento è firmato dal mittente.
+
+**Limiti.**
+
+- **Voti divisi:** un evento con voti divisi resta nei rinvii fino alla fine dell'epoca. Nessuno può sapere che non arriverà mai a un quorum, e nessun nodo sceglie. Costa una richiesta ogni 30 s per evento, sopravvive al riavvio, e tiene acceso `PSystemEventStuck`. Se l'epoca non si chiude mai, resta per sempre. Per farlo cessare serve una chiusura, che è una decisione del governo.
+- **L'età si azzera a un riavvio:** `psystem_gathering_oldest_seconds` conta da quando il processo ha iniziato a chiedere.
+- **Nodo perso per sempre:** nessuno chiede per lui. Il mittente deve inviare altrove. Il file ha le righe, ma nessuno le legge.
+- **Chiusura di un'epoca:** cancella le righe, e quegli eventi vanno inviati di nuovo. Resta il limite di `fix-blocco`.
+- **Eventi senza prova del mittente, da file molto vecchi:** non si riprendono.
+- **Non rimisurato:** `docs/BENCHMARKS.md`. La scrittura di un certificato ora fa una `DELETE` in più, nella stessa transazione.
+
+### Linea successiva: industrializzazione operativa, branch `industrializzazione-operazioni`
+
+Avviata il 2026-11-07 su richiesta di Paolo di proseguire senza altre campagne di test intermedie.
+Il lavoro viene strutturato per fasi indipendenti, senza merge automatico su `main`.
+
+- **Piano:** `docs/INDUSTRIALIZATION-PLAN.md` ordina le linee di prodotto: operazioni, backup e upgrade,
+  API e integrazione, metriche, prestazioni, scalabilità, deployment e sicurezza.
+- **Primo incremento:** `/readyz` separa la liveness (`/healthz`) dalla readiness operativa. È pubblico,
+  non limitato, restituisce `503` in halt; durante l'avvio il socket HTTP non è ancora esposto e non
+  implica disponibilità del quorum.
+- **Preflight di deployment:** `psystem validate --config ... --json` controlla configurazione, identità
+  della genesi e dipendenze TLS senza aprire o migrare lo store. systemd lo esegue prima del nodo.
+- **Secondo incremento:** il benchmark quorum accetta `--senders N` e genera flussi indipendenti con
+  nonce separati, riportando conteggi per mittente, radici e conteggi finali dei nodi. Il default resta
+  compatibile con la misura storica; i numeri multi-mittente non sono ancora pubblicati.
+- **Terzo incremento, API/integration:** le risposte HTTP espongono `X-Request-ID` correlabile e il client
+  SDK conserva l'ultimo identificatore. `submit_with_retry` e `submit_many_with_retry` ripetono solo gli
+  stessi eventi firmati dopo errori di connessione, `429` o `503`; non generano nuovi nonce e non fanno
+  passare l'accettazione locale per certificazione. Il contratto è documentato in `docs/API.md` e gli
+  schemi di risposta sono descritti in `docs/openapi.json`.
+- **Stato:** `EMPIRICAL` fino alla verifica della suite e della CI. Restano `OPEN` audit, prove su macchine
+  separate, esercizio indipendente e pilota.
 
 ## Stato al 2026-11-04: da leggere per riprendere
 
@@ -626,3 +674,11 @@ Dopo la conferma, si parte da fase 0 e fase 1, un commit per modifica logica.
 - [Astro](https://arxiv.org/abs/2004.13184)
 - [Bythos](https://ilyasergey.net/assets/pdf/papers/bythos-ccs24.pdf)
 - [Broadcast con fiducia eterogenea in Lean 4](https://arxiv.org/html/2407.02167v1)
+
+## Production readiness, branch `production-readiness`, 2026-11-07
+
+**Fase 1, test dei casi scoperti.** **Modifiche:** sei test nuovi (`test_certified_but_not_executable.py`, `test_pruning_conflict_halt.py`, `test_governance_double_order.py`, `test_stolen_key_two_versions.py`, `test_crash_recovery.py`, `test_readme_end_to_end.py`), il worker di crash esteso a voto/snapshot/chiusura, `docs/DECISIONS.md` e le righe di `docs/CLAIM-TRACEABILITY.md`. Corretto un difetto reale: un certificato per un evento mai eseguibile (importo zero o transfer a sé) veniva trattenuto per sempre e bloccava il nonce del mittente; ora il validatore onesto non vota e il driver scarta il certificato. **Risultati:** 22 passati e 1 xfail nei sei file; `pytest -q -m "not slow"` 2550 passati, 860 deselezionati, 1 xfail; `lake build` 27 job. **Problemi:** il doppio ordine di governance nella stessa epoca resta un blocco noto, coperto da `xfail(strict=True)`; il conflitto sotto snapshot potato resta senza prova di frode; i crash test usano `SIGKILL`, non la perdita di alimentazione. **Aperto:** Fasi 2-7, liveness e refinement.
+
+**Fase 2, liveness condizionata.** **Modifiche:** `docs/LIVENESS-PROPOSAL.md` con proprietà, ipotesi A1-A6, meccanismi già presenti, gap chiuso e ciò che non si promette; `docs/PROOF-SCOPE.md` collega la proposta e ribadisce che non è un teorema; `docs/DECISIONS.md` D-007 esclude timeout e scelta tra alternative. **Risultati:** nessuna nuova regola di protocollo; restano `EMPIRICAL` voto durevole, reinvii limitati, gathering dopo restart, sincronizzazione dei certificati. **Problemi:** mittente che equivoca, parent mancante, fondi insufficienti e governo diviso bloccano ancora. **Aperto:** modello di rete con equità e teorema Lean di liveness.
+
+**Fase 3, sicurezza operativa.** **Modifiche:** `network/audit.py` con log locale `0600` e catena SHA-256; `Service` registra avvio, arresto, chiamate API non autorizzate, limiti di frequenza e ordini di epoca accettati; `tests/test_audit.py` e due test di servizio; aggiornati modello delle minacce, operazioni, decisioni e matrice delle affermazioni. Verificati i controlli già presenti su permessi e cifratura delle chiavi, token, rate limit, metriche e alert. **Risultati:** `tests/test_audit.py` 6 passati, `tests/test_service.py` e `tests/test_hardening.py` 180 passati insieme. **Problemi:** il file di audit è locale: un edit è rilevabile, una cancellazione no; nessun collettore esterno o WORM. Un disco pieno fa fallire la scrittura di audit, che viene registrata come errore. **Aperto:** audit esterni, HSM/KMS, quote per connessione.

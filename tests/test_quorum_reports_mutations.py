@@ -118,8 +118,8 @@ QUORUM = {
         '                            (text, old_epoch),\n',
     ),
     "an unreadable closure is another error": (
-        "            except (ValueError, KeyError, TypeError, RecursionError) as error:\n                raise VoteStoreError(\"CLOSURE IS UNREADABLE\") from error\n",
-        "            except RecursionError as error:\n                raise VoteStoreError(\"CLOSURE IS UNREADABLE\") from error\n",
+        "                closure = _closure_from_text(closure_text)\n            except (ValueError, KeyError, TypeError, RecursionError) as error:\n                raise VoteStoreError(\"CLOSURE IS UNREADABLE\") from error\n",
+        "                closure = _closure_from_text(closure_text)\n            except RecursionError as error:\n                raise VoteStoreError(\"CLOSURE IS UNREADABLE\") from error\n",
     ),
     "closures on file keep their votes": (
         '            body.pop("votes", None)\n',

@@ -199,16 +199,15 @@ def test_submit_again_asks_again_with_the_same_vote(cluster):
 
 
 def test_submit_again_after_a_restart_can_complete_the_certificate(cluster):
-    # What was aggregated is lost at a restart, and asking again is the remedy.
+    # The votes gathered are lost at a restart. The event is not: see test_resend_after_restart.py.
     cluster.driver.submit(signed(A))
     cluster.driver.handle_message(cluster.vote_message(A, 1))
     driver = cluster.restart()
 
     assert nothing(driver.handle_message(cluster.vote_message(A, 2)))
     assert driver.submit(signed(A)).broadcasts
-    assert nothing(driver.handle_message(cluster.vote_message(A, 1)))
 
-    output = driver.handle_message(cluster.vote_message(A, 2))
+    output = driver.handle_message(cluster.vote_message(A, 1))
     assert [decode_certificate(m).event for m in output.broadcasts] == [A]
 
 

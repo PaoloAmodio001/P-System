@@ -1,6 +1,8 @@
 # Audit package
 
-For an external auditor of the protocol and of the code. **No external audit has been done.** This says what to look at, what is assumed, what is proved and what is only tested, how to repeat everything, and what we would like to be asked back.
+The entry point for an external reviewer of the protocol, the model and the code. No external audit has been done. This says what to look at, what is assumed, what is proved and what is only tested, how to repeat everything, and what we would like to be asked.
+
+The Lean model is the specification. An honest validator votes when `auth && voteAllowed` holds, and whether an event can run matters only when its certificate is executed. Where Python and Lean differ, Python is wrong.
 
 ## 1. Scope
 
@@ -8,7 +10,7 @@ For an external auditor of the protocol and of the code. **No external audit has
 
 | File | What to read | Why it matters |
 |---|---|---|
-| `core/attestation.py` | `vote_payload`, `Vote`, `QuorumCertificate.verify`, `Committee`, `EpochChange.verify`, `EpochReport.verify`, `EpochClosure.verify`, `EpochClosure.locks`, `ClosureHeader.verify`, `Snapshot`, `SnapshotAttestation`, `is_authorized_transfer` | What signatures mean, and what counts as valid |
+| `core/attestation.py` | `vote_payload`, `Vote`, `QuorumCertificate.verify`, `Committee`, `EpochChange.verify`, `EpochReport.verify`, `EpochClosure.verify`, `EpochClosure.locks`, `ClosureHeader.verify`, `Snapshot`, `SnapshotAttestation`, `is_authorized_transfer`, `stays_in_one_asset` | What signatures mean, and what counts as valid |
 | `network/quorum.py` | `SqliteVoteStore.record_vote`, `close_epoch`, `install_closure`, `apply_floor`, `record_snapshot`, `group`, `_open_schema` | The vote lock and the one on the order: **losing either breaks safety** |
 | `network/quorum.py` | `QuorumReplica.handle_vote_request`, `handle_certificate`, `certificate_is_valid`, `attest_snapshot`, `install_snapshot`, `prune_covered` | The rules of an honest node |
 | `network/quorum.py` | `QuorumDriver`, whole class, `QuorumRuntime.handle_group`, `_rebuild` | What reaches the rules, what is sent, what a failed write undoes |
@@ -53,7 +55,7 @@ For an external auditor of the protocol and of the code. **No external audit has
 
 Signatures are parameters of the model, `Unforgeable` is a hypothesis about a run, and `Certified`, `ChainValid`, `ViewChain`, `UnlockChain` are hypotheses too. **Please check that each of them is what the code really gives.**
 
-Full list: `docs/PROOF-OBLIGATIONS.md`, `docs/PROOF-SCOPE.md`, `docs/CLAIM-TRACEABILITY.md`. The reasoning behind the latest changes, written before the code: `docs/proposte/`.
+Full list: `docs/PROOF-OBLIGATIONS.md`, `docs/PROOF-SCOPE.md`, `docs/CLAIM-TRACEABILITY.md`.
 
 ## 4. Attack surface
 
@@ -73,7 +75,8 @@ A peer needs a certificate to send anything. Having one is not being a member: v
 
 | Path | What it reaches |
 |---|---|
-| `GET /healthz` | No token and no limit |
+| `GET /healthz` | Liveness probe; no token and no limit |
+| `GET /readyz` | Readiness probe; no token and no limit |
 | `GET /metrics`, `/v1/status`, `/v1/accounts`, `/v1/certificates`, `/v1/closures` | Reads, with a token if configured |
 | `POST /v1/transfers`, `/v1/transfers:batch` | `Node.submit`, with a signature of the sender checked |
 | `POST /v1/epoch-changes` | `propose_epoch_change`, with the signatures of governance checked |
@@ -94,7 +97,7 @@ pip install -r requirements-dev.txt
 # The proofs. The version of Lean is in formal/lean/lean-toolchain.
 cd formal/lean && lake build
 grep -rnE '\b(sorry|admit|axiom|opaque|native_decide)\b' PSystem PSystem.lean    # must print nothing
-lake env lean AuditPSystem.lean | grep 'depends on axioms'                       # only propext, Quot.sound, Classical.choice
+lake env lean AuditPSystem.lean > audit.log && python ../../scripts/check_axioms.py audit.log   # only propext, Quot.sound, Classical.choice
 cd ../..
 
 # The tests.
@@ -123,9 +126,9 @@ A failed mutation run says which line and which test. A differential that diverg
 
 **The protocol.**
 
-1. **Closures without votes** (`docs/proposte/passo-3.md`) are the newest and least examined part: the lock on the order replaced votes on the closure. Is `no_double_spend_any_closures` the right statement of what is needed? Is there anything else that relied on a closure being unique?
+1. **Closures without votes** are the newest and least examined part: the lock on the order replaced votes on the closure. Is `no_double_spend_any_closures` the right statement of what is needed? Is there anything else that relied on a closure being unique?
 2. Is it right that a validator never needs the locks of another, once it holds those of one closure of each epoch?
-3. Are snapshots sound as designed? In particular a signer that adds false locks, and a node that takes a snapshot while holding events outside it.
+3. Are snapshots sound as designed? Each lock in a snapshot carries the signature of its sender (`SnapshotAttestation.verify`), as in the reports of a closure. In particular: a node that takes a snapshot while holding events outside it.
 4. Does a floor applied at the start of an epoch hold when a node joins in the middle of one?
 5. With `--unlock`, does anything else in the protocol assume that a reported event stays locked?
 6. What does the old-certificate rule still allow with keys of ended committees, beyond the sender that signed two versions?
@@ -133,7 +136,7 @@ A failed mutation run says which line and which test. A differential that diverg
 **The model.**
 
 7. Do `Certified`, `ViewChain`, `UnlockChain` and `Unforgeable` describe what the Python code gives? Is any of them stronger than it should be?
-8. Could a theorem hold only because a hypothesis is empty? Most have a non-vacuity witness in `formal/lean/PSystem/`, and a counterexample shows only that a hypothesis is needed: `docs/LEAN-REVISIONE.md` lists what has no witness there and which statements are weaker than they read. We would like them checked.
+8. Could a theorem hold only because a hypothesis is empty? Most have a non-vacuity witness in `formal/lean/PSystem/` (listed in `docs/PROOF-OBLIGATIONS.md`); `InstalledClosures`, `UnlockChain` and `SingleVersion` have none there. `ChainValid`, `ViewChain`, `InstalledClosures` and `UnlockChain` range over infinite chains in which every epoch closes, which a finite run does not satisfy literally: extending a finite run (closing its last epoch, then empty epochs) is argued by hand, not proved.
 9. What would be the cheapest way to narrow the gap between model and code?
 
 **The code.**

@@ -131,7 +131,7 @@ MUTATIONS = {
         "                pass\n",
     ),
     "unknown version accepted": (
-        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):\n",
+        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4):\n",
         "            elif False:\n",
     ),
     "version 1 refused instead of migrated": (

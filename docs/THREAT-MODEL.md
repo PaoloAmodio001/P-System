@@ -32,7 +32,8 @@ authors of the code, and it is what an audit should start from and attack.
 | Anyone who reaches the port | Hold connections open | Deadline and limit on handshakes. **Reduced, not removed** | `tests/test_node_server_handshake.py` |
 | Holder of any node certificate | Fill a node with signed events | Nonce window, funds check, bound on evidence. **Reduced, not removed** | `tests/test_service.py` |
 | Intruder in a node with a separate signer | Make the member equivocate | Second vote lock in the signer | `tests/test_hardening.py` EMPIRICAL |
-| Anyone who reaches the API | Flood it | Rate limit per address, bound on connections | `tests/test_hardening.py` EMPIRICAL |
+| Anyone who reaches the API | Flood it, or try requests without the token | Rate limit per address, bound on connections, token with `hmac.compare_digest`; refusals are recorded in the local audit log | `tests/test_hardening.py`, `tests/test_service.py` EMPIRICAL |
+| Anyone who can write the data directory | Edit or delete the audit trail | The entries form a SHA-256 chain, and the file is mode 0600; an edit is detected by `AuditLog.verify`. **Deletion is not prevented** | `tests/test_audit.py` EMPIRICAL |
 | Faulty node | Lie to a client | A certificate checks against the chain, whatever the node | `tests/test_service.py` EMPIRICAL |
 | Network | Delay, reorder, drop, duplicate | Safety assumes nothing about the network | `no_double_spend` quantifies over inputs |
 | Network | Partitions, stalls, cuts, corruption, throttling, between real processes, with `kill -9` and a committee change | Same, plus reconnection and synchronization to catch up | `tests/chaos.py`, `scripts/soak.py` EMPIRICAL, on one machine |
@@ -44,7 +45,7 @@ authors of the code, and it is what an audit should start from and attack.
   break what the model proves. This is the largest gap, and no number of tests closes it.
 - **Denial of service.** Limits are in place, and none has been tuned on a real deployment:
   - Whoever reaches the port, with no certificate, gets a place among 64 handshakes and 16 for each address, and the one waiting longest gives way. So silent connections do not keep an honest peer out, unless they open all the places within its handshake.
-  - A peer with a certificate pays by cost: 5000 tokens per second, 100 for a bad signature, 1 for each KiB of an answer. The wait is on its own reader.
+  - A peer with a certificate pays by cost: 5000 tokens per second, 100 for a bad signature, 1 for each KiB of an answer, and 1 for each 20 steps of the derivation a snapshot request causes. The wait is on its own reader.
   - A certificate that cannot run yet takes room up to 100 000 and up to `max_nonce_ahead` for each sender. One that can run never waits for room. One left out comes back with synchronization, so this delays and does not change a result (`tests/test_saturation.py`).
   - **What is left:** a volumetric attack on the bandwidth or on the SYN queue of the kernel, which needs a firewall. A TLS handshake costs CPU before knowing who is on the other side. A sender with funds costs up to `max_nonce_ahead` votes per epoch, and what bounds the senders with funds is only money. A certificate holder can make a node buffer up to 256 MiB per connection with the pieces of a large message.
 - **Keys** are files with mode 0600 by default. They can be encrypted, and they can live in a signer in another process that
@@ -53,11 +54,15 @@ authors of the code, and it is what an audit should start from and attack.
 - **Revocation** is a list of fingerprints on each node, kept by hand. It stops a TLS certificate, not a member key. No CRL or OCSP.
 - **Timing.** Python and `cryptography` have not been examined for side channels, and neither has the comparison of API
   tokens beyond `hmac.compare_digest`.
+- **Audit trail.** The node writes a local append-only file next to its store (`<store>.audit.jsonl`), mode 0600, with a
+  SHA-256 chain. It records start and stop, unauthorized API calls, rate-limited calls and accepted epoch orders. An edit
+  is detectable, but deletion of the file or of a whole prefix is not, there is no remote collector and no WORM storage.
+  A full disk also stops the audit write; the failure is logged, and the request continues.
 - **Confidentiality.** Every member sees every event, and anyone with a certificate of the authority can read the log
   through synchronization. Immutable logs conflict with rules on deleting personal data: not for personal or health data.
 - **Liveness.** `honest_sender_certifies` assumes delivery, and says that the signatures make a valid certificate, not that anyone gathers them. A node asks again for the events it took that have no certificate, within limits, which is EMPIRICAL and promises nothing: it does this only while it lives, and only for what it took. Nothing promises progress against an adversarial network,
   and a governance that signs two orders for one epoch can split the reports, which stops that epoch from closing for good.
-- **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. A signer can add locks nobody signed to a snapshot: that can only stop the node that takes it from voting on those nonces. A node that pruned cannot prove a conflict under its floor.
+- **Snapshots.** More than `f` members who sign a false snapshot can give a false state to a node that takes it, as such a committee can fork anyway. A node refuses one that lacks an event it executed. Each lock in a snapshot carries the signature of its sender and is checked, so a signer cannot add a lock its sender never signed (`tests/test_snapshot_signed_locks.py`, EMPIRICAL); a lock from a store older than schema 7 that cannot be signed still refuses votes, and its holder signs no snapshot while it is over the floor. A node that pruned cannot prove a conflict under its floor.
 - **API.** TLS is optional and off by default. The rate limit is per address, so a proxy in front makes all clients one.
 - **Power loss.** `kill -9` is tested. Power loss is not, and `fsync` calls were traced by hand once.
 

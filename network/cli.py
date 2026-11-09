@@ -10,6 +10,7 @@ The `psystem` command: create a deployment, run a node, talk to one.
     psystem genesis genesis.json --member KEY... --f 1 --balance ACCOUNT=AMOUNT...
     psystem init-store --config n0/node.toml
     psystem node --config n0/node.toml
+    psystem validate --config n0/node.toml [--json]
     psystem status --api http://127.0.0.1:8080
     psystem transfer --api URL --key K --journal J --to ACCOUNT --amount N [--asset A]
     psystem asset-id --issuer ACCOUNT --name N --supply S
@@ -128,6 +129,18 @@ def _genesis(args) -> int:
             }
         )
     )
+    return 0
+
+
+def _validate(args) -> int:
+    from network.deployment import read_node_config, validate_node_config
+
+    report = validate_node_config(read_node_config(Path(args.config)))
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print(f"VALID node={report['node_id']} genesis={report['genesis_hash']} committee={report['committee_id']}")
+        print(f"store={report['store']} exists={report['store_exists']} api={report['api']['host']}:{report['api']['port']}")
     return 0
 
 
@@ -323,6 +336,11 @@ def _parser() -> argparse.ArgumentParser:
     init_store = commands.add_parser("init-store")
     init_store.add_argument("--config", required=True)
     init_store.set_defaults(run=_init_store)
+
+    validate = commands.add_parser("validate")
+    validate.add_argument("--config", required=True)
+    validate.add_argument("--json", action="store_true")
+    validate.set_defaults(run=_validate)
 
     node = commands.add_parser("node")
     node.add_argument("--config", required=True)

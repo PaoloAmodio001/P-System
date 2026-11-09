@@ -55,6 +55,6 @@ is sent, and what the driver did in memory is rebuilt from the file.
 - **Only single-owner state.** Consensus number `k` for a shared object with `k` writers (Guerraoui et
   al., PODC 2019). Order books, auctions and shared counters do not fit, and this design cannot make
   them fit.
-- **Only transfers of one asset.** Objects and several assets are phase C of `ROADMAP.md`, not done.
+- **Only transfers.** Each transfer moves one asset (accounts `owner/issuer.name.supply`); objects with their own state are not implemented.
 - **Committee members see all events.** There is no confidentiality between them.
 - **Rejoining after a halt takes people.** See `docs/OPERATIONS.md`.

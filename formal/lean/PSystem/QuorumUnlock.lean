@@ -5,7 +5,7 @@ namespace PSystem.Quorum
 /-!
 # Unlocking at the end of an epoch, with `n = 5f+1` (decision D2)
 
-Step 6 of the program, in `docs/proposte/passo-6.md`. With `n = 5f+1`, `q = 4f+1`, an event with at least
+With `n = 5f+1`, `q = 4f+1`, an event with at least
 `2f+1` reports in a closure becomes a lock, and an event with fewer does not. A `(sender, nonce)` with its
 votes split and no event at that threshold is free in the next epoch. Locks of earlier epochs stay.
 

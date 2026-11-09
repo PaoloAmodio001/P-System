@@ -48,7 +48,7 @@ MUTATIONS = {
         "",
     ),
     "unknown schema version opened": (
-        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):\n"
+        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4):\n"
         "                raise VoteStoreError(\"UNSUPPORTED VERSION OF THE VOTE STORE\")\n",
         "",
     ),
@@ -88,9 +88,11 @@ MUTATIONS = {
         "",
     ),
     "same event again refused": (
-        "                if existing:\n"
+        "                        self._commit()\n"
+        "\n"
         "                    return True\n",
-        "                if existing:\n"
+        "                        self._commit()\n"
+        "\n"
         "                    return False\n",
     ),
     "lock on the sender only": (
@@ -110,12 +112,13 @@ MUTATIONS = {
         "                        (epoch, event.sender, str(event.nonce)),\n",
     ),
     "vote not committed": (
-        "                        (epoch, event_id, signed.public_key.hex(), signed.signature.hex()),\n"
-        "                    )\n"
+        "                    self._record_gathering(epoch, event_id)\n"
         "\n"
-        "                self._commit()\n",
-        "                        (epoch, event_id, signed.public_key.hex(), signed.signature.hex()),\n"
-        "                    )\n",
+        "                self._commit()\n"
+        "                return True\n",
+        "                    self._record_gathering(epoch, event_id)\n"
+        "\n"
+        "                return True\n",
     ),
     "failed write reported as a refusal": (
         "                raise VoteStoreError(f\"VOTE NOT RECORDED: {error}\") from error\n",
@@ -142,12 +145,10 @@ MUTATIONS = {
         "                    \"SELECT canonical, signatures, epoch FROM certificates ORDER BY position DESC\"\n",
     ),
     "certificate not committed": (
-        "                        certificate.epoch,\n"
-        "                    ),\n"
+        "                    (event.event_id(),),\n"
         "                )\n"
         "                self._commit()\n",
-        "                        certificate.epoch,\n"
-        "                    ),\n"
+        "                    (event.event_id(),),\n"
         "                )\n",
     ),
     "failed write of a certificate ignored": (

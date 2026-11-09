@@ -6,12 +6,14 @@ required, and the configuration is refused without it. Outside one machine set `
 the start. The machine-readable description is `docs/openapi.json`, and a test keeps it equal to the code.
 
 Each client address has `requests_per_second` (default 1000) with a `burst` (default twice that). Beyond it
-the answer is `429` with `Retry-After: 1`. A batch costs its size. `/healthz` is not limited. At most 256
+the answer is `429` with `Retry-After: 1`. A batch costs its size. `/healthz` and `/readyz` are not limited. At most 256
 connections at once: more are closed. Behind a proxy all clients are one address, so limit there.
 
-With a token, every path but `/healthz` needs `Authorization: Bearer <token>`. The token protects the
+`/healthz` and `/readyz` are public probes. With a token, every other path needs `Authorization: Bearer <token>`. The token protects the
 operator from noise and from read access. It does not protect accounts: a transfer is valid because its
-sender signed it, whoever delivers it.
+sender signed it, whoever delivers it. Every response includes `X-Request-ID`; clients may send an
+ASCII `X-Request-ID` (1-128 characters) to correlate a retry with operator logs. The Python SDK generates
+one for each request and exposes the last value as `Client.last_request_id`.
 
 ## Reads
 
@@ -21,6 +23,7 @@ proves something: see "Proof" below.
 | Path | Answer |
 |---|---|
 | `GET /healthz` | `200 {"status":"ok"}`, or `503 {"status":"halted"}` |
+| `GET /readyz` | `200 {"status":"ready"}`, or `503 {"status":"not_ready"}` when halted; during startup the HTTP socket is not yet exposed |
 | `GET /metrics` | Text format of Prometheus |
 | `GET /v1/status` | `node_id`, `epoch`, `committee_id`, `genesis_hash`, `executed`, `state_root`, `halted`, `conflicted`, `is_member`, `peers`, `guilty_members` |
 | `GET /v1/accounts/{account}` | `balance`, `next_nonce`. An account of an asset holds a slash: write it `%2F` |
@@ -52,7 +55,10 @@ proves something: see "Proof" below.
 | `503` | The node cannot write to its disk. Nothing was signed |
 
 Sending the same event again is always safe, and is what to do after an error or a timeout. Sending
-another event for the same nonce can lock the account for good: use `sdk.client.Wallet`.
+another event for the same nonce can lock the account for good: use `sdk.client.Wallet`. The SDK's
+`submit_with_retry` and `submit_many_with_retry` retry only connection failures, `429`, and `503`,
+and always serialize the same signed objects. They do not retry `400`, `401`, or `409`, and they do
+not imply certification: inspect a certificate and verify it with `ChainVerifier`.
 
 ## Assets
 
@@ -74,5 +80,5 @@ Client("http://node:8080").wait_final(signed.transfer, verifier, seconds=30)
 ## Compatibility
 
 Within `/v1`, fields may be added and none is removed or changes meaning. A breaking change takes
-`/v2`, and `/v1` stays for at least one release. Until 1.0 the event format may still change: see phase C
-in `ROADMAP.md`.
+`/v2`, and `/v1` stays for at least one release. The event format is not frozen: objects with their own state
+would change it.

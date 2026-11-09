@@ -1,6 +1,6 @@
 """An event of an honest sender that stopped with every node up, and what prevents it.
 
-Measured in docs/piano-bizantino.md. The node with the lower id called back a peer that had already called it,
+Measured in archive/docs/piano-bizantino.md. The node with the lower id called back a peer that had already called it,
 and closed the connection in use: what was queued, in flight or still to be answered on it was lost, and
 nothing sent it again. These tests stage that moment with proxies, so that they do not depend on timing.
 """
@@ -34,6 +34,8 @@ from tests.test_quorum_node import GENESIS, PAYER, Committee4, signed
 BURST = 50
 # Longer than a node waits between two tries of a peer that cannot be reached.
 A_CALL_BACK_WOULD_HAVE_COME = 3.0
+# A thread of a proxy already in `recv` when its link stalls still forwards what it gets: 0.2 s at most.
+UNTIL_A_STALL_HOLDS = 0.3
 
 
 def peer_of(node: Node) -> Peer:
@@ -152,6 +154,7 @@ def test_a_burst_is_not_lost_to_a_call_back(proxied):
     for peer in (2, 3):
         made.links[(peer, 0)].stalled = True
 
+    time.sleep(UNTIL_A_STALL_HOLDS)
     sender = measure.Sender(Identity.load(made.sender_key))
     clients[0].submit_many([sender.next() for _ in range(BURST)])
 
@@ -427,6 +430,7 @@ def test_a_burst_lost_with_two_connections_runs_all_the_same(proxied):
         for link in ((0, peer), (peer, 0)):
             made.links[link].stalled = True
 
+    time.sleep(UNTIL_A_STALL_HOLDS)
     clients[0].submit_many([sender.next() for _ in range(BURST)])
     time.sleep(0.5)
 

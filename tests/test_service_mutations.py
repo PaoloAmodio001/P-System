@@ -75,9 +75,8 @@ MUTATIONS = {
     },
     ("crypto.identity", "crypto/identity.py", "service"): {
         "key readable by others": (
-            "        if path.stat().st_mode & 0o077:\n"
-            "            raise ValueError(f\"KEY FILE IS READABLE BY OTHERS: {path}\")\n",
-            "",
+            "        if st.st_mode & 0o077:\n",
+            "        if False:\n",
         ),
         "key overwritten": (
             "os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n\n        with os.fdopen",

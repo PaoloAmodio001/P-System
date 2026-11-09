@@ -6,7 +6,7 @@ namespace PSystem.Quorum
 /-!
 # Snapshots, pruning, and validators that do not hold the same locks
 
-Step 2 of the program in `docs/proposte/passo-2.md`. A snapshot says: with these events, the state is
+A snapshot says: with these events, the state is
 this. It is a fact and not a choice, so two different snapshots can both be true, and nothing here
 needs a vote lock.
 

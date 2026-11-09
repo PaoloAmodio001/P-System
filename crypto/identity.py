@@ -1,4 +1,5 @@
 import os
+import stat
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -60,17 +61,37 @@ class Identity:
 
     @classmethod
     def load(cls, path: Path, passphrase: bytes | None = None) -> "Identity":
-        """Read a key saved by `save`. A key that others can read is refused."""
+        """Read a key saved by `save`. A key that others can read is refused.
+
+        Symlinks are resolved for permission checks (target permissions apply);
+        a symlink to a 0600 key is accepted, a symlink to a readable-by-others
+        key is refused.
+        """
         path = Path(path)
 
-        if path.stat().st_mode & 0o077:
-            raise ValueError(f"KEY FILE IS READABLE BY OTHERS: {path}")
+        try:
+            st = path.stat()
+        except FileNotFoundError as error:
+            raise ValueError(f"KEY FILE NOT FOUND: {path}") from error
+        except OSError as error:
+            raise ValueError(f"CANNOT ACCESS KEY FILE: {path}: {error}") from error
+
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"KEY PATH IS NOT A REGULAR FILE: {path}")
+
+        if st.st_mode & 0o077:
+            raise ValueError(
+                f"KEY FILE IS READABLE BY OTHERS: {path}. "
+                f"Remediation: chmod 600 {path} (do not auto-correct; fix permissions explicitly)."
+            )
 
         try:
             key = serialization.load_pem_private_key(path.read_bytes(), passphrase or None)
         except TypeError as error:
             # Encrypted without a passphrase, or the other way around. Not the file's text.
             raise ValueError(f"WRONG USE OF A PASSPHRASE FOR THIS KEY: {path}") from error
+        except (ValueError, OSError) as error:
+            raise ValueError(f"CANNOT READ KEY FILE: {path}: {error}") from error
 
         if not isinstance(key, Ed25519PrivateKey):
             raise ValueError(f"NOT AN ED25519 KEY: {path}")

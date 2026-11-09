@@ -90,9 +90,16 @@ list that cannot be read refuses every peer. It stops the TLS certificate and no
 Then, once:
 
 ```sh
+psystem validate --config n0/node.toml --json
 psystem init-store --config n0/node.toml
 psystem node --config n0/node.toml
 ```
+
+`validate` is a read-only preflight. It checks the configuration, genesis identity, referenced TLS
+files and certificate loading without opening the vote store, migrating it, binding sockets or
+starting peers. Compare `genesis_hash` and `committee_id` between organizations before creating a
+store. A report with `store_exists: false` is expected only on the first initialization; `init-store`
+is the only command that creates the store.
 
 `node` never creates a store. If the file is missing or cannot be opened it stops with exit code 2, and that must stop
 there: `deploy/systemd/psystem.service` does not restart on it. A validator that starts again with no votes
@@ -103,9 +110,19 @@ Under systemd: the unit runs `/usr/local/bin/psystem` as the user `psystem`, wit
 Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a `docker-compose.yml`. It publishes the API of node
 `i` on `127.0.0.1:(8080 + i)`, with a token in `node-i/api.token`, in clear: fit for one machine and nothing more.
 
+## Capacity measurements
+
+`benchmarks/quorum_benchmark.py` supports bounded multi-sender measurements with `--senders N`.
+These results describe capacity on the measured host only. They do not prove availability, safety,
+quorum liveness or production readiness, and must not be substituted for the separate-machine
+procedure in `docs/SEPARATE-MACHINES.md`.
+
 ## Monitoring
 
-Logs go to standard error, one JSON object per line. Metrics at `/metrics`:
+Logs go to standard error, one JSON object per line. Use `/healthz` for process liveness and
+`/readyz` for service readiness. Readiness means that startup completed and the node is not halted;
+it does not mean that a quorum is available or that a submitted event is certified. During startup the
+API socket is not exposed; once exposed, a halted node returns `503` from both endpoints. Metrics are at `/metrics`:
 
 | Metric | Watch for |
 |---|---|
@@ -117,6 +134,23 @@ Logs go to standard error, one JSON object per line. Metrics at `/metrics`:
 | `psystem_certificates_waiting` | Growing: certificates that cannot run yet, usually a missing parent |
 | `psystem_equivocations` | Senders signing two versions: a client bug or an attack |
 | `psystem_store_commit_seconds_total` / `psystem_store_commits_total` | Average write time: disk trouble |
+| `psystem_events_gathering` | Events this node took with no certificate yet. It follows the traffic |
+| `psystem_gathering_oldest_seconds` | **Growing: an event is stuck.** See "An event is stuck". A restart starts it again |
+| `psystem_vote_requests_resent_total` | Growing fast: messages are being lost, or an event cannot get a quorum |
+| `psystem_connections_replaced_total` | Growing: two nodes keep calling each other at once, or something cuts connections |
+
+The security audit log is next to the store, `<store>.audit.jsonl`, mode 0600. It records `service.started`,
+`service.stopped`, `api.unauthorized`, `api.rate_limited` and `epoch.change.ordered`, with a SHA-256 chain. Check it after
+an incident, before rotating or deleting it:
+
+```
+python -c "from pathlib import Path; from network.audit import AuditLog; print(AuditLog.verify(Path('votes.sqlite.audit.jsonl')))"
+```
+
+An edit makes the command fail. Deleting the file is not detectable from the node: keep a copy off the machine if the
+operator needs evidence against a local attacker.
+
+**Audit log startup integrity cost (current).** `AuditLog` verifies the entire existing chain at startup/open (O(n) in number of lines) and fails explicitly with no further writes on tampering. Synthetic measurement (this environment, 2026-11-08, 200k JSONL entries / ~36 MB, `AuditLog.verify`): ~1.22 s (~6.1 s per 1M lines). Perceptible impact is expected around hundreds of thousands to millions of lines depending on hardware/storage; plan rotation/archival accordingly. **Future work (not implemented):** periodic checkpoints every N lines storing `hash(hash_prefix_state)` to bound startup verification cost while preserving tamper evidence between checkpoints.
 
 ## Failures
 
@@ -126,8 +160,18 @@ With at most `f` down nothing stops. Restart it: it catches up by itself, from a
 
 ### More than `f` nodes are down
 
-No certificates form and nothing unsafe happens. Events accepted meanwhile stay unfinished: their
-senders send them again once a quorum is back.
+No certificates form and nothing unsafe happens. Events accepted meanwhile stay unfinished. The node that
+took each of them asks again once a quorum is back. If that node is lost for good, the sender sends the event elsewhere.
+
+### An event is stuck
+
+The node asks again for the votes of what it took, at least every 30 s, and across a restart. It stops with a certificate, or when the epoch ends.
+
+1. `psystem_peers_connected` below `2f`, or nodes down: bring them back. The event goes on by itself.
+2. `psystem_equivocations` above 0: the sender may have signed two versions, and the votes may be split. **No alternative may ever reach a quorum, and no node chooses.** The event stays until the epoch ends. To clear it, close the epoch: that is a decision of governance.
+
+**Nonce locked permanently (split votes, no unlock).** In standard mode (`3f+1`), if validators report divergent votes for the same `(sender, nonce)` and the epoch closes without `unlock` (`5f+1`), the closure installs conflicting locks and that nonce has no safe transition out. The node logs `nonce.locked_permanently` (sender, nonce, epoch, reason=`split_votes_no_unlock`, divergent_votes, versions). Operator response: treat it as a stuck sender/nonce; do not attempt nonce recovery by rewriting state. Resolution requires governance/application handling (for example a new epoch/account flow outside that nonce) and, for future epochs, consider `--unlock` only with its safety/capacity tradeoffs understood. Do not implement automatic timeout recovery.
+3. Neither: look at `psystem_connections_replaced_total` and at the logs of the peers.
 
 ### The disk is full, or fails
 
@@ -165,11 +209,19 @@ never close. New members set `joining = true` and
 catch up by themselves. Check `psystem_epoch` on every node. Rotating the key of a member is this same
 operation. Rotating the key of an **account** does not exist: the account is the key.
 
+## Governance
+
+- **Validator selection**: no formal, protocol-enforced selection process is defined in this repository. The committee (validator keys and `f`) is chosen by the operator/deployer and fixed in genesis / epoch changes. A poorly chosen or non-independent committee can violate the safety assumption (see `README.md` and threat model): with more than `f` faulty/colluding members, conflicting certificates can be produced and the network may fork/halt.
+- **Replacement / rotation**: replace or rotate a member’s key via an epoch change (`EpochChange` signed by governance, applied as in “Changing the committee”). Rotating an **account** key is not supported (the account is the key).
+- **Independence criteria**: not enforced by code. Operators should ensure validators are operated independently (organizations, infrastructure, jurisdictions, key custody) so that compromising `f` or fewer is not correlated; document your criteria out of band.
+- **Committee deadlock / stall**: if governance issues two different orders for the same epoch, or the committee cannot produce/complete required quorum actions, the epoch may never close (voting may be stopped with no in-protocol escape). Recovery is operational/out-of-band: preserve evidence, coordinate among operators, and if required start a **new network from a new genesis** with an agreed committee/history (see “Halt”). Treat governance key custody and single-order-per-epoch discipline as critical.
+
+
 ## Four machines
 
 To measure on real hosts. **Nobody has done this yet.** This puts all keys on one machine first, which is fine for a measurement and wrong for a real deployment.
 
-The complete procedure, with what to measure, for how long and how to compare: `docs/MACCHINE-SEPARATE.md`.
+The complete procedure, with what to measure, for how long and how to compare: `docs/SEPARATE-MACHINES.md`.
 
 ```sh
 # On any machine, with the addresses of the four.
@@ -201,6 +253,13 @@ The API is on all interfaces with a token and no TLS: on a network you do not co
 ## Choosing unlocking
 
 `psystem genesis --unlock` gives 5 signatures out of 6 with `f = 1`, against 3 out of 4. With one member down and one faulty, nothing certifies. What you get is that an account that equivocated gets its nonce back at the next change of committee, instead of staying stuck on it for good. It cannot be changed later: it is in the identity of the chain.
+
+
+
+## Liveness
+
+- **Nonce locked permanently (standard / fail-closed, no-unlock)**: in the standard configuration, a split-vote/divergent situation for a `(sender, nonce)` can leave that nonce **permanently locked**. This is expected **fail-closed** behavior (safety over liveness): the system avoids accepting conflicting execution. Operators should monitor `nonce.locked_permanently` logs and the `psystem_nonce_locked_permanently_total` counter / `PSystemNonceLockedPermanently` alert (`increase(...[1h]) > 0`), and follow incident guidance.
+- **Unlocking for deployments that require liveness**: deployments that need the nonce to be recoverable across epoch boundaries can use the **unlock** variant (`n = 5f+1`, quorum `4f+1`). At the next committee change/epoch closure under that model, an equivocated/split nonce can be unlocked according to the protocol rules. **Trade-offs**: different committee size and quorum (`n = 5f+1`, `q = 4f+1` against `n = 3f+1`, `q = 2f+1`), different trust/fault assumptions and operational cost; it cannot be changed after genesis (chain identity/parameters). Choose at genesis via the documented unlocking configuration (e.g. `psystem genesis --unlock` where supported) and validate against `docs/PROTOCOL.md`, `docs/THREAT-MODEL.md` and `docs/BENCHMARKS.md` before production use.
 
 ## Snapshots and pruning
 
@@ -236,6 +295,8 @@ by hand**: nothing can detect it, and that node then counts as faulty.
 
 ## Upgrading
 
+The store moved to schema 6, and an older binary refuses it: to go back, use a backup taken before the upgrade, and see "Restoring".
+
 Nothing has been tested with two versions in one committee. Stop a node, take a backup, upgrade and start: the
 store migrates on opening, inside one transaction. A migration has no way back: keep the backup. A change of
 protocol version needs all the nodes at once, and they refuse each other meanwhile. See
@@ -246,3 +307,12 @@ protocol version needs all the nodes at once, and they refuse each other meanwhi
 They last a year by default, and an expired one stops connections. Issue a new one with the same `node_id` and
 restart the node. To stop one sooner, use `tls_revoked`, as in "Setting up". That stops the certificate and not the member: remove a member by changing committee. If a key of the
 authority is lost, start from a new authority.
+
+## Rotating signing keys
+
+This is for the node/member **signing key** (identity), not TLS certificates (see "Rotating certificates").
+
+- **Comando:** `python3 scripts/rotate_key.py --old <path-old-key> --new <path-new-key>`
+- **Cosa fa:** genera una nuova chiave di firma con permessi `0600` e stampa una procedura coordinata di sostituzione.
+- **Cosa NON fa:** **non** esegue la rotazione su committee/nodi/deployment. La sostituzione effettiva richiede coordinamento (cambio committee/epoch, aggiornamento configurazione/genesis secondo il flusso operativo, riavvio e verifica nodi) — vedere anche "Changing the committee" e "Governance".
+- **Quando usarlo:** sospetta compromissione della chiave o rotazione periodica secondo policy; da eseguire solo come parte di una procedura coordinata e tracciata.

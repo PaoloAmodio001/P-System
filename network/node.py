@@ -123,6 +123,7 @@ class Node:
 
         # Background supervisor for automatic peer reconnection.
         self._new_connection = False
+        self.connections_replaced = 0
         self._reconnect_thread = None
         self._reconnect_running = False
         self._reconnect_stop_event = threading.Event()
@@ -774,6 +775,9 @@ class Node:
                 else:
                     self._publish_peer_connection(node_id, connection)
                     close_existing = existing
+                    # What is on the old one is lost, and asked for again. Now only two calls at once.
+                    self.connections_replaced += 1
+                    QUORUM_LOG.info("peer connection replaced", extra={"peer": node_id})
             else:
                 self._publish_peer_connection(node_id, connection)
                 close_existing = existing

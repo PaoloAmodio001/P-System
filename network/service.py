@@ -14,12 +14,16 @@ import re
 import ssl
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
 from core.attestation import EpochChange
 from core.decision_status import DecisionStatus
+from core.derive import check_supply_conservation
+from core.exceptions import SupplyViolation
 from core.signed_event import SignedTransfer
+from network.audit import AuditError, AuditLog
 from network.deployment import NodeConfig
 from network.message import (
     decode_epoch_change,
@@ -100,6 +104,11 @@ def metrics_text(node: Node) -> str:
             ("psystem_snapshot_events", "gauge", "Events the last snapshot covers", 0 if replica.base is None else len(replica.base.ids)),
             ("psystem_certificates_held", "gauge", "Certificates this node still holds", len(replica.log)),
             ("psystem_epoch_votes", "gauge", "Votes of this node in this epoch: close an epoch before about 50000", store.epoch_vote_count()),
+            ("psystem_events_gathering", "gauge", "Events this node took that have no certificate yet", driver.gathering_count),
+            ("psystem_gathering_oldest_seconds", "gauge", "How long the oldest of them has waited, since this process started", round(driver.gathering_oldest_seconds, 3)),
+            ("psystem_vote_requests_resent_total", "counter", "Requests for votes sent again", driver.requests_resent),
+            ("psystem_nonce_locked_permanently_total", "counter", "Nonces permanently locked by split votes in standard (no-unlock) epoch closures", replica.nonce_locked_permanently_total),
+            ("psystem_connections_replaced_total", "counter", "Connections to a peer replaced while alive: what was on them is lost and asked for again", node.connections_replaced),
         ]
 
     lines = []
@@ -170,10 +179,13 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def _reply(self, status: int, body: dict) -> None:
+        if "error" in body and "request_id" not in body:
+            body = {**body, "request_id": self.request_id}
         data = json.dumps(body, sort_keys=True).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Request-ID", self.request_id)
         self.end_headers()
         self.wfile.write(data)
 
@@ -182,20 +194,33 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Request-ID", self.request_id)
         self.end_headers()
         self.wfile.write(data)
+
+    @property
+    def request_id(self) -> str:
+        request_id = getattr(self, "_request_id", None)
+        if request_id is None:
+            request_id = self.headers.get("X-Request-ID", "")
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", request_id):
+                request_id = uuid.uuid4().hex
+            self._request_id = request_id
+        return request_id
 
     def _within_rate(self) -> bool:
         if self.server.limiter.allow(self.client_address[0]):
             return True
 
+        self._audit("api.rate_limited", path=self.path.split("?", 1)[0])
         # The body, if any, stays unread, so this connection cannot be used again.
         self.close_connection = True
-        data = json.dumps({"error": "TOO MANY REQUESTS"}).encode()
+        data = json.dumps({"error": "TOO MANY REQUESTS"}, sort_keys=True).encode()
         self.send_response(429)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Retry-After", "1")
+        self.send_header("X-Request-ID", self.request_id)
         self.end_headers()
         self.wfile.write(data)
         return False
@@ -207,7 +232,28 @@ class _Handler(BaseHTTPRequestHandler):
             return True
 
         given = self.headers.get("Authorization", "")
-        return hmac.compare_digest(given.encode(), f"Bearer {token}".encode())
+        authorized = hmac.compare_digest(given.encode(), f"Bearer {token}".encode())
+
+        if not authorized:
+            self._audit("api.unauthorized", path=self.path.split("?", 1)[0])
+
+        return authorized
+
+    def _audit(self, action: str, **fields) -> None:
+        audit = getattr(self.server, "audit", None)
+
+        if audit is None:
+            return
+
+        try:
+            audit.append(
+                action,
+                request_id=self.request_id,
+                client=self.client_address[0],
+                **fields,
+            )
+        except (OSError, ValueError, TypeError) as error:
+            LOG.error("audit write failed", extra={"reason": str(error)})
 
     def _read_json(self):
         try:
@@ -246,6 +292,14 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             halted = self.node._quorum.driver.halted
             self._reply(503 if halted else 200, {"status": "halted" if halted else "ok"})
+            return
+
+        if path == "/readyz":
+            # Readiness is deliberately weaker than quorum availability: it says that the
+            # service has completed startup and can accept requests. Certificates, not this
+            # endpoint, establish protocol finality.
+            ready = self.server.started and not self.node._quorum.closed and not self.node._quorum.driver.halted
+            self._reply(200 if ready else 503, {"status": "ready" if ready else "not_ready"})
             return
 
         if not self._within_rate():
@@ -329,14 +383,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         with self.node._state_lock:
-            found = next(
-                (
-                    certificate
-                    for certificate in self.node._quorum.replica.log
-                    if certificate.event.event_id() == event_id
-                ),
-                None,
-            )
+            found = self.node._quorum.replica.certificate_of(event_id)
 
         if found is None:
             self._reply(404, {"error": "NOT EXECUTED HERE"})
@@ -385,6 +432,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(400, {"error": str(error)})
             return
 
+        # Refused here with its reason. The node would refuse it anyway, by `auth`, with no answer.
+        try:
+            for event in events:
+                check_supply_conservation(event.transfer)
+        except SupplyViolation as error:
+            self._reply(
+                422,
+                {
+                    "error": "SUPPLY_VIOLATION",
+                    "violated": error.violated,
+                    "delta": error.delta,
+                    "event_ids": [event.transfer.event_id() for event in events],
+                },
+            )
+            return
+
         try:
             if single:
                 accepted = self.node.submit(events[0])
@@ -418,6 +481,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(409, {"accepted": False})
             return
 
+        self._audit("epoch.change.ordered", change_id=change.change_id)
         self._reply(202, {"accepted": True, "change_id": change.change_id})
 
 
@@ -425,6 +489,7 @@ class _ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
     ssl_context: ssl.SSLContext | None = None
+    started = False
 
     def __init__(self, *args, **kwargs) -> None:
         self._places = threading.BoundedSemaphore(MAX_CONNECTIONS)
@@ -480,6 +545,15 @@ class Service:
         self._api.node = self.node
         self._api.token = config.api.token
         self._api.limiter = RateLimiter(config.api.requests_per_second, config.api.burst)
+        audit_path = config.store.with_name(f"{config.store.name}.audit.jsonl")
+        try:
+            self.audit = AuditLog(audit_path)
+        except AuditError as error:
+            raise RuntimeError(
+                f"AUDIT INTEGRITY CHECK FAILED AT STARTUP: {audit_path}: {error}. "
+                "The node will not start and no further writes were made."
+            ) from None
+        self._api.audit = self.audit
 
         if config.api.tls_certificate is not None:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -505,6 +579,15 @@ class Service:
 
         self._api_thread = threading.Thread(target=self._api.serve_forever, daemon=True)
         self._api_thread.start()
+        self._api.started = True
+        self.audit.append(
+            "service.started",
+            node_id=self.config.node_id,
+            port=self.node.port,
+            api_port=self.api_address[1],
+            epoch=self.node.committee_epoch,
+            genesis_hash=self.config.genesis.file_hash,
+        )
         LOG.info(
             "node started",
             extra={
@@ -517,9 +600,12 @@ class Service:
         )
 
     def stop(self) -> None:
+        self._api.started = False
         self._api.shutdown()
         self._api.server_close()
         self.node.stop()
+        self.audit.append("service.stopped", node_id=self.config.node_id)
+        self.audit.close()
         LOG.info("node stopped", extra={"node_id": self.config.node_id})
 
     def wait_until_stopped(self, stop_event: threading.Event) -> None:

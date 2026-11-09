@@ -72,8 +72,8 @@ MUTATIONS = {
     },
     "network.quorum": {
         "locks of another committee": (
-            "        locks = closure.locks(current)\n",
-            "        locks = closure.locks(replace(current, unlock=False, members=current.members[:3 * current.f + 1]))\n",
+            "        locks = closure.signed_locks(current)\n",
+            "        locks = closure.signed_locks(replace(current, unlock=False, members=current.members[:3 * current.f + 1]))\n",
         ),
     },
     "network.deployment": {

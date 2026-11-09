@@ -15,6 +15,6 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 USER psystem
 WORKDIR /data
 VOLUME /data
-HEALTHCHECK --interval=15s --timeout=5s CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)"
+HEALTHCHECK --interval=15s --timeout=5s CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).status == 200 else 1)"
 ENTRYPOINT ["psystem"]
 CMD ["node", "--config", "/data/node.toml"]

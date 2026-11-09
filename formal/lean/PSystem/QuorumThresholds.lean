@@ -5,7 +5,7 @@ namespace PSystem.Quorum
 /-!
 # Thresholds other than `2f+1`, and what a report can and cannot tell
 
-Phase B of `ROADMAP.md`. Results on the model, for one committee:
+Results on the model, for one committee:
 
 - `no_double_spend_q`: `no_double_spend` with any quorum `q`, under `n + |F| < 2q`.
   `no_double_spend` for `n = 3f+1` and the configuration `n = 5f+1`, `q = 4f+1` are
@@ -15,7 +15,7 @@ Phase B of `ROADMAP.md`. Results on the model, for one committee:
   that is `f+1`, which is more than the hypothesis allows.
 - `split_lock_ambiguous`: with `n = 4`, `q = 3`, a set of reports of 3 validators can be
   compatible with a certificate for either of two alternatives. So no rule on the
-  reports can keep whatever was certified: this is constraint 2 of `ROADMAP.md`.
+  reports can keep whatever was certified, and unlocking needs `n = 5f+1`.
 - `unlock_safe_5f1`: with `n = 5f+1`, `q = 4f+1` and reports from at least `4f+1`
   validators, a certified event has at least `2f+1` reports, and every other event at
   most `2f`. Here a rule on the reports is deterministic.

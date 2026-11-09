@@ -2,7 +2,7 @@
 
 Left out: test_a_burst_is_not_lost_to_a_call_back and test_a_burst_lost_with_two_connections_runs_all_the_same,
 whose nodes are separate processes that import the real modules. Each was seen to fail by hand without
-the correction: see docs/piano-bizantino.md.
+the correction: see archive/docs/piano-bizantino.md.
 """
 
 from pathlib import Path
@@ -52,16 +52,16 @@ MUTATIONS = {
             "            key=lambda pending: pending.signed.transfer.nonce,\n",
         ),
         "asked again with a certificate held": (
-            "                or (event.sender, event.nonce) in self._known\n",
+            "                or known is not None\n",
             "",
         ),
         "asked again with the votes gone": (
-            "                canonical not in self._aggregating\n                or (event",
-            "                (event",
+            "                canonical not in self._aggregating\n                or known is not None\n",
+            "                known is not None\n",
         ),
         "the votes stay after a certificate": (
-            "                self._aggregating.pop(canonical, None)\n",
-            "",
+            "                del self._to_resend[canonical]\n                self._aggregating.pop(canonical, None)\n\n",
+            "                del self._to_resend[canonical]\n\n",
         ),
         "a new connection leaves the wait as it was": (
             "            pending.wait = self.RESEND_FIRST_SECONDS\n",

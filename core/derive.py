@@ -1,7 +1,26 @@
-from core.state import State
+from core.exceptions import SupplyViolation
+from core.state import State, account_asset
 from core.event import Transfer, deduplicate_events
 from core.resolver import ConflictResolver
 
+
+
+
+def check_supply_conservation(event: Transfer) -> None:
+    """
+    Raise SupplyViolation if the event crosses declared asset account sets. A check on input, for the
+    API. The protocol has the same rule in `auth` (`is_authorized_transfer`, `stays_in_one_asset`), as
+    the model does: derivation and execution do not look at assets (formal/lean/PSystem/QuorumAssets.lean).
+    """
+    sender_asset = account_asset(event.sender)
+    receiver_asset = account_asset(event.receiver)
+    if sender_asset != receiver_asset:
+        violated = {}
+        if sender_asset is not None:
+            violated[sender_asset] = -event.amount
+        if receiver_asset is not None:
+            violated[receiver_asset] = event.amount
+        raise SupplyViolation(violated=violated, delta=event.amount)
 
 class StateDeriver:
     @staticmethod

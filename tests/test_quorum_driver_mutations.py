@@ -60,13 +60,13 @@ MUTATIONS = {
         "            key not in self.equivocations\n",
     ),
     "submit asks even when its own vote is refused": (
-        "        vote = self.replica.handle_vote_request(event, signed)\n"
+        "        vote = self.replica.handle_vote_request(event, signed, gathering=True)\n"
         "\n"
         "        if vote is None:\n"
         "            return _NOTHING\n"
         "\n"
         "        _, votes = self._aggregating",
-        "        vote = self.replica.handle_vote_request(event, signed)\n"
+        "        vote = self.replica.handle_vote_request(event, signed, gathering=True)\n"
         "\n"
         "        if vote is None:\n"
         "            return DriverOutput(broadcasts=(encode_vote_request(signed),))\n"
@@ -154,8 +154,9 @@ MUTATIONS = {
         "        if known is not None:\n",
     ),
     "certificate not remembered, so no conflict with the buffer": (
+        "            event_id = event.event_id()\n"
         "            self._known[key] = certificate\n",
-        "",
+        "            event_id = event.event_id()\n",
     ),
     "log not remembered after a restart": (
         "            for certificate in replica.log\n",

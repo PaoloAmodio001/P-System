@@ -6,6 +6,7 @@ empirical, not a refinement proof.
 """
 
 import heapq
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -32,7 +33,7 @@ from core.attestation import (
     is_well_formed_event,
 )
 from core.derive import StateDeriver
-from core.attestation import is_authorized_transfer
+from core.attestation import is_authorized_transfer, stays_in_one_asset
 from core.event import Transfer
 from core.equivocation import EquivocationProof
 from core.signed_event import SignedTransfer
@@ -71,6 +72,11 @@ from network.message import (
 LOG = logging.getLogger("psystem.quorum")
 
 
+def is_executable_event(event: Transfer) -> bool:
+    """The part of executability that no later state can change."""
+    return event.amount > 0 and event.sender != event.receiver
+
+
 class VoteStoreError(Exception):
     """
     The store cannot be trusted or could not record a write.
@@ -80,7 +86,9 @@ class VoteStoreError(Exception):
     """
 
 
-_SCHEMA_VERSION = "5"
+_SCHEMA_VERSION = "7"
+_SCHEMA_VERSION_6 = "6"
+_SCHEMA_VERSION_5 = "5"
 _SCHEMA_VERSION_4 = "4"
 _SCHEMA_VERSION_3 = "3"
 _SCHEMA_VERSION_2 = "2"
@@ -157,6 +165,24 @@ _SNAPSHOT_TABLES = (
     "CREATE TABLE floors (sender TEXT PRIMARY KEY, nonce TEXT NOT NULL)",
 )
 
+# What schema 6 adds: the events this node took and asks votes for. The event and the proof that its
+# sender signed it are in `votes` and `vote_evidence`, so that a row costs little, and it is written
+# with the vote: a client that got its answer can count on this surviving, and it costs no other fsync.
+_GATHERING_TABLE = """
+    CREATE TABLE gathering (
+        event_id TEXT PRIMARY KEY,
+        epoch INTEGER NOT NULL
+    )
+"""
+
+# What schema 7 adds: the signature of the sender of each lock, so that a snapshot can pass the lock on
+# and whoever takes it can check it. A lock from a file before schema 7 that no closure on file signs
+# keeps NULL here: it still refuses votes, and this validator signs no snapshot it would have to carry.
+_SIGNED_LOCK_COLUMNS = (
+    "ALTER TABLE locks ADD COLUMN public_key TEXT",
+    "ALTER TABLE locks ADD COLUMN signature TEXT",
+)
+
 # In a file before schema 5. A closure no longer takes votes.
 _OLD_CLOSURE_VOTES = """
     CREATE TABLE closure_votes (
@@ -198,6 +224,7 @@ _SCHEMA = (
     """,
     *_EPOCH_TABLES,
     *_SNAPSHOT_TABLES,
+    _GATHERING_TABLE,
 )
 
 
@@ -397,7 +424,7 @@ class SqliteVoteStore:
                 if not create:
                     raise VoteStoreError("VOTE STORE WAS NEVER INITIALIZED")
 
-                for statement in _SCHEMA:
+                for statement in (*_SCHEMA, *_SIGNED_LOCK_COLUMNS):
                     self._connection.execute(statement)
 
                 self._connection.executemany(
@@ -426,14 +453,26 @@ class SqliteVoteStore:
             elif version == _SCHEMA_VERSION_3:
                 # A closure voted under schema 3 has only its digest.
                 self._connection.execute("ALTER TABLE closure_votes ADD COLUMN closure TEXT")
-            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):
+            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4):
                 raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
 
-            if version != _SCHEMA_VERSION:
+            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5):
                 for statement in _SNAPSHOT_TABLES:
                     self._connection.execute(statement)
 
                 self._drop_closure_votes()
+
+            if version != _SCHEMA_VERSION:
+                if version != _SCHEMA_VERSION_6:
+                    self._connection.execute(_GATHERING_TABLE)
+
+                columns = {row[1] for row in self._connection.execute("PRAGMA table_info(locks)")}
+
+                if "signature" not in columns:
+                    for statement in _SIGNED_LOCK_COLUMNS:
+                        self._connection.execute(statement)
+
+                self._sign_locks_from_closures()
                 self._connection.execute(
                     "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                     (_SCHEMA_VERSION,),
@@ -502,6 +541,40 @@ class SqliteVoteStore:
                 "UPDATE closures SET closure = ? WHERE epoch = ?",
                 (json.dumps(body, separators=(",", ":")), epoch),
             )
+
+    def _sign_locks_from_closures(self) -> None:
+        """
+        To schema 7. A lock from a closure on file gets the signature its report carried. One from a
+        snapshot, or from a closure kept only as a header, has none to get.
+        """
+        for (text,) in self._connection.execute("SELECT closure FROM closures").fetchall():
+            try:
+                closure = _closure_from_text(text)
+            except (ValueError, KeyError, TypeError, RecursionError) as error:
+                raise VoteStoreError("CLOSURE IS UNREADABLE") from error
+
+            if not isinstance(closure, EpochClosure):
+                continue
+
+            for report in closure.reports:
+                for signed in report.votes:
+                    if not is_authorized_transfer(signed):
+                        continue
+
+                    event = signed.transfer
+                    self._connection.execute(
+                        """
+                        UPDATE locks SET public_key = ?, signature = ?
+                        WHERE sender = ? AND nonce = ? AND canonical = ? AND signature IS NULL
+                        """,
+                        (
+                            signed.public_key.hex(),
+                            signed.signature.hex(),
+                            event.sender,
+                            str(event.nonce),
+                            event.canonical().decode(),
+                        ),
+                    )
 
     def _load_chain(self) -> None:
         # Each closure is checked again, from the committee before it. Whatever in the file
@@ -628,7 +701,12 @@ class SqliteVoteStore:
         if self._closed:
             raise VoteStoreError("VOTE STORE IS CLOSED")
 
-    def record_vote(self, event: Transfer, signed: SignedTransfer | None = None) -> bool:
+    def record_vote(
+        self,
+        event: Transfer,
+        signed: SignedTransfer | None = None,
+        gathering: bool = False,
+    ) -> bool:
         """
         Apply the vote lock, `voteAllowed` and `lockAllows` in the model. False means that a
         different event holds the `(sender, nonce)` or the id in this epoch, or a lock from
@@ -636,7 +714,8 @@ class SqliteVoteStore:
         for an event it already voted for. True means that this event is durably recorded,
         possibly by an earlier call.
 
-        `signed` is the proof to report at the end of the epoch.
+        `signed` is the proof to report at the end of the epoch. `gathering`: this node took the event
+        and asks votes for it, and that is written with the vote: see `gathering`.
 
         Raises instead of returning when nothing can be said about the write;
         no signature may follow an exception.
@@ -680,6 +759,10 @@ class SqliteVoteStore:
                     return False
 
                 if existing:
+                    if gathering:
+                        self._record_gathering(epoch, event_id)
+                        self._commit()
+
                     return True
 
                 self._connection.execute(
@@ -699,10 +782,68 @@ class SqliteVoteStore:
                         (epoch, event_id, signed.public_key.hex(), signed.signature.hex()),
                     )
 
+                if gathering:
+                    self._record_gathering(epoch, event_id)
+
                 self._commit()
                 return True
             except sqlite3.Error as error:
                 raise VoteStoreError(f"VOTE NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def _record_gathering(self, epoch: int, event_id: str) -> None:
+        self._connection.execute(
+            "INSERT OR IGNORE INTO gathering (event_id, epoch) VALUES (?, ?)",
+            (event_id, epoch),
+        )
+
+    def gathering(self) -> list[SignedTransfer]:
+        """
+        The events this node took in this epoch with no certificate on file, oldest first. A vote with
+        no proof of its sender cannot be asked for again, and it comes only from an old file.
+        """
+        with self._lock:
+            self._require_open()
+
+            try:
+                rows = self._connection.execute(
+                    """
+                    SELECT votes.canonical, vote_evidence.public_key, vote_evidence.signature
+                    FROM gathering
+                    JOIN votes ON votes.epoch = gathering.epoch AND votes.event_id = gathering.event_id
+                    JOIN vote_evidence
+                    ON vote_evidence.epoch = gathering.epoch AND vote_evidence.event_id = gathering.event_id
+                    WHERE gathering.epoch = ?
+                    ORDER BY gathering.rowid
+                    """,
+                    (self.committee.epoch,),
+                ).fetchall()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ WHAT IS GATHERING: {error}") from error
+
+        return [
+            SignedTransfer(
+                _event_from_canonical(canonical),
+                bytes.fromhex(public_key),
+                bytes.fromhex(signature),
+            )
+            for canonical, public_key, signature in rows
+        ]
+
+    def forget_gathering(self, event_ids: list[str]) -> None:
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.executemany(
+                    "DELETE FROM gathering WHERE event_id = ?",
+                    [(event_id,) for event_id in event_ids],
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT FORGET WHAT WAS GATHERING: {error}") from error
             finally:
                 self._rollback_if_open()
 
@@ -748,6 +889,10 @@ class SqliteVoteStore:
                         signatures,
                         certificate.epoch,
                     ),
+                )
+                self._connection.execute(
+                    "DELETE FROM gathering WHERE event_id = ?",
+                    (event.event_id(),),
                 )
                 self._commit()
             except sqlite3.Error as error:
@@ -913,7 +1058,7 @@ class SqliteVoteStore:
             return None
 
         try:
-            return decode_snapshot_body(json.loads(row[0]))
+            return decode_snapshot_body(json.loads(row[0]), legacy=True)
         except (ValueError, KeyError, TypeError, RecursionError) as error:
             raise VoteStoreError("SNAPSHOT IS UNREADABLE") from error
 
@@ -937,28 +1082,55 @@ class SqliteVoteStore:
             finally:
                 self._rollback_if_open()
 
-    def _add_locks(self, locks) -> None:
+    def _add_locks(self, locks: tuple[SignedTransfer, ...] | list[SignedTransfer]) -> None:
+        """Each lock with the signature of its sender. A lock already held without one gets it."""
         self._connection.executemany(
-            "INSERT OR IGNORE INTO locks (sender, nonce, canonical) VALUES (?, ?, ?)",
-            [(event.sender, str(event.nonce), event.canonical().decode()) for event in locks],
+            """
+            INSERT INTO locks (sender, nonce, canonical, public_key, signature) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (sender, nonce, canonical) DO UPDATE
+            SET public_key = excluded.public_key, signature = excluded.signature
+            WHERE locks.signature IS NULL
+            """,
+            [
+                (
+                    signed.transfer.sender,
+                    str(signed.transfer.nonce),
+                    signed.transfer.canonical().decode(),
+                    signed.public_key.hex(),
+                    signed.signature.hex(),
+                )
+                for signed in locks
+            ],
         )
 
-    def locks_over(self, nonces: dict[str, int]) -> list[Transfer]:
-        """The locks this validator holds that a floor at `nonces` keeps."""
+    def locks_over(self, nonces: dict[str, int]) -> list[SignedTransfer] | None:
+        """
+        The locks this validator holds that a floor at `nonces` keeps, each signed by its sender. None
+        if one of them has no signature, from a file before schema 7: a snapshot without it could lose
+        a lock (`union_locks_cover`), so this validator signs none until a floor passes it.
+        """
         with self._lock:
             self._require_open()
 
             try:
                 rows = self._connection.execute(
-                    "SELECT sender, nonce, canonical FROM locks ORDER BY canonical"
+                    "SELECT sender, nonce, canonical, public_key, signature FROM locks ORDER BY canonical"
                 ).fetchall()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ LOCKS: {error}") from error
 
+        kept = [row for row in rows if int(row[1]) >= nonces.get(row[0], 0)]
+
+        if any(row[4] is None for row in kept):
+            return None
+
         return [
-            _event_from_canonical(canonical)
-            for sender, nonce, canonical in rows
-            if int(nonce) >= nonces.get(sender, 0)
+            SignedTransfer(
+                _event_from_canonical(canonical),
+                bytes.fromhex(public_key),
+                bytes.fromhex(signature),
+            )
+            for _sender, _nonce, canonical, public_key, signature in kept
         ]
 
     def forget_certificates(self, event_ids: list[str]) -> None:
@@ -1178,7 +1350,7 @@ class SqliteVoteStore:
         """
         current = self.committee
         following = closure.change.next_committee(current)
-        locks = closure.locks(current)
+        locks = closure.signed_locks(current)
         text = json.dumps(encode_epoch_closure(closure)["closure"], separators=(",", ":"))
 
         with self._lock:
@@ -1194,15 +1366,11 @@ class SqliteVoteStore:
                     "INSERT INTO closures (epoch, closure) VALUES (?, ?)",
                     (current.epoch, text),
                 )
-                self._connection.executemany(
-                    """
-                    INSERT OR IGNORE INTO locks (sender, nonce, canonical)
-                    VALUES (?, ?, ?)
-                    """,
-                    [
-                        (event.sender, str(event.nonce), event.canonical().decode())
-                        for event in locks
-                    ],
+                self._add_locks(locks)
+                # Votes signed for the committee that ended, which the driver forgets as well.
+                self._connection.execute(
+                    "DELETE FROM gathering WHERE epoch <= ?",
+                    (current.epoch,),
                 )
                 self._commit()
             except sqlite3.Error as error:
@@ -1276,13 +1444,19 @@ class QuorumReplica:
         self._initial_state = initial_state
         self.state = initial_state.copy()
         self.log: list[QuorumCertificate] = []
+        # Steps of `_derives_snapshot` so far: see `QuorumDriver._handle_snapshot_request`.
+        self.derive_steps = 0
+        # The same certificates by event id, so that a client asking for one does not scan the log.
+        self._log_by_id: dict[str, QuorumCertificate] = {}
         self._executed_ids: set[str] = set()
+        self.nonce_locked_permanently_total = 0
         # What the state started from, if not the genesis: signatures over these events are not read
         # again, which is the whole cost of a restart. `resume_is_derive` says nothing is lost.
         self.base = store.snapshot()
 
         if self.base is not None:
-            if not self._snapshot_is_good(self.base):
+            # This node checked it when it took it, also if it was signed before version 2.
+            if not self._snapshot_is_good(self.base, allow_legacy=True):
                 raise VoteStoreError("SNAPSHOT DOES NOT VERIFY")
 
             self.state = self.base.state.copy()
@@ -1294,6 +1468,7 @@ class QuorumReplica:
                     raise VoteStoreError("LOG OF CERTIFICATES DOES NOT FIT THE SNAPSHOT")
 
                 self.log.append(certificate)
+                self._log_by_id[certificate.event.event_id()] = certificate
                 continue
 
             if not self._can_replay(certificate):
@@ -1320,11 +1495,11 @@ class QuorumReplica:
         start = self._initial_state if self.base is None else self.base.state
         return sum(self.state.nonces.values()) - sum(start.nonces.values())
 
-    def _snapshot_is_good(self, snapshot: Snapshot) -> bool:
+    def _snapshot_is_good(self, snapshot: Snapshot, allow_legacy: bool = False) -> bool:
         committee = self._store.committee_at(snapshot.epoch)
         return (
             committee is not None
-            and snapshot.verify(committee)
+            and snapshot.verify(committee, allow_legacy)
             # Each execution moves one nonce by one, so the two counts must agree.
             and len(snapshot.ids)
             == sum(snapshot.state.nonces.values()) - sum(self._initial_state.nonces.values())
@@ -1346,6 +1521,8 @@ class QuorumReplica:
         if any(self.state.nonce(sender) < nonce for sender, nonce in nonces.items()):
             return False
 
+        # The work done, which the driver charges to the peer that asked.
+        self.derive_steps += len(self.log)
         pending = [
             certificate.event
             for certificate in self.log
@@ -1361,6 +1538,7 @@ class QuorumReplica:
         while pending and progress:
             progress = False
             waiting = []
+            self.derive_steps += len(pending)
 
             for event in pending:
                 if self._runs_on(state, ids, event):
@@ -1388,13 +1566,14 @@ class QuorumReplica:
         ):
             return None
 
+        locks = self._store.locks_over(nonces)
+
+        if locks is None:
+            LOG.warning("a lock from an older store has no signature of its sender: no snapshot signed")
+            return None
+
         try:
-            return SnapshotAttestation.create(
-                self.committee,
-                self._identity,
-                digest,
-                self._store.locks_over(nonces),
-            )
+            return SnapshotAttestation.create(self.committee, self._identity, digest, locks)
         except SignerUnavailable as error:
             LOG.error("signer gave no signature", extra={"reason": str(error)})
             return None
@@ -1413,6 +1592,7 @@ class QuorumReplica:
                 self.base is not None
                 and self.base.digest == snapshot.digest
                 and self.base.epoch == snapshot.epoch
+                and not self.base.is_legacy
             )
             or (
                 self.base is not None
@@ -1464,6 +1644,9 @@ class QuorumReplica:
         if covered:
             self._store.forget_certificates([c.event.event_id() for c in covered])
             self.log = [c for c in self.log if not self.is_covered(c.event)]
+
+            for certificate in covered:
+                self._log_by_id.pop(certificate.event.event_id(), None)
 
         return covered
 
@@ -1520,6 +1703,7 @@ class QuorumReplica:
         self,
         event: Transfer,
         signed: SignedTransfer | None = None,
+        gathering: bool = False,
     ) -> Vote | None:
         """
         Return a vote, or None if the event is refused. The signature comes after
@@ -1535,10 +1719,19 @@ class QuorumReplica:
         if not self.is_member:
             return None
 
-        if not self._store.record_vote(event, signed):
+        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted
+        # by `auth && voteAllowed`, independent of static/state executability.
+        # Executability is enforced at certificate execution (executableBool/r17Ready).
+        if not self._store.record_vote(event, signed, gathering):
             return None
 
         return self._signed_vote(event)
+
+    def gathering(self) -> list[SignedTransfer]:
+        return self._store.gathering()
+
+    def forget_gathering(self, event_ids: list[str]) -> None:
+        self._store.forget_gathering(event_ids)
 
     def _signed_vote(self, event: Transfer) -> Vote | None:
         """
@@ -1574,7 +1767,65 @@ class QuorumReplica:
         return self._store.reported_change()
 
     def install_closure(self, closure: EpochClosure) -> None:
+        closing = self._store.committee
+        epoch = closing.epoch
         self._store.install_closure(closure)
+        self._log_permanently_locked_nonces(closing, closure, epoch)
+
+    def _log_permanently_locked_nonces(
+        self,
+        committee: Committee,
+        closure: EpochClosure,
+        epoch: int,
+    ) -> None:
+        by_key: dict[tuple[str, int], dict[bytes, int]] = {}
+        for report in closure.reports:
+            seen: set[tuple[tuple[str, int], bytes]] = set()
+            for signed in report.votes:
+                event = signed.transfer
+                key = (event.sender, event.nonce)
+                canonical = event.canonical()
+                marker = (key, canonical)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                by_key.setdefault(key, {})
+                by_key[key][canonical] = by_key[key].get(canonical, 0) + 1
+
+        if committee.unlock:
+            threshold = 2 * committee.f + 1
+            for (sender, nonce), counts in sorted(by_key.items()):
+                supported = sum(1 for n in counts.values() if n >= threshold)
+                if len(counts) > 1 and supported == 0:
+                    # split but freed by unlock (not permanently locked)
+                    LOG.info(
+                        "nonce.split_unlocked",
+                        extra={
+                            "sender": sender,
+                            "nonce": nonce,
+                            "epoch": epoch,
+                            "divergent_votes": sum(counts.values()),
+                            "versions": len(counts),
+                        },
+                    )
+            return
+
+        for (sender, nonce), counts in sorted(by_key.items()):
+            if len(counts) <= 1:
+                continue
+            divergent = sum(counts.values())
+            self.nonce_locked_permanently_total += 1
+            LOG.error(
+                "nonce.locked_permanently",
+                extra={
+                    "sender": sender,
+                    "nonce": nonce,
+                    "epoch": epoch,
+                    "reason": "split_votes_no_unlock",
+                    "divergent_votes": divergent,
+                    "versions": len(counts),
+                },
+            )
 
     def committee_before_last(self) -> Committee:
         return self._store.committee_at(self.committee.epoch - 1)
@@ -1637,14 +1888,18 @@ class QuorumReplica:
 
     def _is_executable(self, event: Transfer) -> bool:
         return (
-            event.amount > 0
-            and event.sender != event.receiver
+            is_executable_event(event)
             and StateDeriver._execution_failure(self.state, event) is None
         )
+
+    def certificate_of(self, event_id: str) -> QuorumCertificate | None:
+        """The certificate of an event this node executed and still holds, without reading the log."""
+        return self._log_by_id.get(event_id)
 
     def _execute(self, certificate: QuorumCertificate) -> None:
         StateDeriver._apply_one(self.state, certificate.event)
         self.log.append(certificate)
+        self._log_by_id[certificate.event.event_id()] = certificate
         self._executed_ids.add(certificate.event.event_id())
 
 
@@ -1669,6 +1924,11 @@ SYNC_BATCH_BYTES = 4 * 1024 * 1024
 # What a bad signature costs a peer, in tokens of its 5000 per second: 50 of them per second, which
 # take under 1% of a core. An honest peer sends none, and it only slows the one that does.
 BAD_SIGNATURE_COST = 100
+# A request for a snapshot makes a member derive a state from its log. A peer pays one token for this many
+# steps of that derivation, and a bad signature's worth if the digest is not what the member derives. An
+# attestation already given is given again from memory, for the last few requests. Values chosen by judgement.
+SNAPSHOT_STEPS_PER_TOKEN = 20
+SNAPSHOT_ANSWERS_KEPT = 16
 # Certificates that cannot run yet. A certificate that can run never counts against this. One left
 # out does not enter `_known`, so it comes back with synchronization.
 MAX_BUFFERED_CERTIFICATES = 100_000
@@ -1699,6 +1959,9 @@ class _Resend:
     signed: SignedTransfer
     due: float
     wait: float
+    started: float
+    # After a restart: its own vote is on disk, and it signs it again when the event gets its turn.
+    needs_own_vote: bool = False
 
 
 class QuorumDriver:
@@ -1712,6 +1975,7 @@ class QuorumDriver:
     RESEND_FIRST_SECONDS = 2.0
     RESEND_LONGEST_SECONDS = 30.0
     RESEND_MOST_IN_A_ROUND = 256
+    COLLECTION_TIMEOUT_SECONDS = 300.0
 
     """
     The protocol around a replica: takes messages, returns messages to send. It
@@ -1723,11 +1987,11 @@ class QuorumDriver:
 
     Each node aggregates only the votes for events submitted to it. If that node
     is lost, nobody completes the certificate until someone submits the event
-    elsewhere. What it aggregated is in memory and lost at a restart, and the
-    remedy is to submit again: a new vote gives the same signature.
+    elsewhere. The votes it gathered are in memory and lost at a restart, and it asks for them
+    again: a new vote gives the same signature. The events it took are on disk with its own vote.
 
-    While it lives, it asks again for what has no certificate, since a message can be lost with
-    its connection and the synchronization carries only certificates. A validator can answer as
+    It asks again for what has no certificate, since a message can be lost with its connection and
+    the synchronization carries only certificates. A validator can answer as
     often as it is asked: `voteAllowed` admits the event it already voted for and no other, and
     `no_double_spend` holds for any list of inputs, so a repeated request is one more input. This
     makes a certificate more likely. It promises none: see `honest_sender_certifies`.
@@ -1776,6 +2040,8 @@ class QuorumDriver:
         self.prune = prune
         self._snapshot: Snapshot | None = None
         self._snapshot_votes: dict[int, SnapshotAttestation] = {}
+        # Attestations this member gave, by request: see `_handle_snapshot_request`.
+        self._snapshot_answers: OrderedDict = OrderedDict()
         self._snapshot_started = 0.0
         # The order this node is collecting reports for.
         self._change: EpochChange | None = None
@@ -1803,6 +2069,34 @@ class QuorumDriver:
         # The log by sender, in order of nonce, so that an answer does not read it all.
         self._log_by_sender: dict[str, list[QuorumCertificate]] = {}
         self._indexed = 0
+        self.requests_resent = 0
+
+        if not self.halted:
+            self._resume_gathering()
+
+    def _resume_gathering(self) -> None:
+        # Its own vote comes when an event gets its turn: a signer in another process could
+        # hold up the start of the node, and there may be many.
+        for signed in self.replica.gathering()[: self.max_aggregating]:
+            canonical = signed.transfer.canonical()
+            self._aggregating[canonical] = (signed.transfer, {})
+            self._to_resend[canonical] = _Resend(
+                signed,
+                self._clock(),
+                self.RESEND_FIRST_SECONDS,
+                self._clock(),
+                needs_own_vote=True,
+            )
+
+    @property
+    def gathering_count(self) -> int:
+        return len(self._aggregating)
+
+    @property
+    def gathering_oldest_seconds(self) -> float:
+        """Since this process started asking, so a restart starts it again. 0 with nothing."""
+        oldest = next(iter(self._to_resend.values()), None)
+        return 0.0 if oldest is None else self._clock() - oldest.started
 
     @property
     def committee(self) -> Committee:
@@ -1948,7 +2242,8 @@ class QuorumDriver:
         """The snapshot, if this peer needs what this node holds only inside it."""
         base = self.replica.base
 
-        if base is None:
+        # One signed before version 2 is good for this node only: a peer would refuse it.
+        if base is None or base.is_legacy:
             return ()
 
         initial = self.replica._initial_state
@@ -2050,19 +2345,62 @@ class QuorumDriver:
         # A halt empties the aggregation, so nothing is asked for after one.
         now = self._clock()
         state = self.replica.state
+        forgotten = []
 
         for canonical, pending in list(self._to_resend.items()):
             event = pending.signed.transfer
+            known = self._known.get((event.sender, event.nonce))
 
             # An event certified by another route, or another version certified, or a closure that
             # took away the votes: no request can help any more.
             if (
                 canonical not in self._aggregating
-                or (event.sender, event.nonce) in self._known
+                or known is not None
                 or state.nonce(event.sender) > event.nonce
             ):
                 del self._to_resend[canonical]
                 self._aggregating.pop(canonical, None)
+
+                # Its own certificate may be waiting for an earlier nonce, in memory. The row stays
+                # until it runs, since a restart would lose that certificate.
+                if known is None or known.event.canonical() != canonical:
+                    forgotten.append(event.event_id())
+                continue
+
+            if now - pending.started >= self.COLLECTION_TIMEOUT_SECONDS:
+                votes_count = 0
+                aggregating = self._aggregating.get(canonical)
+                if aggregating is not None:
+                    votes_count = len(aggregating[1])
+                LOG.warning(
+                    "certificate_collection_timeout",
+                    extra={
+                        "sender": event.sender,
+                        "nonce": event.nonce,
+                        "event_id": event.event_id(),
+                        "epoch": self.committee.epoch,
+                        "age_seconds": now - pending.started,
+                        "votes": votes_count,
+                    },
+                )
+                del self._to_resend[canonical]
+                self._aggregating.pop(canonical, None)
+                forgotten.append(event.event_id())
+                continue
+
+            if forgotten:
+                try:
+                    self.replica.forget_gathering(forgotten)
+                except VoteStoreError as error:
+                    # A row too many only asks again, after a restart, and is forgotten then.
+                    LOG.error("cannot forget what was gathering", extra={"reason": str(error)})
+                forgotten = []
+
+        if forgotten:
+            try:
+                self.replica.forget_gathering(forgotten)
+            except VoteStoreError as error:
+                LOG.error("cannot forget what was gathering", extra={"reason": str(error)})
 
         # The one waiting longest first, so that events that will never get a quorum, however many,
         # do not take the turn of the others: once asked, they go to the back.
@@ -2072,11 +2410,39 @@ class QuorumDriver:
             key=lambda pending: (pending.due, pending.signed.transfer.nonce),
         )
 
+        messages = []
+
         for pending in due:
             pending.wait = min(2 * pending.wait, self.RESEND_LONGEST_SECONDS)
             pending.due = now + pending.wait
+            certificate = self._own_vote_after_a_restart(pending)
+            messages.append(
+                encode_vote_request(pending.signed)
+                if certificate is None
+                else encode_certificate(certificate)
+            )
 
-        return [encode_vote_request(pending.signed) for pending in due]
+        self.requests_resent += len(messages)
+        return messages
+
+    def _own_vote_after_a_restart(self, pending: _Resend) -> QuorumCertificate | None:
+        """
+        Through the same check as any vote. A store restored from a backup refuses, and stays as it
+        was: it signs nothing, it gathers the votes of the others, and that needs one more of them.
+        """
+        if not pending.needs_own_vote:
+            return None
+
+        event = pending.signed.transfer
+        vote = self.replica.handle_vote_request(event, pending.signed)
+
+        if vote is None:
+            return None
+
+        pending.needs_own_vote = False
+        _, votes = self._aggregating[event.canonical()]
+        votes[vote.validator] = vote
+        return self._complete(event, votes)
 
     def _retry_epoch(self) -> DriverOutput:
         """
@@ -2118,8 +2484,13 @@ class QuorumDriver:
         if replica.executed_since_base() >= self.snapshot_every * (1 + index / self.committee.n):
             return True
 
-        # A snapshot of an ended committee is good for this node and for no other.
-        return self.prune and replica.base is not None and replica.base.epoch != self.committee.epoch
+        # A snapshot of an ended committee, or signed before version 2, is good for this node and for
+        # no other.
+        return (
+            self.prune
+            and replica.base is not None
+            and (replica.base.epoch != self.committee.epoch or replica.base.is_legacy)
+        )
 
     def _snapshot_tick(self) -> DriverOutput:
         if self.snapshot_every is None or self.halted:
@@ -2168,10 +2539,34 @@ class QuorumDriver:
         digest: str,
         nonces: dict[str, int],
     ) -> DriverOutput:
-        attestation = self.replica.attest_snapshot(epoch, digest, nonces)
+        replica = self.replica
 
-        if attestation is None:
+        if self.halted:
             return _NOTHING
+
+        base = None if replica.base is None else (replica.base.epoch, replica.base.digest)
+        key = (self.committee.committee_id, base, epoch, digest, tuple(sorted(nonces.items())))
+        attestation = self._snapshot_answers.get(key)
+
+        if attestation is not None:
+            self._snapshot_answers.move_to_end(key)
+        else:
+            steps = replica.derive_steps
+            attestation = replica.attest_snapshot(epoch, digest, nonces)
+            work = replica.derive_steps - steps
+            self._cost += work // SNAPSHOT_STEPS_PER_TOKEN
+
+            if attestation is None:
+                # Derived, and not this digest: what no honest proposer asks.
+                if work:
+                    self._cost += BAD_SIGNATURE_COST
+
+                return _NOTHING
+
+            self._snapshot_answers[key] = attestation
+
+            while len(self._snapshot_answers) > SNAPSHOT_ANSWERS_KEPT:
+                self._snapshot_answers.popitem(last=False)
 
         return DriverOutput(replies=(encode_snapshot_vote(digest, attestation),))
 
@@ -2357,7 +2752,7 @@ class QuorumDriver:
         ):
             return _NOTHING
 
-        vote = self.replica.handle_vote_request(event, signed)
+        vote = self.replica.handle_vote_request(event, signed, gathering=True)
 
         if vote is None:
             return _NOTHING
@@ -2375,6 +2770,7 @@ class QuorumDriver:
                 signed,
                 self._clock() + self.RESEND_FIRST_SECONDS,
                 self.RESEND_FIRST_SECONDS,
+                self._clock(),
             ),
         )
         return DriverOutput(broadcasts=(encode_vote_request(signed),))
@@ -2418,11 +2814,25 @@ class QuorumDriver:
 
         event, votes = aggregating
 
+        if not self.committee.has_validator(vote.validator):
+            self._cost += BAD_SIGNATURE_COST
+            LOG.warning(
+                "vote.rejected",
+                extra={
+                    "reason": "validator_outside_committee_epoch",
+                    "validator": vote.validator,
+                    "epoch": self.committee.epoch,
+                    "sender": event.sender,
+                    "nonce": event.nonce,
+                },
+            )
+            return _NOTHING
+
         if not vote.verify(self.committee, event):
             self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
-        # By validator, so that the same one twice counts once.
+        # By validator, so that the same one twice counts once (idempotent).
         votes[vote.validator] = vote
         certificate = self._complete(event, votes)
 
@@ -2440,6 +2850,7 @@ class QuorumDriver:
             return None
 
         del self._aggregating[event.canonical()]
+        self._to_resend.pop(event.canonical(), None)
         certificate = QuorumCertificate(
             event,
             tuple(votes[validator] for validator in sorted(votes)),
@@ -2466,6 +2877,7 @@ class QuorumDriver:
         """
         event = certificate.event
         key = (event.sender, event.nonce)
+
         known = self._known.get(key)
 
         if known is not None and known.event.canonical() != event.canonical():
@@ -2497,6 +2909,18 @@ class QuorumDriver:
             return False
 
         if known is None:
+            # Lean spec (formal/lean/PSystem/Quorum.lean, certificate): execution
+            # requires certValid && executableBool && r17Ready && !executed. A valid
+            # certificate for a statically non-executable event is accepted as known
+            # (idempotent/conflict-tracked) but never buffered/executed.
+            if not is_executable_event(event):
+                self._known[key] = certificate
+                LOG.info(
+                    "valid certificate for a statically non-executable event accepted (not executed)",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+                return True
+
             if not self._has_room_for(event):
                 self.certificates_left_out += 1
                 return False
@@ -2687,7 +3111,7 @@ class QuorumRuntime:
                 config.identity,
                 initial_state,
                 self._store,
-                lambda _event: True,
+                stays_in_one_asset,
             )
         except BaseException:
             self._store.close()
@@ -2784,7 +3208,7 @@ class QuorumRuntime:
             self._identity,
             self._initial_state,
             self._store,
-            lambda _event: True,
+            stays_in_one_asset,
         )
         self.driver = self._new_driver()
 

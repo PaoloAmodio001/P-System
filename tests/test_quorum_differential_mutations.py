@@ -57,7 +57,8 @@ class MemoryLockStore(SqliteVoteStore):
     def conflicts(self, old, new) -> bool:
         raise NotImplementedError
 
-    def record_vote(self, event, signed=None):
+    def record_vote(self, event, signed=None, gathering=False):
+        # `gathering` says only who asks for votes: no lock rule depends on it.
         votes = self.votes_by_path[self._key]
         same = [v for v in votes if v.canonical() == event.canonical()]
         if any(self.conflicts(v, event) for v in votes if v not in same):
@@ -113,10 +114,10 @@ def test_refusing_a_repeated_vote_makes_no_difference_here(corpus, tmp_path, mon
     # Refusing or accepting a repeated vote gives no difference in the output, because
     # the event is already among the votes. Signing it again is tested elsewhere
     # (test_voting_again_gives_the_same_signature). This test records that limit.
-    def refuse_repeat(self, event, signed=None):
+    def refuse_repeat(self, event, signed=None, gathering=False):
         if any(v.canonical() == event.canonical() for v in original_votes(self)):
             return False
-        return original(self, event, signed)
+        return original(self, event, signed, gathering)
 
     original = SqliteVoteStore.record_vote
     original_votes = SqliteVoteStore.votes

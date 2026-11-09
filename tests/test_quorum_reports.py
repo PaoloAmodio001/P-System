@@ -397,11 +397,24 @@ def test_a_closure_with_votes_on_the_wire_is_refused(cluster):
         decode_epoch_closure(message)
 
 
+def test_a_closure_forgets_what_the_node_was_gathering(cluster):
+    assert cluster.drivers[1].submit(SPEND).broadcasts
+    assert cluster.stores[1].gathering() == [SPEND]
+    closure = decode_epoch_closure(wire(closure_of(cluster, (0, 1, 2))))
+    cluster.stores[1].install_closure(closure)
+    assert cluster.stores[1].gathering() == []
+    # Not only out of sight: a row of an ended epoch would stay in the file for good.
+    assert cluster.stores[1]._connection.execute("SELECT COUNT(*) FROM gathering").fetchone() == (0,)
+    cluster.restart(1)
+    assert cluster.drivers[1].gathering_count == 0
+
+
 # --- From an older file ------------------------------------------------------------------------------
 
 
 def downgrade(path, closure=None):
     connection = sqlite3.connect(path)
+    connection.execute("DROP TABLE gathering")
     connection.execute("DROP TABLE report_locks")
     connection.execute("DROP TABLE snapshot")
     connection.execute("DROP TABLE floors")
