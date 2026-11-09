@@ -83,16 +83,16 @@ MUTATIONS = {
             "",
         ),
         "a file of schema 5 refused": (
-            "(_SCHEMA_VERSION, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4)",
-            "(_SCHEMA_VERSION, _SCHEMA_VERSION_4)",
+            "(_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4)",
+            "(_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_4)",
         ),
         "a migration without the table": (
-            "                self._connection.execute(_GATHERING_TABLE)\n",
+            "                if version != _SCHEMA_VERSION_6:\n                    self._connection.execute(_GATHERING_TABLE)\n",
             "",
         ),
         "a file of schema 5 gets the older migration": (
-            "            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_5):\n",
-            "            if version != _SCHEMA_VERSION:\n",
+            "            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5):\n",
+            "            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6):\n",
         ),
     },
     "network.node": {

@@ -4,6 +4,7 @@ from core.attestation import (
     EpochChange,
     EpochClosure,
     Snapshot,
+    SNAPSHOT_ATTESTATION_VERSION,
     SnapshotAttestation,
     EpochReport,
     QuorumCertificate,
@@ -465,19 +466,46 @@ def decode_epoch_closure(message) -> EpochClosure:
 
 
 def _encode_attestation(attestation: SnapshotAttestation) -> dict:
+    if attestation.version != SNAPSHOT_ATTESTATION_VERSION:
+        # Only the file of the node that took it holds one, and it keeps the form it was written in.
+        return {
+            "validator": attestation.validator,
+            "locks": [_encode_quorum_event(event) for event in attestation.locks],
+            "signature": attestation.signature.hex(),
+        }
+
     return {
         "validator": attestation.validator,
-        "locks": [_encode_quorum_event(event) for event in attestation.locks],
+        "locks": [_encode_signed_event(signed) for signed in attestation.locks],
         "signature": attestation.signature.hex(),
+        "version": attestation.version,
     }
 
 
-def _decode_attestation(value) -> SnapshotAttestation:
-    data = _object_with_fields(value, "validator", "locks", "signature")
+def _decode_attestation(value, legacy: bool = False) -> SnapshotAttestation:
+    """
+    Version 2, with each lock signed by its sender. `legacy` reads also the form before it, with bare
+    locks: only from the file of a node, never from a peer.
+    """
+    if legacy and type(value) is dict and "version" not in value:
+        data = _object_with_fields(value, "validator", "locks", "signature")
+        vote = _decode_vote_fields(data["validator"], data["signature"])
+        return SnapshotAttestation(
+            vote.validator,
+            tuple(_decode_quorum_event(event) for event in _list_of(data["locks"])),
+            vote.signature,
+            version=1,
+        )
+
+    data = _object_with_fields(value, "validator", "locks", "signature", "version")
+
+    if type(data["version"]) is not int or data["version"] != SNAPSHOT_ATTESTATION_VERSION:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
     vote = _decode_vote_fields(data["validator"], data["signature"])
     return SnapshotAttestation(
         vote.validator,
-        tuple(_decode_quorum_event(event) for event in _list_of(data["locks"])),
+        tuple(_decode_signed_event(item) for item in _list_of(data["locks"])),
         vote.signature,
     )
 
@@ -535,7 +563,8 @@ def encode_snapshot_body(snapshot: Snapshot) -> dict:
     }
 
 
-def decode_snapshot_body(value) -> Snapshot:
+def decode_snapshot_body(value, legacy: bool = False) -> Snapshot:
+    """`legacy`: see `_decode_attestation`. Only for the file of the node."""
     data = _object_with_fields(value, "epoch", "balances", "nonces", "ids", "attestations")
     ids = _list_of(data["ids"])
 
@@ -546,7 +575,7 @@ def decode_snapshot_body(value) -> Snapshot:
         _natural(data["epoch"]),
         State(_decode_amounts(data["balances"]), _decode_amounts(data["nonces"])),
         tuple(ids),
-        tuple(_decode_attestation(item) for item in _list_of(data["attestations"])),
+        tuple(_decode_attestation(item, legacy) for item in _list_of(data["attestations"])),
     )
 
 

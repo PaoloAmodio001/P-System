@@ -677,7 +677,14 @@ class EpochClosure:
         reported, or with `unlock` what at least 2f+1 of the reporters reported, each counted once
         however many times it repeats itself: `thresholdLocks` in the model.
         """
-        events: dict[bytes, Transfer] = {}
+        return tuple(signed.transfer for signed in self.signed_locks(committee))
+
+    def signed_locks(self, committee: Committee) -> tuple[SignedTransfer, ...]:
+        """
+        The same locks, each with the signature of its sender, which a snapshot passes on. For the
+        same event the smallest signature, so that the result is one value.
+        """
+        events: dict[bytes, SignedTransfer] = {}
         reporters: dict[bytes, int] = {}
 
         for report in self.reports:
@@ -685,7 +692,11 @@ class EpochClosure:
                 reporters[canonical] = reporters.get(canonical, 0) + 1
 
             for signed in report.votes:
-                events[signed.transfer.canonical()] = signed.transfer
+                key = signed.transfer.canonical()
+                found = events.get(key)
+
+                if found is None or (signed.public_key, signed.signature) < (found.public_key, found.signature):
+                    events[key] = signed
 
         threshold = 2 * committee.f + 1 if committee.unlock else 1
         return tuple(
@@ -739,7 +750,12 @@ class ClosureHeader:
 # is this. It is a fact and not a choice, so there is no vote lock on it, and two of them can both be
 # true. Which events: under `state.nonces` for each sender, which `no_double_spend` makes one set.
 
-SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
+# Version 2 signs locks that carry the signature of their sender, as the reports of a closure do. In
+# version 1 a lock was a bare event, so one faulty signer could lock a nonce its sender never signed,
+# on every node that took the snapshot. Version 1 is read only from the file of the node that took it.
+SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v2\0"
+LEGACY_SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
+SNAPSHOT_ATTESTATION_VERSION = 2
 
 
 def _locks_digest(locks: tuple[Transfer, ...]) -> bytes:
@@ -755,16 +771,31 @@ def _locks_digest(locks: tuple[Transfer, ...]) -> bytes:
 
 @dataclass(frozen=True)
 class SnapshotAttestation:
-    """A member says: I derived this state from these events, and these are my locks over its floor."""
+    """
+    A member says: I derived this state from these events, and these are my locks over its floor. Each
+    lock is signed by its sender, so a faulty member can add only what that sender signed: the same rule
+    as `EpochReport.verify`.
+    """
 
     validator: int
-    locks: tuple[Transfer, ...]
+    locks: tuple[SignedTransfer, ...]
     signature: bytes
+    # 1: bare locks, read back from a file written before version 2. Never accepted from a peer.
+    version: int = SNAPSHOT_ATTESTATION_VERSION
 
     @staticmethod
-    def _payload(committee: Committee, digest: str, locks: tuple[Transfer, ...]) -> bytes:
+    def _payload(committee: Committee, digest: str, locks: tuple[SignedTransfer, ...]) -> bytes:
         return (
             SNAPSHOT_DOMAIN
+            + bytes.fromhex(committee.committee_id)
+            + bytes.fromhex(digest)
+            + _votes_digest(locks)
+        )
+
+    @staticmethod
+    def _legacy_payload(committee: Committee, digest: str, locks: tuple[Transfer, ...]) -> bytes:
+        return (
+            LEGACY_SNAPSHOT_DOMAIN
             + bytes.fromhex(committee.committee_id)
             + bytes.fromhex(digest)
             + _locks_digest(locks)
@@ -778,7 +809,12 @@ class SnapshotAttestation:
         digest: str,
         locks,
     ) -> "SnapshotAttestation":
-        ordered = tuple(sorted(locks, key=lambda event: event.canonical()))
+        locks = tuple(locks)
+
+        if not all(type(signed) is SignedTransfer for signed in locks):
+            raise ValueError("A LOCK CARRIES THE SIGNATURE OF ITS SENDER")
+
+        ordered = tuple(sorted(locks, key=lambda signed: signed.transfer.canonical()))
         validator = committee.index_of(identity.public_key)
 
         if validator is None:
@@ -786,16 +822,49 @@ class SnapshotAttestation:
 
         return cls(validator, ordered, identity.sign(cls._payload(committee, digest, ordered)))
 
-    def verify(self, committee: Committee, digest: str) -> bool:
-        return (
-            committee.has_validator(self.validator)
-            and type(self.locks) is tuple
-            and all(is_well_formed_event(event) for event in self.locks)
-            and verify_signature(
+    def verify(
+        self,
+        committee: Committee,
+        digest: str,
+        already_checked: set[SignedTransfer] | None = None,
+        allow_legacy: bool = False,
+    ) -> bool:
+        """
+        One lock its sender did not sign invalidates the whole attestation. `allow_legacy` only for the
+        snapshot a node reads back from its own file, which it checked when it took it.
+        """
+        if not committee.has_validator(self.validator) or type(self.locks) is not tuple:
+            return False
+
+        if self.version == 1 and allow_legacy:
+            return all(is_well_formed_event(event) for event in self.locks) and verify_signature(
                 committee.members[self.validator],
                 self.signature,
-                self._payload(committee, digest, self.locks),
+                self._legacy_payload(committee, digest, self.locks),
             )
+
+        if self.version != SNAPSHOT_ATTESTATION_VERSION:
+            return False
+
+        checked = set() if already_checked is None else already_checked
+
+        def is_signed_lock(signed) -> bool:
+            if type(signed) is not SignedTransfer or not is_well_formed_event(signed.transfer):
+                return False
+
+            if signed in checked:
+                return True
+
+            if not _is_signed_by_its_sender(signed):
+                return False
+
+            checked.add(signed)
+            return True
+
+        return all(is_signed_lock(signed) for signed in self.locks) and verify_signature(
+            committee.members[self.validator],
+            self.signature,
+            self._payload(committee, digest, self.locks),
         )
 
 
@@ -832,7 +901,12 @@ class Snapshot:
             and list(self.ids) == sorted(set(self.ids))
         )
 
-    def verify(self, committee: Committee) -> bool:
+    @property
+    def is_legacy(self) -> bool:
+        """Signed before version 2: good for the node that took it, and sent to nobody."""
+        return any(attestation.version != SNAPSHOT_ATTESTATION_VERSION for attestation in self.attestations)
+
+    def verify(self, committee: Committee, allow_legacy: bool = False) -> bool:
         """
         A quorum of distinct members signed it. `attested_snapshot_matches_node`: with at most `f`
         faulty, one of them is honest and derived it. False, never an exception.
@@ -850,13 +924,28 @@ class Snapshot:
         if len(set(signers)) != len(signers) or len(signers) < committee.quorum:
             return False
 
-        return all(attestation.verify(committee, self.digest) for attestation in self.attestations)
-
-    def locks(self) -> tuple[Transfer, ...]:
-        """The union of the locks of the signers: `union_locks_cover`. The lists need not be equal."""
-        events = {
-            event.canonical(): event
+        checked: set[SignedTransfer] = set()
+        return all(
+            attestation.verify(committee, self.digest, checked, allow_legacy)
             for attestation in self.attestations
-            for event in attestation.locks
-        }
+        )
+
+    def locks(self) -> tuple[SignedTransfer, ...]:
+        """
+        The union of the locks of the signers: `union_locks_cover`. The lists need not be equal. Each
+        event once, and for the same event the smallest signature, so that the result is one value.
+        """
+        events: dict[bytes, SignedTransfer] = {}
+
+        for attestation in self.attestations:
+            if attestation.version != SNAPSHOT_ATTESTATION_VERSION:
+                continue
+
+            for signed in attestation.locks:
+                key = signed.transfer.canonical()
+                found = events.get(key)
+
+                if found is None or (signed.public_key, signed.signature) < (found.public_key, found.signature):
+                    events[key] = signed
+
         return tuple(events[canonical] for canonical in sorted(events))

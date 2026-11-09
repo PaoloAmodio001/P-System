@@ -255,7 +255,7 @@ def test_a_file_of_schema_5_opens_with_nothing_gathering(tmp_path):
     assert store.gathering() == []
     assert store.votes() == [event]
     version = store._connection.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    assert version == ("6",)
+    assert version == ("7",)
     store.close()
 
 
