@@ -818,7 +818,7 @@ def v1_path(path, halt_store):
 def test_schema_v1_store_migrates_and_keeps_votes_and_log(v1_path):
     store = reopen_halt(v1_path)
 
-    assert _schema_version(v1_path) == "5"
+    assert _schema_version(v1_path) == "6"
     assert not store.halted()
     assert canonical_set(store.votes()) == {A.canonical()}
     assert not store.record_vote(B)
@@ -843,7 +843,7 @@ def test_schema_v1_of_another_validator_is_refused_and_left_as_it_is(v1_path):
     "mode,version,marker",
     [
         ("crash-before-commit", "1", "BEFORE_COMMIT"),
-        ("crash-after-commit", "5", "AFTER_COMMIT"),
+        ("crash-after-commit", "6", "AFTER_COMMIT"),
     ],
 )
 def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
@@ -854,7 +854,7 @@ def test_schema_migration_interrupted_by_a_crash_keeps_the_votes(
     assert _schema_version(v1_path) == version
 
     store = reopen_halt(v1_path)
-    assert _schema_version(v1_path) == "5"
+    assert _schema_version(v1_path) == "6"
     assert canonical_set(store.votes()) == {A.canonical()}
     store.close()
 
@@ -874,7 +874,7 @@ def test_schema_v2_store_migrates_and_keeps_votes_and_log(v2_path):
     assert _schema_version(v2_path) == "2"
     store = reopen_halt(v2_path)
 
-    assert _schema_version(v2_path) == "5"
+    assert _schema_version(v2_path) == "6"
     assert canonical_set(store.votes()) == {A.canonical()}
     assert not store.record_vote(B)
     assert [c.event.canonical() for c in store.certificates()] == [A.canonical()]
@@ -904,7 +904,7 @@ def test_schema_v3_store_migrates_to_no_closure_votes(path, halt_store):
     connection.commit()
     connection.close()
     store = reopen_halt(path)
-    assert _schema_version(path) == "5"
+    assert _schema_version(path) == "6"
     # With only a digest, it says nothing of the order it reported for.
     assert store.reported_change() is None
     store.close()
@@ -922,13 +922,13 @@ def test_schema_v4_store_migrates_with_no_snapshot_and_no_floor(path, halt_store
     connection.commit()
     connection.close()
     store = reopen_halt(path)
-    assert _schema_version(path) == "5"
+    assert _schema_version(path) == "6"
     assert store.snapshot() is None
     assert not store.record_vote(B)
     store.close()
 
 
-@pytest.mark.parametrize("version", ["0", "6", "two"])
+@pytest.mark.parametrize("version", ["0", "7", "two"])
 def test_schema_of_an_unknown_version_is_refused(path, halt_store, version):
     halt_store.close()
     _tamper_halt(

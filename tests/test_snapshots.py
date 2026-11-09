@@ -66,6 +66,11 @@ def transfer(nonce: int, amount: int = 1, receiver: str = BOB) -> Transfer:
     return Transfer(ALICE, receiver, amount, nonce)
 
 
+def lock(nonce: int, receiver: str = BOB) -> SignedTransfer:
+    """A lock as a snapshot carries it: signed by its sender."""
+    return SignedTransfer.create(SENDER, transfer(nonce, receiver=receiver))
+
+
 def signed_by(identity: Identity, event: Transfer) -> SignedTransfer:
     return SignedTransfer.create(identity, event)
 
@@ -176,7 +181,7 @@ def test_changed_ids_break_every_signature(replica):
 
 def test_the_locks_of_a_signer_are_under_its_signature(replica):
     run(replica, transfer(0))
-    good = attested(replica, locks=(transfer(9),))
+    good = attested(replica, locks=(lock(9),))
     first = good.attestations[0]
     changed = SnapshotAttestation(first.validator, (), first.signature)
     assert not Snapshot(
@@ -224,7 +229,7 @@ def test_ids_out_of_order_or_repeated_are_refused(replica):
 def test_the_locks_are_the_union_of_those_of_the_signers(replica):
     run(replica, transfer(0))
     candidate = replica.candidate_snapshot()
-    one, two = transfer(5), transfer(6)
+    one, two = lock(5), lock(6)
     snapshot = Snapshot(
         candidate.epoch,
         candidate.state,
@@ -236,12 +241,12 @@ def test_the_locks_are_the_union_of_those_of_the_signers(replica):
         ),
     )
     assert snapshot.verify(COMMITTEE)
-    assert {e.canonical() for e in snapshot.locks()} == {one.canonical(), two.canonical()}
+    assert set(snapshot.locks()) == {one, two}
 
 
 def test_it_goes_through_the_wire_unchanged(replica):
     run(replica, transfer(0))
-    snapshot = attested(replica, locks=(transfer(3),))
+    snapshot = attested(replica, locks=(lock(3),))
     decoded = decode_snapshot(wire(encode_snapshot(snapshot)))
     assert decoded == snapshot
     assert decoded.verify(COMMITTEE)
@@ -263,6 +268,11 @@ def test_it_goes_through_the_wire_unchanged(replica):
         lambda m: m["snapshot"]["attestations"][0].update(signature="00"),
         lambda m: m["snapshot"]["attestations"][0].update(validator=-1),
         lambda m: m["snapshot"]["attestations"][0].update(locks={}),
+        # A lock is a signed event, and the version is 2: the form before it comes from no peer.
+        lambda m: m["snapshot"]["attestations"][0].pop("version"),
+        lambda m: m["snapshot"]["attestations"][0].update(version=1),
+        lambda m: m["snapshot"]["attestations"][0].update(version=True),
+        lambda m: m["snapshot"]["attestations"][0].update(locks=[{"sender": "a", "receiver": "b", "amount": 1, "nonce": 0, "parents": []}]),
     ],
 )
 def test_a_malformed_snapshot_is_refused_by_the_decoder(replica, change):
@@ -423,10 +433,10 @@ def test_a_member_that_pruned_signs_its_own_base(tmp_path):
 def test_a_signer_reports_only_the_locks_over_the_floor(replica):
     store = replica._store
     store._begin()
-    store._add_locks([transfer(0), transfer(5)])
+    store._add_locks([lock(0), lock(5)])
     store._commit()
-    assert [e.nonce for e in store.locks_over({ALICE: 1})] == [5]
-    assert sorted(e.nonce for e in store.locks_over({})) == [0, 5]
+    assert store.locks_over({ALICE: 1}) == [lock(5)]
+    assert sorted(e.transfer.nonce for e in store.locks_over({})) == [0, 5]
 
 
 # --- A restart ----------------------------------------------------------------------------------
@@ -868,7 +878,7 @@ def test_a_floor_removes_the_locks_under_it_and_refuses_votes_under_it(tmp_path)
     store = replica._store
     run(replica, transfer(0))
     store._begin()
-    store._add_locks([transfer(0), transfer(5)])
+    store._add_locks([lock(0), lock(5)])
     store._commit()
     assert replica.install_snapshot(attested(replica))
     replica.apply_floor()
@@ -889,7 +899,7 @@ def test_a_snapshot_brings_the_locks_of_its_signers(tmp_path):
     # `union_locks_cover`: a validator that lacks the closures gets them here.
     ahead, behind = open_replica(tmp_path / "1.sqlite"), open_replica(tmp_path / "2.sqlite", 1)
     run(ahead, transfer(0))
-    assert behind.install_snapshot(attested(ahead, locks=(transfer(5),)))
+    assert behind.install_snapshot(attested(ahead, locks=(lock(5),)))
     assert not behind._store.record_vote(transfer(5, receiver="carol"))
     assert behind._store.record_vote(transfer(5))
 

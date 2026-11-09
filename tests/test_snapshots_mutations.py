@@ -22,16 +22,16 @@ TESTS = [str(Path("tests") / "test_snapshots.py"), "-k", "not real_nodes"]
 
 ATTESTATION = {
     "signature not checked": (
-        "            and verify_signature(\n"
-        "                committee.members[self.validator],\n"
-        "                self.signature,\n"
-        "                self._payload(committee, digest, self.locks),\n"
-        "            )\n",
-        "",
+        "        return all(is_signed_lock(signed) for signed in self.locks) and verify_signature(\n"
+        "            committee.members[self.validator],\n"
+        "            self.signature,\n"
+        "            self._payload(committee, digest, self.locks),\n"
+        "        )\n",
+        "        return all(is_signed_lock(signed) for signed in self.locks)\n",
     ),
     "signature without the locks": (
         "            + bytes.fromhex(digest)\n"
-        "            + _locks_digest(locks)\n",
+        "            + _votes_digest(locks)\n",
         "            + bytes.fromhex(digest)\n",
     ),
     "signature without the committee": (
@@ -41,8 +41,8 @@ ATTESTATION = {
     ),
     "signature without the digest": (
         "            + bytes.fromhex(digest)\n"
-        "            + _locks_digest(locks)\n",
-        "            + _locks_digest(locks)\n",
+        "            + _votes_digest(locks)\n",
+        "            + _votes_digest(locks)\n",
     ),
     "digest without the state": (
         "        return sha256(bytes.fromhex(self.state.root()) + ids.digest()).hexdigest()\n",
@@ -61,8 +61,8 @@ ATTESTATION = {
         "        if len(signers) < committee.quorum:\n",
     ),
     "one good signature is enough": (
-        "        return all(attestation.verify(committee, self.digest) for attestation in self.attestations)\n",
-        "        return any(attestation.verify(committee, self.digest) for attestation in self.attestations)\n",
+        "        return all(\n            attestation.verify(committee, self.digest, checked, allow_legacy)\n",
+        "        return any(\n            attestation.verify(committee, self.digest, checked, allow_legacy)\n",
     ),
     "any epoch": (
         "        if type(self.epoch) is not int or self.epoch != committee.epoch or not self.has_ordered_ids():\n",
@@ -77,10 +77,10 @@ ATTESTATION = {
         "            and list(self.ids) == sorted(self.ids)\n",
     ),
     "the locks of one signer only": (
-        "            for attestation in self.attestations\n"
-        "            for event in attestation.locks\n",
-        "            for attestation in self.attestations[:1]\n"
-        "            for event in attestation.locks\n",
+        "        for attestation in self.attestations:\n"
+        "            if attestation.version != SNAPSHOT_ATTESTATION_VERSION:\n",
+        "        for attestation in self.attestations[:1]:\n"
+        "            if attestation.version != SNAPSHOT_ATTESTATION_VERSION:\n",
     ),
     "the signer of a vote is whoever": (
         '        if validator is None:\n            raise ValueError("SIGNER IS NOT A COMMITTEE MEMBER")\n',
@@ -91,7 +91,7 @@ ATTESTATION = {
 QUORUM = {
     # A restart.
     "snapshot believed at opening": (
-        '            if not self._snapshot_is_good(self.base):\n                raise VoteStoreError("SNAPSHOT DOES NOT VERIFY")\n',
+        '            if not self._snapshot_is_good(self.base, allow_legacy=True):\n                raise VoteStoreError("SNAPSHOT DOES NOT VERIFY")\n',
         "",
     ),
     "state not taken from the snapshot": (
@@ -167,7 +167,7 @@ QUORUM = {
         "                    False and snapshot.floor(sender) < nonce\n",
     ),
     "the same snapshot is news": (
-        "                and self.base.digest == snapshot.digest\n                and self.base.epoch == snapshot.epoch\n",
+        "                and self.base.digest == snapshot.digest\n                and self.base.epoch == snapshot.epoch\n                and not self.base.is_legacy\n",
         "                and False\n",
     ),
     "a missing event believed": (
@@ -269,8 +269,8 @@ QUORUM = {
         "",
     ),
     "signer gives all its locks": (
-        "            if int(nonce) >= nonces.get(sender, 0)\n",
-        "",
+        "        kept = [row for row in rows if int(row[1]) >= nonces.get(row[0], 0)]\n",
+        "        kept = rows\n",
     ),
     "locks of the signers not kept": (
         "                self._add_locks(snapshot.locks())\n",
@@ -342,7 +342,7 @@ QUORUM = {
         "        if True:\n",
     ),
     "not a new signature after a change": (
-        "        return self.prune and replica.base is not None and replica.base.epoch != self.committee.epoch\n",
+        "        return (\n            self.prune\n            and replica.base is not None\n            and (replica.base.epoch != self.committee.epoch or replica.base.is_legacy)\n        )\n",
         "        return False\n",
     ),
     "not a member asks": (

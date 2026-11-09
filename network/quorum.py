@@ -80,7 +80,8 @@ class VoteStoreError(Exception):
     """
 
 
-_SCHEMA_VERSION = "5"
+_SCHEMA_VERSION = "6"
+_SCHEMA_VERSION_5 = "5"
 _SCHEMA_VERSION_4 = "4"
 _SCHEMA_VERSION_3 = "3"
 _SCHEMA_VERSION_2 = "2"
@@ -155,6 +156,14 @@ _SNAPSHOT_TABLES = (
     """,
     "CREATE TABLE snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL)",
     "CREATE TABLE floors (sender TEXT PRIMARY KEY, nonce TEXT NOT NULL)",
+)
+
+# What schema 6 adds: the signature of the sender of each lock, so that a snapshot can pass the lock on
+# and whoever takes it can check it. A lock from a file before schema 6 that no closure on file signs
+# keeps NULL here: it still refuses votes, and this validator signs no snapshot it would have to carry.
+_SIGNED_LOCK_COLUMNS = (
+    "ALTER TABLE locks ADD COLUMN public_key TEXT",
+    "ALTER TABLE locks ADD COLUMN signature TEXT",
 )
 
 # In a file before schema 5. A closure no longer takes votes.
@@ -397,7 +406,7 @@ class SqliteVoteStore:
                 if not create:
                     raise VoteStoreError("VOTE STORE WAS NEVER INITIALIZED")
 
-                for statement in _SCHEMA:
+                for statement in (*_SCHEMA, *_SIGNED_LOCK_COLUMNS):
                     self._connection.execute(statement)
 
                 self._connection.executemany(
@@ -426,14 +435,23 @@ class SqliteVoteStore:
             elif version == _SCHEMA_VERSION_3:
                 # A closure voted under schema 3 has only its digest.
                 self._connection.execute("ALTER TABLE closure_votes ADD COLUMN closure TEXT")
-            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_4):
+            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4):
                 raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
 
-            if version != _SCHEMA_VERSION:
+            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_5):
                 for statement in _SNAPSHOT_TABLES:
                     self._connection.execute(statement)
 
                 self._drop_closure_votes()
+
+            if version != _SCHEMA_VERSION:
+                columns = {row[1] for row in self._connection.execute("PRAGMA table_info(locks)")}
+
+                if "signature" not in columns:
+                    for statement in _SIGNED_LOCK_COLUMNS:
+                        self._connection.execute(statement)
+
+                self._sign_locks_from_closures()
                 self._connection.execute(
                     "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                     (_SCHEMA_VERSION,),
@@ -502,6 +520,40 @@ class SqliteVoteStore:
                 "UPDATE closures SET closure = ? WHERE epoch = ?",
                 (json.dumps(body, separators=(",", ":")), epoch),
             )
+
+    def _sign_locks_from_closures(self) -> None:
+        """
+        To schema 6. A lock from a closure on file gets the signature its report carried. One from a
+        snapshot, or from a closure kept only as a header, has none to get.
+        """
+        for (text,) in self._connection.execute("SELECT closure FROM closures").fetchall():
+            try:
+                closure = _closure_from_text(text)
+            except (ValueError, KeyError, TypeError, RecursionError) as error:
+                raise VoteStoreError("CLOSURE IS UNREADABLE") from error
+
+            if not isinstance(closure, EpochClosure):
+                continue
+
+            for report in closure.reports:
+                for signed in report.votes:
+                    if not is_authorized_transfer(signed):
+                        continue
+
+                    event = signed.transfer
+                    self._connection.execute(
+                        """
+                        UPDATE locks SET public_key = ?, signature = ?
+                        WHERE sender = ? AND nonce = ? AND canonical = ? AND signature IS NULL
+                        """,
+                        (
+                            signed.public_key.hex(),
+                            signed.signature.hex(),
+                            event.sender,
+                            str(event.nonce),
+                            event.canonical().decode(),
+                        ),
+                    )
 
     def _load_chain(self) -> None:
         # Each closure is checked again, from the committee before it. Whatever in the file
@@ -913,7 +965,7 @@ class SqliteVoteStore:
             return None
 
         try:
-            return decode_snapshot_body(json.loads(row[0]))
+            return decode_snapshot_body(json.loads(row[0]), legacy=True)
         except (ValueError, KeyError, TypeError, RecursionError) as error:
             raise VoteStoreError("SNAPSHOT IS UNREADABLE") from error
 
@@ -937,28 +989,55 @@ class SqliteVoteStore:
             finally:
                 self._rollback_if_open()
 
-    def _add_locks(self, locks) -> None:
+    def _add_locks(self, locks: tuple[SignedTransfer, ...] | list[SignedTransfer]) -> None:
+        """Each lock with the signature of its sender. A lock already held without one gets it."""
         self._connection.executemany(
-            "INSERT OR IGNORE INTO locks (sender, nonce, canonical) VALUES (?, ?, ?)",
-            [(event.sender, str(event.nonce), event.canonical().decode()) for event in locks],
+            """
+            INSERT INTO locks (sender, nonce, canonical, public_key, signature) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (sender, nonce, canonical) DO UPDATE
+            SET public_key = excluded.public_key, signature = excluded.signature
+            WHERE locks.signature IS NULL
+            """,
+            [
+                (
+                    signed.transfer.sender,
+                    str(signed.transfer.nonce),
+                    signed.transfer.canonical().decode(),
+                    signed.public_key.hex(),
+                    signed.signature.hex(),
+                )
+                for signed in locks
+            ],
         )
 
-    def locks_over(self, nonces: dict[str, int]) -> list[Transfer]:
-        """The locks this validator holds that a floor at `nonces` keeps."""
+    def locks_over(self, nonces: dict[str, int]) -> list[SignedTransfer] | None:
+        """
+        The locks this validator holds that a floor at `nonces` keeps, each signed by its sender. None
+        if one of them has no signature, from a file before schema 6: a snapshot without it could lose
+        a lock (`union_locks_cover`), so this validator signs none until a floor passes it.
+        """
         with self._lock:
             self._require_open()
 
             try:
                 rows = self._connection.execute(
-                    "SELECT sender, nonce, canonical FROM locks ORDER BY canonical"
+                    "SELECT sender, nonce, canonical, public_key, signature FROM locks ORDER BY canonical"
                 ).fetchall()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CANNOT READ LOCKS: {error}") from error
 
+        kept = [row for row in rows if int(row[1]) >= nonces.get(row[0], 0)]
+
+        if any(row[4] is None for row in kept):
+            return None
+
         return [
-            _event_from_canonical(canonical)
-            for sender, nonce, canonical in rows
-            if int(nonce) >= nonces.get(sender, 0)
+            SignedTransfer(
+                _event_from_canonical(canonical),
+                bytes.fromhex(public_key),
+                bytes.fromhex(signature),
+            )
+            for _sender, _nonce, canonical, public_key, signature in kept
         ]
 
     def forget_certificates(self, event_ids: list[str]) -> None:
@@ -1178,7 +1257,7 @@ class SqliteVoteStore:
         """
         current = self.committee
         following = closure.change.next_committee(current)
-        locks = closure.locks(current)
+        locks = closure.signed_locks(current)
         text = json.dumps(encode_epoch_closure(closure)["closure"], separators=(",", ":"))
 
         with self._lock:
@@ -1194,16 +1273,7 @@ class SqliteVoteStore:
                     "INSERT INTO closures (epoch, closure) VALUES (?, ?)",
                     (current.epoch, text),
                 )
-                self._connection.executemany(
-                    """
-                    INSERT OR IGNORE INTO locks (sender, nonce, canonical)
-                    VALUES (?, ?, ?)
-                    """,
-                    [
-                        (event.sender, str(event.nonce), event.canonical().decode())
-                        for event in locks
-                    ],
-                )
+                self._add_locks(locks)
                 self._commit()
             except sqlite3.Error as error:
                 raise VoteStoreError(f"CLOSURE NOT RECORDED: {error}") from error
@@ -1282,7 +1352,8 @@ class QuorumReplica:
         self.base = store.snapshot()
 
         if self.base is not None:
-            if not self._snapshot_is_good(self.base):
+            # This node checked it when it took it, also if it was signed before version 2.
+            if not self._snapshot_is_good(self.base, allow_legacy=True):
                 raise VoteStoreError("SNAPSHOT DOES NOT VERIFY")
 
             self.state = self.base.state.copy()
@@ -1320,11 +1391,11 @@ class QuorumReplica:
         start = self._initial_state if self.base is None else self.base.state
         return sum(self.state.nonces.values()) - sum(start.nonces.values())
 
-    def _snapshot_is_good(self, snapshot: Snapshot) -> bool:
+    def _snapshot_is_good(self, snapshot: Snapshot, allow_legacy: bool = False) -> bool:
         committee = self._store.committee_at(snapshot.epoch)
         return (
             committee is not None
-            and snapshot.verify(committee)
+            and snapshot.verify(committee, allow_legacy)
             # Each execution moves one nonce by one, so the two counts must agree.
             and len(snapshot.ids)
             == sum(snapshot.state.nonces.values()) - sum(self._initial_state.nonces.values())
@@ -1388,13 +1459,14 @@ class QuorumReplica:
         ):
             return None
 
+        locks = self._store.locks_over(nonces)
+
+        if locks is None:
+            LOG.warning("a lock from an older store has no signature of its sender: no snapshot signed")
+            return None
+
         try:
-            return SnapshotAttestation.create(
-                self.committee,
-                self._identity,
-                digest,
-                self._store.locks_over(nonces),
-            )
+            return SnapshotAttestation.create(self.committee, self._identity, digest, locks)
         except SignerUnavailable as error:
             LOG.error("signer gave no signature", extra={"reason": str(error)})
             return None
@@ -1413,6 +1485,7 @@ class QuorumReplica:
                 self.base is not None
                 and self.base.digest == snapshot.digest
                 and self.base.epoch == snapshot.epoch
+                and not self.base.is_legacy
             )
             or (
                 self.base is not None
@@ -1948,7 +2021,8 @@ class QuorumDriver:
         """The snapshot, if this peer needs what this node holds only inside it."""
         base = self.replica.base
 
-        if base is None:
+        # One signed before version 2 is good for this node only: a peer would refuse it.
+        if base is None or base.is_legacy:
             return ()
 
         initial = self.replica._initial_state
@@ -2118,8 +2192,13 @@ class QuorumDriver:
         if replica.executed_since_base() >= self.snapshot_every * (1 + index / self.committee.n):
             return True
 
-        # A snapshot of an ended committee is good for this node and for no other.
-        return self.prune and replica.base is not None and replica.base.epoch != self.committee.epoch
+        # A snapshot of an ended committee, or signed before version 2, is good for this node and for
+        # no other.
+        return (
+            self.prune
+            and replica.base is not None
+            and (replica.base.epoch != self.committee.epoch or replica.base.is_legacy)
+        )
 
     def _snapshot_tick(self) -> DriverOutput:
         if self.snapshot_every is None or self.halted:
