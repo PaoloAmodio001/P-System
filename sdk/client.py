@@ -33,6 +33,10 @@ from crypto.identity import Identity
 from network.message import decode_certificate, decode_epoch_closure
 
 
+# The largest nonce this wallet signs: SQLite orders the journal by CAST(nonce AS INTEGER), which has 64 bits.
+MAX_WALLET_NONCE = 2**63 - 1
+
+
 class WalletError(Exception):
     """The wallet refuses, or cannot be sure of what it wrote. Nothing was signed."""
 
@@ -62,6 +66,11 @@ class Wallet:
                     signature TEXT NOT NULL
                 )
                 """
+            )
+            # Nonces are text, and "10" < "9" as text: the index orders them as numbers. CAST saturates at
+            # 2**63 - 1, so this wallet signs no nonce above that (`MAX_WALLET_NONCE`).
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS events_by_nonce ON events (CAST(nonce AS INTEGER))"
             )
             self._connection.execute(
                 "CREATE TABLE IF NOT EXISTS owner (key TEXT NOT NULL)"
@@ -93,8 +102,8 @@ class Wallet:
         return self._account
 
     def next_nonce(self) -> int:
-        rows = self._connection.execute("SELECT nonce FROM events").fetchall()
-        return max((int(row[0]) + 1 for row in rows), default=0)
+        row = self._connection.execute("SELECT MAX(CAST(nonce AS INTEGER)) FROM events").fetchone()
+        return 0 if row[0] is None else row[0] + 1
 
     def transfer(
         self,
@@ -110,6 +119,9 @@ class Wallet:
         another transfer it is refused, and nothing is signed.
         """
         nonce = self.next_nonce() if nonce is None else nonce
+
+        if type(nonce) is not int or not 0 <= nonce <= MAX_WALLET_NONCE:
+            raise WalletError(f"NONCE {nonce!r} IS NOT AN INTEGER FROM 0 TO {MAX_WALLET_NONCE}")
 
         # With an asset, `receiver` can be just who gets it.
         if self.asset is not None and split_asset_account(receiver) is None:
@@ -148,14 +160,20 @@ class Wallet:
 
     def unfinished(self, known_next_nonce: int) -> list[SignedTransfer]:
         """What was signed from a nonce on, to send again after a restart. In order."""
+        if known_next_nonce > MAX_WALLET_NONCE:
+            return []
+
         rows = self._connection.execute(
-            "SELECT nonce, canonical, signature FROM events"
+            """
+            SELECT nonce, canonical, signature FROM events
+            WHERE CAST(nonce AS INTEGER) >= ?
+            ORDER BY CAST(nonce AS INTEGER)
+            """,
+            (max(known_next_nonce, 0),),
         ).fetchall()
         found = []
 
-        for nonce, canonical, signature in sorted(rows, key=lambda row: int(row[0])):
-            if int(nonce) < known_next_nonce:
-                continue
+        for nonce, canonical, signature in rows:
             data = json.loads(canonical)
             event = Transfer(
                 data["sender"],

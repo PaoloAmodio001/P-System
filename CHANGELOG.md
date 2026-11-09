@@ -12,6 +12,8 @@
 - **Vote requests are sent again**, within limits, for events with no certificate, and what a node gathers survives a restart
   (store schema 6). Metrics: `psystem_events_gathering`, `psystem_gathering_oldest_seconds`,
   `psystem_vote_requests_resent_total`, `psystem_connections_replaced_total`, `psystem_nonce_locked_permanently_total`.
+- **Wallet:** `next_nonce` and `unfinished` query an index on `CAST(nonce AS INTEGER)` instead of reading the whole journal;
+  the wallet signs nonces from 0 to `2**63 - 1`.
 - Readiness probe `/readyz`, `psystem validate` to check a configuration before starting, request correlation and retries in the API, an audit log with its chain
   checked at startup, signing keys refused when readable by others.
 
