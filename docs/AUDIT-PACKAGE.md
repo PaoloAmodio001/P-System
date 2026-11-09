@@ -97,7 +97,8 @@ pip install -r requirements-dev.txt
 # The proofs. The version of Lean is in formal/lean/lean-toolchain.
 cd formal/lean && lake build
 grep -rnE '\b(sorry|admit|axiom|opaque|native_decide)\b' PSystem PSystem.lean    # must print nothing
-cd ../.. && python scripts/check_axioms.py                                       # only propext, Quot.sound, Classical.choice
+lake env lean AuditPSystem.lean > audit.log && python ../../scripts/check_axioms.py audit.log   # only propext, Quot.sound, Classical.choice
+cd ../..
 
 # The tests.
 pytest -q -m "not slow"                  # about 3 minutes

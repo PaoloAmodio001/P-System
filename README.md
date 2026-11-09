@@ -38,12 +38,13 @@ client.wait_final(signed.transfer, ChainVerifier(genesis.committee, genesis.gove
 Stop it with `docker compose down --rmi local` and delete `/tmp/psystem-demo`. Without containers: `docs/OPERATIONS.md`.
 
 Checks: `pytest -q -m "not slow"` (minutes), `pytest -q` (mutations and differential tests against Lean, about an hour),
-`cd formal/lean && lake build` (needs [elan](https://github.com/leanprover/elan)), `python scripts/check_axioms.py`.
+`cd formal/lean && lake build` (needs [elan](https://github.com/leanprover/elan)), then in `formal/lean`
+`lake env lean AuditPSystem.lean > audit.log && python ../../scripts/check_axioms.py audit.log`.
 
 ## What is proved in Lean
 
 About the model in `formal/lean/`, with at most `f` faulty validators per committee and unforgeable signatures. Only the
-three standard axioms of Lean are used; `scripts/check_axioms.py` checks it.
+three standard axioms of Lean are used, for all 199 theorems; `scripts/check_axioms.py` checks it.
 
 | Theorem | Statement | Status |
 |---|---|---|
