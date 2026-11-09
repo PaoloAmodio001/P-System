@@ -184,7 +184,7 @@ properties of the formula, not a liveness result.
 A Lean theorem establishes a property of the formal model only. It does
 not establish that the Python implementation refines that model.
 
-## Thresholds and epochs (phase B of `ROADMAP.md`)
+## Thresholds and epochs
 
 Modules `QuorumThresholds` and `QuorumEpochs`, witnesses in `QuorumEpochsNonVacuity`.
 

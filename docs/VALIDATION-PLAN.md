@@ -59,7 +59,7 @@ Labels and claim discipline: `docs/PROOF-OBLIGATIONS.md`, `docs/CLAIM-TRACEABILI
 - Giorni per prima prova 4 host; settimane–mesi per campagna credibile.
 
 ### Prerequisiti / stato
-- Esistono `docs/MACCHINE-SEPARATE.md`, `scripts/make_host_deployment.py`, `scripts/measure_network.py`, `scripts/netem_lab.py`, soak/netem raw; **nessuna esecuzione validata su 4 macchine separate è dichiarata nel repo**. I criteri vanno concordati **prima** con i partecipanti.
+- Esistono `docs/SEPARATE-MACHINES.md`, `scripts/make_host_deployment.py`, `scripts/measure_network.py`, `scripts/netem_lab.py`, soak/netem raw; **nessuna esecuzione validata su 4 macchine separate è dichiarata nel repo**. I criteri vanno concordati **prima** con i partecipanti.
 
 ## Blocco 3 — Valutazione indipendente
 

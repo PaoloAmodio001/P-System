@@ -1,6 +1,6 @@
 # P-System Claim Traceability
 
-Revision inspected: `byzantine-quorum` (labels reviewed 2026-11-05)
+Labels reviewed 2026-11-09.
 Status: preliminary research inventory, not a release certification.
 
 ## 1. Evidence categories
@@ -31,7 +31,7 @@ automatically prove that the Python implementation satisfies it.
 | A certificate of an ended committee counts only for an event in the locks. Two events accepted that way do not conflict if the locks hold one version of each spend | `old_certificate_outside_locks_refused`, `accepted_complete`, `old_keys_no_double_spend` | `tests/test_quorum_old_keys.py`, `tests/test_stolen_key_two_versions.py` | CONDITIONAL (model): `SingleVersion` is the whole case of two old certificates. EMPIRICAL (Python) |
 | A closure survives the death of its proposer, and two proposers at once | No theorem says so. `no_double_spend_any_closures` is about safety, and `one_order_never_blocks` only says that a member can still report for the one order | `tests/test_quorum_reports.py` | EMPIRICAL (Python). `one_order_never_blocks` is TRIVIAL (model) |
 | One next committee for each epoch | `order_unique`, with the bound on faulty members | `tests/test_quorum_reports.py` | FORMAL (model), EMPIRICAL (Python) |
-| A run where each event stays inside a set of accounts or outside it keeps the sum of that set | `asset_supply_conserved`. The step to "the supply of an asset does not grow" uses `executed_authorized` by hand, and no theorem makes it | `tests/test_assets.py`, `tests/test_supply_conservation.py`, `core/derive.check_supply_conservation` (runtime) | CONDITIONAL (model); Python runtime-enforced (`SupplyViolation`, rejected before certification) and EMPIRICAL (Python) |
+| A run where each event stays inside a set of accounts or outside it keeps the sum of that set | `asset_supply_conserved`. The step to "the supply of an asset does not grow" uses `executed_authorized` by hand, and no theorem makes it | `tests/test_assets.py`, `tests/test_supply_conservation.py`, `tests/test_assets_differential.py` | CONDITIONAL (model). In Python the hypothesis is the rule of `auth` (`stays_in_one_asset`), as in the model: EMPIRICAL |
 | A restart from a snapshot gives what replaying gives | `resume_equals_replay`, `resume_is_derive` | `tests/test_snapshots.py`, `tests/test_quorum_differential.py` | FORMAL (model), EMPIRICAL (Python) |
 | Pruning locks under a floor keeps safety | `no_double_spend_views`, `prune_without_floor_lets_conflict_through` | `tests/test_snapshots.py`, `tests/test_epoch_differential.py` | FORMAL (model), EMPIRICAL (Python) |
 | With `n = 5f+1`, unlocking a split nonce loses no certified event | `certified_passes_threshold`, `no_double_spend_with_unlock` | `tests/test_unlock.py`, `tests/test_unlock_differential.py` | FORMAL (model), EMPIRICAL (Python) |

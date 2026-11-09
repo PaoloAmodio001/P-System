@@ -115,7 +115,7 @@ Containers: `Dockerfile` and `scripts/make_local_deployment.py`, which writes a 
 `benchmarks/quorum_benchmark.py` supports bounded multi-sender measurements with `--senders N`.
 These results describe capacity on the measured host only. They do not prove availability, safety,
 quorum liveness or production readiness, and must not be substituted for the separate-machine
-procedure in `docs/MACCHINE-SEPARATE.md`.
+procedure in `docs/SEPARATE-MACHINES.md`.
 
 ## Monitoring
 
@@ -221,7 +221,7 @@ operation. Rotating the key of an **account** does not exist: the account is the
 
 To measure on real hosts. **Nobody has done this yet.** This puts all keys on one machine first, which is fine for a measurement and wrong for a real deployment.
 
-The complete procedure, with what to measure, for how long and how to compare: `docs/MACCHINE-SEPARATE.md`.
+The complete procedure, with what to measure, for how long and how to compare: `docs/SEPARATE-MACHINES.md`.
 
 ```sh
 # On any machine, with the addresses of the four.
@@ -259,7 +259,7 @@ The API is on all interfaces with a token and no TLS: on a network you do not co
 ## Liveness
 
 - **Nonce locked permanently (standard / fail-closed, no-unlock)**: in the standard configuration, a split-vote/divergent situation for a `(sender, nonce)` can leave that nonce **permanently locked**. This is expected **fail-closed** behavior (safety over liveness): the system avoids accepting conflicting execution. Operators should monitor `nonce.locked_permanently` logs and the `psystem_nonce_locked_permanently_total` counter / `PSystemNonceLockedPermanently` alert (`increase(...[1h]) > 0`), and follow incident guidance.
-- **Unlocking for deployments that require liveness**: deployments that need the nonce to be recoverable across epoch boundaries can use the **unlock** variant (`n = 5f+1`, quorum `3f+1` as documented for unlocking). At the next committee change/epoch closure under that model, an equivocated/split nonce can be unlocked according to the protocol rules. **Trade-offs**: different committee size and quorum (`n=5f+1` vs `3f+1`), different trust/fault assumptions and operational cost; it cannot be changed after genesis (chain identity/parameters). Choose at genesis via the documented unlocking configuration (e.g. `psystem genesis --unlock` where supported) and validate against `docs/PROTOCOL.md`, `docs/LIVENESS-PROPOSAL.md`, and threat/benchmark constraints before production use.
+- **Unlocking for deployments that require liveness**: deployments that need the nonce to be recoverable across epoch boundaries can use the **unlock** variant (`n = 5f+1`, quorum `4f+1`). At the next committee change/epoch closure under that model, an equivocated/split nonce can be unlocked according to the protocol rules. **Trade-offs**: different committee size and quorum (`n = 5f+1`, `q = 4f+1` against `n = 3f+1`, `q = 2f+1`), different trust/fault assumptions and operational cost; it cannot be changed after genesis (chain identity/parameters). Choose at genesis via the documented unlocking configuration (e.g. `psystem genesis --unlock` where supported) and validate against `docs/PROTOCOL.md`, `docs/THREAT-MODEL.md` and `docs/BENCHMARKS.md` before production use.
 
 ## Snapshots and pruning
 

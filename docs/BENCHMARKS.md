@@ -136,7 +136,7 @@ Without a snapshot a node replays its whole log and checks every signature, abou
 |---|---|---|---|---|---|---|---|---|
 | `25844e1` | 92 minutes | 32 | 0 | 34064 | 8522 | 167 | 16 | 25.6 s |
 
-This is the first such run that goes through the correction of the SDK in `9b97548`, with the code of `5012d3a`. Longer runs came before it, on earlier commits, and `docs/piano-bizantino.md` tells of them, but their raw lines were lost when the machine restarted, so their numbers are not repeated here. A run of hours on one machine does not replace weeks on separate ones.
+This is the first such run that goes through the correction of the SDK in `9b97548`, with the code of `5012d3a`. A run of hours on one machine does not replace weeks on separate ones.
 
 ## Containers on separate networks, one machine
 

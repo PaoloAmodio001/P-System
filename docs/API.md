@@ -80,5 +80,5 @@ Client("http://node:8080").wait_final(signed.transfer, verifier, seconds=30)
 ## Compatibility
 
 Within `/v1`, fields may be added and none is removed or changes meaning. A breaking change takes
-`/v2`, and `/v1` stays for at least one release. Until 1.0 the event format may still change: see phase C
-in `ROADMAP.md`.
+`/v2`, and `/v1` stays for at least one release. The event format is not frozen: objects with their own state
+would change it.

@@ -6,7 +6,7 @@
                                                                    the nodes say they see each other
     python scripts/probe_stuck_event.py burst --runs 25 --pause 0  a burst with no fault, after a pause
 
-It prints one line of JSON for each run and one to end. See docs/piano-bizantino.md for what it found.
+It prints one line of JSON for each run and one to end. See archive/docs/piano-bizantino.md for what it found.
 """
 
 import argparse

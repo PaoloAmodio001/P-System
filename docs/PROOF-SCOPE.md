@@ -1,14 +1,12 @@
 # P-System Proof Scope
 
-The implementation distinguishes five different claims:
+In quorum mode an event goes through three steps, as in the Lean model:
 
-1. **Authenticated** — the event signature verifies.
-2. **Identity-bound** — the signer matches a valid `IdentityClaim`.
-3. **Authorized** — the identity is not in an unresolved identity conflict and the event sender matches the claimed alias.
-4. **Executable** — the event satisfies causal/conflict/state rules and may enter the local projection.
-5. **Executed** — the event has actually been applied to the local operational state.
+1. **Authorized** (`auth`): signed by the owner of the sender account, well formed, and inside one asset (`is_authorized_transfer`).
+2. **Voted** (`auth && voteAllowed`): an honest validator votes for the first version of a `(sender, nonce)` it sees, durably, before signing.
+3. **Executed**: a valid certificate of `2f+1` votes, for an event that can run on the state of the node (`executable`), with its parents executed.
 
-A valid signature alone is therefore never an execution authorization.
+A valid signature alone is never an authorization to execute.
 
 ## Verification status policy
 
@@ -28,7 +26,7 @@ Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is
 
 O7 and the theorems of phase B cover safety in the Lean model, for a chain of committees of `n = 3f+1` validators, each with at most `f` faulty. They do not establish unconditional liveness, totality, recovery from lost votes, or the security of Ed25519 and SHA-256. `honest_sender_certifies` is about liveness with delivery as a hypothesis. Observers (nodes outside the committee that only execute) are not covered: a node leaving a committee keeps executing, and no theorem says more about it than about any node that receives certificates. A committee chosen badly by governance breaks the hypothesis `Epoch.safe`, and no theorem removes that.
 
-Liveness is analysed in `docs/LIVENESS-PROPOSAL.md`. Its property is conditional: one honest sender, one version, delivery to `2f+1` honest validators, no conflicting request and no split governance. The mechanisms already tested are durable votes, bounded resends, gathering across a restart, certificate synchronization and the refusal of permanently non-executable events; these are `EMPIRICAL`. The proposal adds no timeout and no choice between conflicting alternatives, so it does not create consensus, and it is not a liveness theorem.
+Liveness is not proved. The only statement is `honest_sender_certifies`, `CONDITIONAL`: one honest sender, one version, delivery to `2f+1` honest validators, no conflicting request. The mechanisms that help in practice are durable votes, bounded resends of vote requests, gathering that survives a restart, and certificate synchronization; these are `EMPIRICAL`. As in the model, a vote does not depend on whether the event can run: a certificate for an event that can never run is kept, so that a conflict with it is still detected, and is never executed.
 
 Keys of ended committees: `QuorumOldKeys.lean` (`accepted_complete`, `old_keys_no_double_spend`) is `FORMAL (model)` for the rule that a node takes an old certificate only for an event in its locks, and it needs that the sender signed one version. `tests/test_quorum_old_keys.py` is `EMPIRICAL` for the rule in Python. A later chain shown to a node that joins from the genesis, with stolen keys of governance too, is not covered.
 

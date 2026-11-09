@@ -1,4 +1,4 @@
-# Minimal continuous integration: phase A of ROADMAP.md.
+# Continuous integration: the proofs and the whole test suite.
 #
 # What a green run says: the suite and the Lean proofs pass on Linux, on this commit. It says
 # nothing that the tests and the proofs do not say themselves.

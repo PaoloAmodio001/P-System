@@ -3,7 +3,7 @@ import PSystem.QuorumThresholds
 namespace PSystem.Quorum
 
 /-!
-# A chain of committees (phase B of `ROADMAP.md`)
+# A chain of committees
 
 The standard configuration of decision D2: no unlocking. At the end of an epoch each
 validator of a quorum reports what it voted for and stops voting. The union of the reports,
