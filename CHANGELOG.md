@@ -12,6 +12,8 @@
 - **Vote requests are sent again**, within limits, for events with no certificate, and what a node gathers survives a restart
   (store schema 6). Metrics: `psystem_events_gathering`, `psystem_gathering_oldest_seconds`,
   `psystem_vote_requests_resent_total`, `psystem_connections_replaced_total`, `psystem_nonce_locked_permanently_total`.
+- **A `SNAPSHOT_REQUEST` costs the peer** in proportion to the derivation it causes, plus a bad signature's worth for a
+  digest that does not derive; an attestation already given is answered from memory.
 - **`GET /v1/certificates/{id}`** reads an index by event id, no longer the whole log under the lock of the node.
 - **Wallet:** `next_nonce` and `unfinished` query an index on `CAST(nonce AS INTEGER)` instead of reading the whole journal;
   the wallet signs nonces from 0 to `2**63 - 1`.

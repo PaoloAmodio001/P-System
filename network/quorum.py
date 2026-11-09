@@ -6,6 +6,7 @@ empirical, not a refinement proof.
 """
 
 import heapq
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -1443,6 +1444,8 @@ class QuorumReplica:
         self._initial_state = initial_state
         self.state = initial_state.copy()
         self.log: list[QuorumCertificate] = []
+        # Steps of `_derives_snapshot` so far: see `QuorumDriver._handle_snapshot_request`.
+        self.derive_steps = 0
         # The same certificates by event id, so that a client asking for one does not scan the log.
         self._log_by_id: dict[str, QuorumCertificate] = {}
         self._executed_ids: set[str] = set()
@@ -1518,6 +1521,8 @@ class QuorumReplica:
         if any(self.state.nonce(sender) < nonce for sender, nonce in nonces.items()):
             return False
 
+        # The work done, which the driver charges to the peer that asked.
+        self.derive_steps += len(self.log)
         pending = [
             certificate.event
             for certificate in self.log
@@ -1533,6 +1538,7 @@ class QuorumReplica:
         while pending and progress:
             progress = False
             waiting = []
+            self.derive_steps += len(pending)
 
             for event in pending:
                 if self._runs_on(state, ids, event):
@@ -1918,6 +1924,11 @@ SYNC_BATCH_BYTES = 4 * 1024 * 1024
 # What a bad signature costs a peer, in tokens of its 5000 per second: 50 of them per second, which
 # take under 1% of a core. An honest peer sends none, and it only slows the one that does.
 BAD_SIGNATURE_COST = 100
+# A request for a snapshot makes a member derive a state from its log. A peer pays one token for this many
+# steps of that derivation, and a bad signature's worth if the digest is not what the member derives. An
+# attestation already given is given again from memory, for the last few requests. Values chosen by judgement.
+SNAPSHOT_STEPS_PER_TOKEN = 20
+SNAPSHOT_ANSWERS_KEPT = 16
 # Certificates that cannot run yet. A certificate that can run never counts against this. One left
 # out does not enter `_known`, so it comes back with synchronization.
 MAX_BUFFERED_CERTIFICATES = 100_000
@@ -2029,6 +2040,8 @@ class QuorumDriver:
         self.prune = prune
         self._snapshot: Snapshot | None = None
         self._snapshot_votes: dict[int, SnapshotAttestation] = {}
+        # Attestations this member gave, by request: see `_handle_snapshot_request`.
+        self._snapshot_answers: OrderedDict = OrderedDict()
         self._snapshot_started = 0.0
         # The order this node is collecting reports for.
         self._change: EpochChange | None = None
@@ -2526,10 +2539,34 @@ class QuorumDriver:
         digest: str,
         nonces: dict[str, int],
     ) -> DriverOutput:
-        attestation = self.replica.attest_snapshot(epoch, digest, nonces)
+        replica = self.replica
 
-        if attestation is None:
+        if self.halted:
             return _NOTHING
+
+        base = None if replica.base is None else (replica.base.epoch, replica.base.digest)
+        key = (self.committee.committee_id, base, epoch, digest, tuple(sorted(nonces.items())))
+        attestation = self._snapshot_answers.get(key)
+
+        if attestation is not None:
+            self._snapshot_answers.move_to_end(key)
+        else:
+            steps = replica.derive_steps
+            attestation = replica.attest_snapshot(epoch, digest, nonces)
+            work = replica.derive_steps - steps
+            self._cost += work // SNAPSHOT_STEPS_PER_TOKEN
+
+            if attestation is None:
+                # Derived, and not this digest: what no honest proposer asks.
+                if work:
+                    self._cost += BAD_SIGNATURE_COST
+
+                return _NOTHING
+
+            self._snapshot_answers[key] = attestation
+
+            while len(self._snapshot_answers) > SNAPSHOT_ANSWERS_KEPT:
+                self._snapshot_answers.popitem(last=False)
 
         return DriverOutput(replies=(encode_snapshot_vote(digest, attestation),))
 
