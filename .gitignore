@@ -24,6 +24,7 @@ full-test-audit-*.log
 
 # Local agent configuration
 .claude/
+CLAUDE.local.md
 
 
 # Generated archives

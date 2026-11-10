@@ -1,5 +1,7 @@
 # P-System — Regole di sviluppo, completamento e industrializzazione per Claude
 
+> Copia operativa: `CLAUDE.local.md` nella radice del repository, ignorata da git (Claude Code la legge automaticamente). Si ricrea con `cp archive/CLAUDE.md CLAUDE.local.md`.
+
 ## 1. Identità e architettura del progetto
 
 P-System è un registro distribuito di trasferimenti senza consenso, basato su:
