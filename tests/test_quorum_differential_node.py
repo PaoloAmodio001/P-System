@@ -22,7 +22,10 @@ the model, by the rules of the protocol:
   rule of execution of its own. The model needs no buffer: it runs what it is given, and
   proves nothing about this order. The order is a rule of the node, and this is where it is
   checked.
-- A restart loses the buffer: only what ran is still known afterwards.
+- A restart loses the buffer: only what ran is still known afterwards. What the node took
+  with a submit and has not run is not lost: the store keeps it, and after a
+  restart the node gathers votes for it again, starting from none (store schema 6). The
+  restart is not in the model, which has no buffer; it is a rule of the node, checked here.
 
 The trace of the replica is a second comparison: run through Lean, it must end in the same
 state. It would catch inputs that the oracle and the node agree on for the wrong reason.
@@ -171,6 +174,9 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
     known: dict[tuple, bytes] = {}
     seen: dict[bytes, tuple] = {}
     collecting: dict[bytes, tuple[Transfer, set[int]]] = {}
+    # What the node took with a submit and has not run, in the order taken: the table
+    # `gathering` of the store, which a restart does not lose.
+    gathering: dict[bytes, Transfer] = {}
     halted = False
     by_id = {_event_id_as_nat(event): event for event in case.pool}
 
@@ -210,6 +216,9 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
                 return
             plan.inputs.append(seen[by_id[new[0]].canonical()][1])
             ran.append(new[0])
+            # The store forgets what it was gathering when the event runs, not when its
+            # certificate comes: one that cannot run is gathered again after a restart.
+            gathering.pop(by_id[new[0]].canonical(), None)
 
     def vote_for(event: Transfer) -> bool:
         key = (event.sender, event.nonce)
@@ -264,6 +273,7 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
                     broadcast = ["CERTIFICATE"]
                     count("submits of a certified event")
                 elif vote_for(event):
+                    gathering.setdefault(event.canonical(), event)
                     votes = collecting.setdefault(event.canonical(), (event, set()))[1]
                     votes.add(own)
                     if len(votes) >= quorum:
@@ -280,6 +290,9 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
                 entry[1].add(validator)
                 if len(entry[1]) >= quorum:
                     votes = sorted(entry[1])
+                    if own not in entry[1]:
+                        # Only after a restart does a gathering lack the vote of this node.
+                        count("certificates made after a restart")
                     del collecting[event.canonical()]
                     accept(event, _valid_entry_line(event, votes))
                     broadcast = ["CERTIFICATE"]
@@ -293,7 +306,15 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
 
         elif kind == "RESTART":
             count("restarts")
-            collecting.clear()
+            # The votes gathered were in memory; what was being gathered was on disk. A node
+            # that halted does not gather again.
+            collecting = {
+                canonical: (event, set())
+                for canonical, event in gathering.items()
+                if not halted
+            }
+            if collecting:
+                count("restarts still gathering")
             executed = _executed_ids(driver, directory, case, plan.inputs)
             if executed:
                 count("restarts with a log")
@@ -702,8 +723,18 @@ def random_case(rng: random.Random) -> NodeCase:
             case.messages.append(("REQUEST", event, kind))
         elif draw < 0.75:
             case.messages.append(("SUBMIT", event))
-            for validator in rng.sample(range(n), rng.randint(0, n)):
-                case.messages.append(("VOTE", event, validator, rng.random() < 0.85))
+            voters = rng.sample(range(n), rng.randint(0, n))
+            if rng.random() < 0.6:
+                # A restart while gathering: the votes before it are lost, and the node
+                # gathers again from those that come after it.
+                cut = rng.randint(0, min(len(voters), 2 * case.f))
+                after = rng.sample(range(n), rng.randint(2 * case.f + 1, n))
+                voters = voters[:cut] + [None] + after
+            for validator in voters:
+                if validator is None:
+                    case.messages.append(("RESTART",))
+                else:
+                    case.messages.append(("VOTE", event, validator, rng.random() < 0.85))
         elif draw < 0.80:
             case.messages.append(
                 ("VOTE", event, rng.randrange(n + 1), rng.random() < 0.7)
@@ -736,6 +767,8 @@ EXERCISED = (
     "halts",
     "restarts",
     "restarts with a log",
+    "restarts still gathering",
+    "certificates made after a restart",
     "executed later by a retry",
     "several ready together",
 )
