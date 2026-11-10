@@ -691,10 +691,12 @@ Dopo la conferma, si parte da fase 0 e fase 1, un commit per modifica logica.
 
 **Limite noto: certificato non eseguito e riavvio.** Un evento certificato ma non eseguibile (per esempio importo zero), o in attesa di un parent, resta in `gathering` e il suo certificato vive solo in memoria (`_known`, buffer): lo store salva soltanto i certificati eseguiti. Dopo un riavvio il nodo chiede di nuovo i voti per quell'evento e, se arriva il quorum, manda di nuovo un certificato dello stesso evento. Non c'è conflitto e nessun nodo onesto diverge: il costo è in messaggi. Per lo stesso motivo, dopo un riavvio il nodo non vede più un conflitto con quel certificato. La correzione richiesta (al riavvio non chiedere voti per un evento già certificato nello store) è **rinviata**: un flag su `gathering` (schema 8) richiederebbe una seconda migrazione quando si salveranno i certificati non eseguiti, che servono anche per i conflitti dopo un riavvio. Va fatta in una sola migrazione, che salvi quei certificati con un limite di spazio (sono input della rete) e li ricarichi in `_known`, cambiando di conseguenza l'oracolo del differenziale B.
 
-**Incroci con il riavvio.** Un riavvio era coperto, e così un certificato fatto qui, ma la loro combinazione no. Nuove soglie, con i valori sui 3 seed di default:
-- differenziale B (nodo): "restarts still gathering" 192–231, "restarts with a certificate waiting" 152–167, "certificates made after a restart" 26–34;
-- differenziale A (replica): "restart after a snapshot" 1070–1110, "cert executed after a restart from a snapshot" 313–327;
-- differenziale D (epoche, un validatore): "restart during a closure" 30–53, "restart after a floor" 55–60.
+**Incroci con il riavvio.** Un riavvio era coperto, e così un certificato fatto qui, ma la loro combinazione no. Nuove soglie, con il valore minimo sui 15 seed (soglia 25 in B, 30 in A, 20 in D):
+- differenziale B (nodo): "restarts still gathering" 222, "restarts with a certificate waiting" 159, "certificates made after a restart" 30;
+- differenziale A (replica): "restart after a snapshot" 1068, "cert executed after a restart from a snapshot" 298;
+- differenziale D (epoche, un validatore): "restart during a closure" 28, "restart after a floor" 41.
+
+Con il primo generatore, "certificates made after a restart" scendeva a 18 su alcuni seed: dopo un riavvio i voti sono ora validi al 95% e il riavvio entra nel 75% dei submit.
 
 **Punto cieco strutturale.** Driver, buffer, `gathering` e riavvio del nodo sono confrontati con il modello solo nel differenziale B, che non ha epoche né snapshot. Le chiusure di epoca e gli snapshot sono confrontati con il riavvio solo a livello di replica e store (A e D), senza driver. Quindi riavvio × chiusura e riavvio × snapshot **a livello di nodo** (per esempio `gathering` filtrato per epoca e svuotato con `DELETE FROM gathering WHERE epoch <= ?`, il buffer davanti a uno snapshot potato) restano a zero in tutti i differenziali randomizzati. Li coprono solo test a scenario fisso (`test_quorum_differential_epochs.py`, `test_quorum_differential_processes.py`, `test_quorum_differential_network.py`), non confrontati con Lean. Va esteso il differenziale B a epoche e snapshot.
 

@@ -727,17 +727,21 @@ def random_case(rng: random.Random) -> NodeCase:
         elif draw < 0.75:
             case.messages.append(("SUBMIT", event))
             voters = rng.sample(range(n), rng.randint(0, n))
-            if rng.random() < 0.6:
+            if rng.random() < 0.75:
                 # A restart while gathering: the votes before it are lost, and the node
                 # gathers again from those that come after it.
                 cut = rng.randint(0, min(len(voters), 2 * case.f))
                 after = rng.sample(range(n), rng.randint(2 * case.f + 1, n))
                 voters = voters[:cut] + [None] + after
+            restarted = False
             for validator in voters:
                 if validator is None:
                     case.messages.append(("RESTART",))
+                    restarted = True
                 else:
-                    case.messages.append(("VOTE", event, validator, rng.random() < 0.85))
+                    # After a restart mostly valid votes, so that a quorum forms often enough.
+                    valid = rng.random() < (0.95 if restarted else 0.85)
+                    case.messages.append(("VOTE", event, validator, valid))
         elif draw < 0.80:
             case.messages.append(
                 ("VOTE", event, rng.randrange(n + 1), rng.random() < 0.7)
