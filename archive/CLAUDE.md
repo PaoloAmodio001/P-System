@@ -246,6 +246,21 @@ Non effettuare push o merge su `main` senza autorizzazione esplicita di Paolo.
 - Non interrompere il lavoro per attività secondarie quando esistono componenti fondamentali ancora incompleti.
 - Non dichiarare completata una fase senza averne verificato i criteri di uscita.
 
+### 10.1 Decisioni autonome e punti di arresto (dal 2026-11-10)
+
+Le decisioni tecniche si prendono senza fermarsi a chiedere, e si riferiscono a Paolo dopo, con il motivo: scelte di implementazione, schemi dello store, struttura dei test, ordine del lavoro, nomi, limiti numerici.
+
+Serve il via esplicito di Paolo, e ci si ferma prima, solo per:
+
+1. push o merge su `main`;
+2. tag, release e pubblicazione su Zenodo o altrove;
+3. una divergenza tra Python e i teoremi Lean: fermarsi e portare il caso minimo, senza aggiustare il test per farlo passare;
+4. modifiche al modello formale in `formal/`, all'enunciato di un teorema, o alle regole in `archive/CLAUDE.md` e `CLAUDE.local.md`.
+
+Ci si ferma anche davanti a una decisione irreversibile che potrebbe ragionevolmente andare in due modi: preparare tutto, spiegare la scelta e aspettare.
+
+Per gli schemi dello store: non cambiare lo schema due volte. Se una migrazione di oggi ne renderà necessaria un'altra domani, farne una sola che copra entrambe, oppure rinviare tutto e registrare il limite noto nel piano.
+
 ## 11. Criterio finale di successo
 
 P-System dovrà raggiungere un livello di maturità tale da poter essere sottoposto a una reale valutazione tecnologica e industriale.
