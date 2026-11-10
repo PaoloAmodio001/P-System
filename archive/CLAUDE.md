@@ -147,6 +147,7 @@ Non attribuire a P-System applicazioni industriali o spaziali già operative qua
 - Il repository ha un hook di pre-commit, da installare con `sh scripts/install_hooks.sh`, che blocca il commit se `pytest -q -m "not slow"` o `lake build` falliscono. Non aggirarlo con `--no-verify`.
 - Alla fine di ogni fase e prima di ogni push eseguire la suite completa `pytest -q`, inclusi test differenziali e mutazionali, e `lake build`.
 - Prima di un merge su `main`, eseguire inoltre i test differenziali con `PSYSTEM_DIFF_SEEDS=15`.
+  Nota del 2026-11-10: questo controllo è stato saltato. I commit `cdfc9cd` (7 novembre, store schema 6) e `dba3839` (8 novembre) sono arrivati su `main` con i merge delle PR #5 e #6 del 9 novembre (`a94f4ee`) avendo girato solo i 3 seed di default. Con 15 seed il differenziale B divergeva al seed 20270007. Da allora il job CI `differentials-15-seeds` esegue i differenziali a 15 seed su ogni pull request.
 - Se un controllo fallisce, non effettuare il push: analizzare il problema, correggerlo e ripetere i controlli.
 - Effettuare il push del branch di lavoro al termine di ogni fase completata.
 - Non effettuare mai push o merge su `main` senza autorizzazione esplicita di Paolo.
