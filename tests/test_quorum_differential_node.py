@@ -318,6 +318,9 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
             executed = _executed_ids(driver, directory, case, plan.inputs)
             if executed:
                 count("restarts with a log")
+            if any(_event_id_as_nat(item[0]) not in executed for item in seen.values()):
+                # A certificate came and waits in the buffer: the restart loses it.
+                count("restarts with a certificate waiting")
             known = {
                 (by_id[value].sender, by_id[value].nonce): by_id[value].canonical()
                 for value in executed
@@ -768,6 +771,7 @@ EXERCISED = (
     "restarts",
     "restarts with a log",
     "restarts still gathering",
+    "restarts with a certificate waiting",
     "certificates made after a restart",
     "executed later by a retry",
     "several ready together",

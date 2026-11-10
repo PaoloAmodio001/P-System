@@ -117,6 +117,9 @@ class Stats:
         self.refused_in_epoch = 0
         self.refused_by_auth = 0
         self.refused_by_floor = 0
+        # Crossings with a restart, which no single rule covers.
+        self.restart_during_closure = 0
+        self.restart_after_floor = 0
 
 
 def signed_pool(rng: random.Random) -> list[SignedTransfer]:
@@ -187,7 +190,9 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
         floors: dict[str, int] = {}
 
         for epoch in range(EPOCHS):
+            floor_applied = False
             if epoch and rng.random() < 0.5:
+                floor_applied = True
                 for sender in rng.sample(SENDERS, rng.randint(1, 2)):
                     name = sender.identity_id
                     floors[name] = max(floors.get(name, 0), rng.randint(1, 2))
@@ -218,6 +223,11 @@ def python_run(seed: int, directory: Path, stats: Stats) -> tuple[list[str], lis
                         closed_with = [signed.transfer for signed in report.votes]
                     lines.append("X")
                 elif action < 0.20:
+                    if closed_with is not None:
+                        # This validator has reported, and the closure is not installed yet.
+                        stats.restart_during_closure += 1
+                    if floor_applied:
+                        stats.restart_after_floor += 1
                     store.close()
                     replica, store = open_replica(path, committee, refused, False, initial)
                     # A restart is no input of the model.
@@ -301,3 +311,9 @@ def test_one_validator_across_epochs_matches_the_model(epoch_check, tmp_path, se
     assert stats.refused_in_epoch >= MIN_DECISIVE
     assert stats.refused_by_auth >= 1
     assert stats.refused_by_floor >= MIN_DECISIVE
+    print(
+        f"\nseed {seed}: restarts during a closure {stats.restart_during_closure}, "
+        f"after a floor {stats.restart_after_floor}"
+    )
+    assert stats.restart_during_closure >= MIN_DECISIVE
+    assert stats.restart_after_floor >= MIN_DECISIVE
