@@ -98,3 +98,87 @@ jobs:
           path: test-failures/
           if-no-files-found: ignore
           retention-days: 30
+
+  # The run of the differentials required before a merge (archive/CLAUDE.md, rule 7), on every
+  # pull request, so that it cannot be left out: on 9 November 2026 two commits reached main with
+  # only the 3 default seeds, and seed 8 of differential B diverged. A job of its own, because
+  # with 15 seeds it takes longer than the rest of the suite. A green run says that these seeds
+  # agree with the Lean model on this commit, not more.
+  differentials-15-seeds:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the Python dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Cache Lean toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+          key: ${{ runner.os }}-lean-toolchain-${{ hashFiles('formal/lean/lean-toolchain') }}
+
+      # Install toolchain directly from releases.lean-lang.org (avoids elan/GitHub
+      # release-asset 504s). Note: releases.lean-lang.org may redirect to GitHub.
+      - name: Install Lean
+        run: |
+          set -euo pipefail
+          tc="$(tr -d '\r\n' < formal/lean/lean-toolchain)"
+          version="${tc#leanprover/lean4:}"          # e.g. v4.34.1
+          ver="${version#v}"                         # e.g. 4.34.1
+          name="${tc//\//--}"; name="${name//:/---}" # elan toolchain dir name
+          dest="$HOME/.elan/toolchains/$name"
+          if [ -x "$dest/bin/lake" ]; then
+            echo "$dest/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
+          mkdir -p "$HOME/.elan/toolchains"
+          archive="$RUNNER_TEMP/lean-toolchain.tar.zst"
+          url="https://releases.lean-lang.org/lean4/${version}/lean-${ver}-linux.tar.zst"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors --retry-delay 15 --output "$archive" "$url"
+          rm -rf "$dest" "$RUNNER_TEMP/lean-extract"
+          mkdir -p "$RUNNER_TEMP/lean-extract"
+          tar --use-compress-program=unzstd -xf "$archive" -C "$RUNNER_TEMP/lean-extract"
+          extracted="$(find "$RUNNER_TEMP/lean-extract" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+          if [ -z "$extracted" ] || [ ! -x "$extracted/bin/lake" ]; then
+            echo "Lean toolchain extraction failed or unexpected layout" >&2
+            find "$RUNNER_TEMP/lean-extract" -maxdepth 3 >&2 || true
+            exit 1
+          fi
+          mv "$extracted" "$dest"
+          echo "$dest/bin" >> "$GITHUB_PATH"
+
+      - name: Build the proofs
+        working-directory: formal/lean
+        run: lake build
+
+      - name: Run the differentials with 15 seeds
+        env:
+          PSYSTEM_DIFF_SEEDS: "15"
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs \
+            tests/test_quorum_differential.py \
+            tests/test_quorum_differential_node.py \
+            tests/test_epoch_differential.py \
+            tests/test_unlock_differential.py | tee pytest-differentials.log
+          if grep -E '[0-9]+ skipped' pytest-differentials.log; then
+            echo "Tests were skipped" >&2
+            exit 1
+          fi
+
+      - name: Keep what a failed test left
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-failures-differentials-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-failures/
+          if-no-files-found: ignore
+          retention-days: 30
