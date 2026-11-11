@@ -215,25 +215,10 @@ IN_QUORUM = {
 }
 
 IN_NODE = {
-    "evidence votes": (
-        "                self._quorum.driver.record_evidence(event)\n",
-        "                self._quorum.driver.record_evidence(event)\n"
-        "                self._quorum.replica.handle_vote_request(event.transfer)\n",
-    ),
-    "evidence executes": (
-        "                self._quorum.driver.record_evidence(event)\n",
-        "                self._quorum.driver.record_evidence(event)\n"
-        "                if self._quorum.replica._is_ready(event.transfer) and"
-        " self._quorum.replica._is_executable(event.transfer) and"
-        " self._quorum.replica._is_fresh(event.transfer):\n"
-        "                    self._quorum.replica._execute(\n"
-        "                        type('C', (), {'event': event.transfer})()\n"
-        "                    )\n",
-    ),
     "state not restored at a restart": (
-        "            self._sync_interval = quorum.sync_interval\n"
-        "            self._publish_quorum_state()\n",
-        "            self._sync_interval = quorum.sync_interval\n",
+        "        self._sync_interval = quorum.sync_interval\n"
+        "        self._publish_quorum_state()\n",
+        "        self._sync_interval = quorum.sync_interval\n",
     ),
     "public state not published after a message": (
         "            finally:\n"
@@ -261,8 +246,8 @@ IN_NODE = {
         "        self.events.sort(key=lambda e: e.event_id())\n",
     ),
     "halt does not reach the status": (
-        "        known = list(self.events) + self._quorum_halt_events\n",
-        "        known = list(self.events)\n",
+        "            return bool(self._quorum_halt_events)\n",
+        "            return False\n",
     ),
     "replies not sent": (
         "                self._send_quorum_reply(connection, message)\n",
@@ -273,8 +258,10 @@ IN_NODE = {
         "                    pass\n",
     ),
     "quorum messages take the old way": (
-        "        if self._quorum is not None and message_type in QUORUM_MESSAGE_TYPES:\n",
-        "        if False:\n",
+        "        if message.get(\"type\") in QUORUM_MESSAGE_TYPES:\n"
+        "            self._handle_quorum_message(message, connection)\n",
+        "        if False:\n"
+        "            self._handle_quorum_message(message, connection)\n",
     ),
 }
 

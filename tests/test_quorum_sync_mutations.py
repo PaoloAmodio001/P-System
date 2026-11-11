@@ -171,11 +171,11 @@ NODE = {
     ),
     "no request when a peer connects to this node": (
         "    def _request_certificates(self, connection) -> None:\n"
-        "        \"\"\"Ask a peer for what this node lacks. In quorum mode only.\"\"\"\n"
-        "        if self._quorum is None:\n",
+        "        \"\"\"Ask a peer for what this node lacks.\"\"\"\n",
         "    def _request_certificates(self, connection) -> None:\n"
-        "        \"\"\"Ask a peer for what this node lacks. In quorum mode only.\"\"\"\n"
-        "        if self._quorum is None or not connection.initiated_locally:\n",
+        "        \"\"\"Ask a peer for what this node lacks.\"\"\"\n"
+        "        if not connection.initiated_locally:\n"
+        "            return\n",
     ),
     "no request at intervals": (
         "            for connection in targets:\n"

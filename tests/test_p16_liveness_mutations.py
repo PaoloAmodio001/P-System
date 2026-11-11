@@ -40,6 +40,6 @@ def test_a_port_given_back_by_the_system_is_tried_again(monkeypatch):
         def stop(self):
             stopped.append(self.port)
 
-    monkeypatch.setattr(test_p16_liveness, "Node", FakeNode)
+    monkeypatch.setattr(test_p16_liveness, "standalone_node", FakeNode)
     assert test_p16_liveness.start_on_another_port("x", 41000).port == 41001
     assert stopped == [41000, 41000]
