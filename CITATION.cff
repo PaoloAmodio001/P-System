@@ -6,6 +6,8 @@ authors:
     given-names: "Paolo"
 license: "Apache-2.0"
 type: software
+version: "1.0.0-rc2"
+date-released: "2026-11-11"
 repository-code: "https://github.com/PaoloAmodio001/P-System"
 abstract: >-
   A registry of single-owner state without global consensus: a committee of
