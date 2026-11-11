@@ -87,7 +87,7 @@ Scope and limits of this result:
 - It is a property of the model, and it says nothing by itself about the
   Python code. Quorum mode is implemented there behind `Node(quorum=...)`, and
   the link with the model is `EMPIRICAL`: differential and behaviour tests, not
-  a refinement. With `quorum=None` the code allows forks between honest nodes.
+  a refinement.
 - That the hypotheses can be satisfied, and that they cannot be dropped, is
   proved only for `n = 4`, `f = 1` (witnesses below). Tightness for other
   values of `f` is not proved.

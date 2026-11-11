@@ -4,9 +4,7 @@ Next steps, in order. None of them is done, and none is a promise.
 
 ## Code
 
-1. **Remove the historical mode** (`Node(quorum=None)`) and the modules of `core/` that only it uses. It has no Byzantine
-   guarantee, `psystem` never deploys it, and most of `core/` exists for it. The tests and documents that depend on it go
-   with it.
+1. ~~Remove the historical mode~~: done, with the modules of `core/`, the tests and the benchmarks that only it used.
 2. **Split `network/quorum.py`** into store, replica, driver and configuration, and remove the accesses to private members
    across them (`_initial_state`, `StateDeriver._apply_one`, `StateDeriver._execution_failure`).
 

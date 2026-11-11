@@ -53,7 +53,6 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.attestation import Committee, QuorumCertificate, Vote, vote_payload
-from core.decision_status import DecisionStatus
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.state import State
@@ -66,7 +65,6 @@ from network.message import (
 )
 from network.node import Node
 from network.quorum import QuorumConfig, VoteStoreError
-from network.reconciliation_protocol import KnowledgeResponse
 from tests.test_quorum_check_driver import _run, quorum_check  # noqa: F401
 from tests.test_quorum_differential import (
     _NO_EVENT,
@@ -399,7 +397,9 @@ def _evidence_message(event: Transfer, path: str) -> dict:
         wire = encode_signed_transfer(signed)
         del wire["type"]
         return {"type": "SIGNED_EVENT_SYNC", "events": [wire]}
-    return KnowledgeResponse(identities=(), events=(signed,)).encode()
+    wire = encode_signed_transfer(signed)
+    del wire["type"]
+    return {"type": "KNOWLEDGE_RESPONSE", "identities": [], "events": [wire]}
 
 
 @dataclass
@@ -516,7 +516,7 @@ def run_node(case: NodeCase, directory: Path) -> Result:
             result.halted.append(bool(node._quorum_halt_events))
             result.unsigned += asker.unsigned
 
-        result.conflicted = node.status() == DecisionStatus.CONFLICTED
+        result.conflicted = node.conflicted
     except VoteStoreError as error:
         # Nothing in these cases can make an honest store fail, or refuse to reopen.
         result.store_failure = str(error)

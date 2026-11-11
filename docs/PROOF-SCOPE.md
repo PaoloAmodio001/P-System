@@ -18,7 +18,7 @@ Passing tests, benchmarks, or simulations do not automatically produce a formal 
 
 The system must not claim Byzantine fault tolerance, transport confidentiality, complete network liveness, or global consensus unless a matching model, assumptions, and proof are present.
 
-Without a committee (`quorum=None`, the historical mode) the implementation does not prevent forks between honest nodes, and that mode has no Byzantine guarantee: two nodes that first receive different conflicting alternatives detect the conflict but keep different states (`tests/test_p15_byzantine_safety.py` asserts this).
+Every node runs with a committee: the historical mode without one (`quorum=None`), which allowed forks between honest nodes, has been removed with the modules of `core/` that only it used.
 
 ## Quorum mode
 
@@ -39,5 +39,3 @@ The configuration `n = 5f+1`, `q = 4f+1` of decision D2 is implemented, off by d
 Epochs in Python follow `QuorumEpochs.lean`: `EMPIRICAL`, by `tests/test_quorum_epochs.py`, `tests/test_quorum_differential_epochs.py` and differential D, `tests/test_epoch_differential.py`. Differential D compares one validator with `runEpoch`, `reportOf` and `lockAllows` after each input, across epochs, with locks from real closures and with restarts. It does not compare the verification of closures or the execution across epochs, which the model leaves to the hypothesis `ChainValid`, so the link is narrower than that of differential A.
 
 Certificates are synchronized between nodes (`CERTIFICATE_SYNC_REQUEST` and `CERTIFICATE_SYNC`). A certificate that arrives this way goes through the same path as one that arrives alone, so the model has no new transition. `tests/test_quorum_differential_network.py` runs three honest nodes and one faulty member on real TLS and checks `no_double_spend`, `state_is_derive` and convergence as properties of each run: this is `EMPIRICAL`, for `n = 4`, `f = 1`, on those scenarios. A node catches up only if the network delivers, so this is not a liveness result. `tests/test_quorum_differential_processes.py` does the same with four real processes and a real `SIGKILL`.
-
-The historical mode (`quorum=None`) has no Byzantine guarantee of any kind.

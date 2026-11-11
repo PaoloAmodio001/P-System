@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 
 from core.attestation import Committee, QuorumCertificate, Vote
-from core.decision_status import DecisionStatus
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.state import State
@@ -37,7 +36,6 @@ from network.peer import Peer
 from network.quorum import QuorumConfig
 from tests import quorum_store_worker as worker
 from tests.die_with_parent import command
-from tests.signed_helpers import authorize, identity_with_claim, signed_transfer
 from tests.test_quorum_driver import GENESIS as DRIVER_GENESIS
 from tests.test_quorum_driver import _spends
 
@@ -177,7 +175,7 @@ def test_no_fork_for_any_vote_any_signature_and_any_delivery(tmp_path, faulty):
                     )
                     assert result == expected, (first_seen, faulty, pattern)
                     # One certificate is not valid, so nothing here is a conflict.
-                    assert node.status() != DecisionStatus.CONFLICTED
+                    assert not node.conflicted
 
                 # The fork: two honest nodes, two alternatives.
                 assert len({r for r in results if r}) <= 1
@@ -222,7 +220,7 @@ def test_forged_signatures_of_honest_members_make_no_quorum(tmp_path):
         deliver(node, QuorumCertificate(B, (real, *votes)))
 
     assert executed(node) == []
-    assert node.status() != DecisionStatus.CONFLICTED
+    assert not node.conflicted
     node.stop()
 
 
@@ -241,25 +239,6 @@ def test_votes_split_with_a_faulty_member_silent_give_no_certificate(tmp_path):
         assert executed(node) == []
         assert node.state.root() == GENESIS.root()
         node.stop()
-
-
-def test_old_mode_still_forks_on_the_same_dissemination():
-    # The contrast, and the reason for all this: same sender, same two versions.
-    identity, claim = identity_with_claim("alice")
-    first = Node("byz-old-a", State({"alice": 10}))
-    second = Node("byz-old-b", State({"alice": 10}))
-    for node in (first, second):
-        authorize(node, claim)
-
-    _, signed_a = signed_transfer(identity, "alice", "bob", 8, 0)
-    _, signed_b = signed_transfer(identity, "alice", "carol", 8, 0)
-    assert first.receive_signed(signed_a, broadcast=False)
-    assert second.receive_signed(signed_b, broadcast=False)
-
-    assert first.state.balance("bob") == 8
-    assert second.state.balance("carol") == 8
-    first.stop()
-    second.stop()
 
 
 def _two_faulty_members_certify_both(tmp_path):
@@ -301,7 +280,7 @@ def test_beyond_f_a_node_that_sees_both_halts_and_chooses_nothing(tmp_path):
     root = first.state.root()
     deliver(first, certificate_b)
 
-    assert first.status() == DecisionStatus.CONFLICTED
+    assert first.conflicted
     assert executed(first) == [A]
     assert first.state.root() == root
     first.stop()
@@ -336,7 +315,7 @@ def test_permutations_of_the_same_certificates_give_the_same_node(tmp_path, seed
         results.add(
             (node.state.root(), frozenset(e.canonical() for e in node.local_events))
         )
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
         node.stop()
 
     assert len(results) == 1
@@ -403,7 +382,7 @@ def test_halt_survives_the_death_of_the_process(tmp_path):
 
     node = _worker_node(path)
 
-    assert node.status() == DecisionStatus.CONFLICTED
+    assert node.conflicted
     assert not node.submit(
         SignedTransfer.create(worker.VOTE_SENDER, worker.VOTED_EVENT)
     )
@@ -499,4 +478,4 @@ def test_node_that_voted_the_alternative_follows_over_real_tls(tls_nodes):
     assert voted_b._quorum.replica.votes() == [B]
     assert voted_b.state.balance("carol") == 0
     for node in tls_nodes:
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted

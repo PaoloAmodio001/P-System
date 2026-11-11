@@ -12,6 +12,7 @@ from core.state import State
 from crypto.identity import Identity
 from network import quorum as quorum_module
 from network.message import encode_certificate, encode_vote, encode_vote_request
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.quorum import QuorumDriver, QuorumReplica, SqliteVoteStore
 from scripts import measure_network as measure
@@ -299,7 +300,7 @@ class Connected:
 
 
 def test_replacing_a_live_connection_is_counted_and_refusing_one_is_not():
-    node = Node("a-node", State())
+    node = standalone_node("a-node", State())
 
     try:
         assert node._register_peer_connection("z-node", Connected(False))

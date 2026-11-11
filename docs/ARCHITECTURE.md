@@ -18,9 +18,8 @@ why no consensus is needed, and also why shared state cannot be expressed: see "
 | Client | `sdk/client.py` | Wallet that cannot equivocate by accident, API client, light client |
 | Model and proofs | `formal/lean/` | The protocol in Lean 4 and the theorems about it |
 
-`core/` also holds the modules of the historical mode (`quorum=None`). That mode has no Byzantine
-guarantee and allows forks between honest nodes. It stays for its tests and for research, and a
-deployment made with `psystem` never uses it.
+Every node runs with a committee. The historical mode without one (`quorum=None`) has been removed,
+with the modules of `core/` that only it used.
 
 ## The path of an event
 

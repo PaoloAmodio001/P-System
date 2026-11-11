@@ -19,6 +19,7 @@ from core.state import State
 from crypto.identity import Identity
 from network.handshake import Handshake
 from network.message import decode_vote_request, encode_certificate, encode_vote, encode_vote_request
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.peer import Peer
 from network.peer_connection import PeerConnection
@@ -46,7 +47,7 @@ def peer_of(node: Node) -> Peer:
 
 
 def test_a_live_connection_from_the_higher_id_is_not_replaced():
-    lower, higher = Node("a-node", State()), Node("z-node", State())
+    lower, higher = standalone_node("a-node", State()), standalone_node("z-node", State())
 
     try:
         lower.start()
@@ -81,7 +82,7 @@ def agree(left: Node, right: Node) -> bool:
 @pytest.mark.parametrize("round_number", range(5))
 def test_two_nodes_that_call_each_other_end_on_one_connection(round_number):
     # What the rule of the lower id is for, and it stays. Here the reconnect loops call, as in the service.
-    left, right = Node("a-node", State()), Node("z-node", State())
+    left, right = standalone_node("a-node", State()), standalone_node("z-node", State())
 
     try:
         left.start()

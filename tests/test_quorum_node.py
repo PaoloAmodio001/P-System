@@ -13,14 +13,11 @@ from pathlib import Path
 import pytest
 
 from core.attestation import Committee, QuorumCertificate, Vote
-from core.decision_status import DecisionStatus
 from core.derive import StateDeriver
 from core.event import Transfer
-from core.identity_claim import IdentityClaim
 from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity
-from network.decision_message import encode_decision_context
 from network.message import (
     decode_certificate,
     decode_vote,
@@ -34,8 +31,6 @@ from network.node import Node
 from network.peer import Peer
 from network.peer_connection import PeerConnection
 from network.quorum import QuorumConfig, VoteStoreError
-from network.reconciliation import reconcile
-from network.reconciliation_protocol import KnowledgeResponse
 from tests.test_peer_connection_receive_loop import FakeSocket
 
 SENDER = Identity.create()
@@ -113,18 +108,17 @@ def drive(node: Node, *events: Transfer, four: Committee4) -> None:
         node._publish_quorum_state()
 
 
-# --- With quorum=None -----------------------------------------------------
+# --- Without a quorum configuration ---------------------------------------
 
 
-def test_default_node_has_no_runtime_and_writes_no_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("arguments", [{}, {"quorum": None}], ids=["missing", "None"])
+def test_node_without_quorum_is_refused(tmp_path, monkeypatch, arguments):
     monkeypatch.chdir(tmp_path)
-    node = Node("plain", State({"alice": 10}))
 
-    assert node._quorum is None
+    with pytest.raises(TypeError):
+        Node("plain", State({"alice": 10}), **arguments)
+
     assert list(tmp_path.glob("*.sqlite*")) == []
-    node.stop()
-    node.start()
-    node.stop()
 
 
 # --- Starting -------------------------------------------------------------
@@ -283,7 +277,7 @@ def test_stop_waits_for_a_message_being_handled(four):
     assert node._quorum.closed
 
 
-# --- Entries that used to execute -----------------------------------------
+# --- Messages outside the protocol and evidence ---------------------------
 
 
 def _assert_nothing_executed(node) -> None:
@@ -295,41 +289,12 @@ def _assert_nothing_executed(node) -> None:
 
 
 @pytest.mark.parametrize(
-    "call",
-    [
-        pytest.param(lambda node: node.receive(A), id="receive"),
-        pytest.param(lambda node: node._receive_unlocked(A), id="receive unlocked"),
-        pytest.param(lambda node: node.merge_events([A]), id="merge_events"),
-        pytest.param(lambda node: node.merge_events([]), id="merge_events, empty"),
-        pytest.param(
-            lambda node: node.signed_event_lifecycle(signed(A)),
-            id="signed_event_lifecycle",
-        ),
-    ],
+    "historical",
+    ["receive", "merge_events", "signed_event_lifecycle", "status", "decision_context",
+     "register_identity_claim", "sync_with", "send_signed_transfer"],
 )
-def test_closed_entry_raises_and_executes_nothing(four, call):
-    node = four.node()
-
-    with pytest.raises(RuntimeError):
-        call(node)
-
-    _assert_nothing_executed(node)
-
-
-def test_reconcile_raises_on_a_quorum_node(four):
-    first = four.node(0)
-    other = Node("plain-peer", GENESIS)
-
-    with pytest.raises(RuntimeError):
-        reconcile(first, other)
-
-    _assert_nothing_executed(first)
-    other.stop()
-
-
-def test_reconcile_raises_even_with_nothing_to_merge(four):
-    with pytest.raises(RuntimeError):
-        reconcile(four.node(0), four.node(1))
+def test_historical_entries_are_gone(four, historical):
+    assert not hasattr(four.node(), historical)
 
 
 def test_receive_signed_keeps_evidence_and_executes_nothing(four):
@@ -338,7 +303,6 @@ def test_receive_signed_keeps_evidence_and_executes_nothing(four):
     assert node.receive_signed(signed(A)) is False
 
     assert set(node.signed_events) == {A.event_id()}
-    assert node.received == []
     _assert_nothing_executed(node)
 
 
@@ -351,15 +315,6 @@ def test_receive_signed_of_an_invalid_event_keeps_nothing(four):
     _assert_nothing_executed(node)
 
 
-def test_signed_transfer_message_keeps_evidence_and_executes_nothing(four):
-    node = four.node()
-
-    node._handle_peer_message(encode_signed_transfer(signed(A)))
-
-    assert set(node.signed_events) == {A.event_id()}
-    _assert_nothing_executed(node)
-
-
 def _signed_wire(event: SignedTransfer) -> dict:
     data = encode_signed_transfer(event)
     return {
@@ -369,78 +324,45 @@ def _signed_wire(event: SignedTransfer) -> dict:
     }
 
 
-def test_signed_event_sync_keeps_evidence_and_executes_nothing(four):
+@pytest.mark.parametrize(
+    "message",
+    [
+        pytest.param(lambda: encode_signed_transfer(signed(A)), id="SIGNED_TRANSFER"),
+        pytest.param(
+            lambda: {"type": "SIGNED_EVENT_SYNC", "events": [_signed_wire(signed(A))]},
+            id="SIGNED_EVENT_SYNC",
+        ),
+        pytest.param(
+            lambda: {"type": "KNOWLEDGE_RESPONSE", "identities": [], "events": [_signed_wire(signed(A))]},
+            id="KNOWLEDGE_RESPONSE",
+        ),
+        pytest.param(lambda: {"type": "IDENTITY_CLAIM", "alias": "alice"}, id="IDENTITY_CLAIM"),
+        pytest.param(lambda: {"type": "EVENT_SYNC", "events": []}, id="EVENT_SYNC"),
+        pytest.param(lambda: {"type": "DECISION_CONTEXT", "status": "UNIQUE"}, id="DECISION_CONTEXT"),
+        pytest.param(lambda: {"type": 7}, id="type not a string"),
+    ],
+)
+def test_message_outside_the_protocol_is_dropped(four, message):
     node = four.node()
+    connection = FakeConnection()
 
-    node._handle_peer_message(
-        {"type": "SIGNED_EVENT_SYNC", "events": [_signed_wire(signed(A))]}
-    )
+    node._handle_peer_message(message(), connection)
 
-    assert set(node.signed_events) == {A.event_id()}
+    assert connection.sent == []
+    assert not connection.closed
+    assert node.signed_events == {}
     _assert_nothing_executed(node)
 
 
-def test_knowledge_response_keeps_evidence_and_executes_nothing(four):
-    node = four.node()
-    response = KnowledgeResponse(identities=(), events=(signed(A),))
-
-    node._handle_peer_message(response.encode())
-
-    assert set(node.signed_events) == {A.event_id()}
-    _assert_nothing_executed(node)
-
-
-def test_two_versions_by_the_old_paths_make_a_proof_and_no_fork(four):
+def test_two_versions_received_make_a_proof_and_no_fork(four):
     node = four.node()
 
     node.receive_signed(signed(A))
-    node._handle_peer_message(encode_signed_transfer(signed(B)))
+    node.receive_signed(signed(B))
 
     assert len(node.equivocations.proofs) == 1
     _assert_nothing_executed(node)
-    assert node.status() != DecisionStatus.CONFLICTED
-
-
-def test_identity_claim_promotes_nothing(four):
-    # In the old mode a claim promotes what waited for it, through receive().
-    node = four.node()
-    node.receive_signed(signed(A))
-    claim = IdentityClaim.create(SENDER, "alice")
-
-    assert node.pending_signed_events == {}
-    node._handle_peer_message(
-        {
-            "type": "IDENTITY_CLAIM",
-            "identity_id": claim.identity_id,
-            "alias": claim.alias,
-            "public_key": claim.public_key.hex(),
-            "signature": claim.signature.hex(),
-        }
-    )
-
-    assert claim.identity_id in node.identities
-    _assert_nothing_executed(node)
-
-
-def test_legacy_event_sync_and_decision_context_execute_nothing(four):
-    node = four.node()
-    plain = Node("plain-source", GENESIS)
-
-    node._handle_peer_message({"type": "EVENT_SYNC", "events": []})
-    node._handle_peer_message(encode_decision_context(plain.decision_context()))
-
-    _assert_nothing_executed(node)
-    plain.stop()
-
-
-def test_old_mode_is_still_open_next_to_a_quorum_node(four):
-    # The switch is per node, not a global.
-    four.node()
-    plain = Node("plain-beside", GENESIS)
-
-    assert plain.receive(A)
-    assert plain.local_events == [A]
-    plain.stop()
+    assert not node.conflicted
 
 
 # --- Messages -------------------------------------------------------------
@@ -594,15 +516,6 @@ def test_submit_refused_returns_false_and_sends_nothing(four):
     assert not node.submit(SignedTransfer(A, SENDER.public_key, bytes(64)))
 
     assert peer.sent == []
-
-
-def test_submit_without_quorum_mode_raises():
-    node = Node("plain-submit", GENESIS)
-
-    with pytest.raises(RuntimeError):
-        node.submit(signed(A))
-
-    node.stop()
 
 
 def test_quorum_of_votes_sends_the_certificate_to_every_peer(four):
@@ -807,7 +720,7 @@ def test_status_is_not_conflicted_for_a_node_that_runs(four):
     node = four.node()
     node._handle_peer_message(encode_certificate(four.certificate(A)))
 
-    assert node.status() != DecisionStatus.CONFLICTED
+    assert not node.conflicted
 
 
 def test_status_is_not_conflicted_for_a_simple_equivocation(four):
@@ -817,7 +730,7 @@ def test_status_is_not_conflicted_for_a_simple_equivocation(four):
         node._handle_peer_message(encode_vote_request(signed(event)), FakeConnection())
 
     assert len(node.equivocations.proofs) == 1
-    assert node.status() != DecisionStatus.CONFLICTED
+    assert not node.conflicted
 
 
 def test_two_valid_certificates_in_conflict_stop_the_node(four):
@@ -827,8 +740,7 @@ def test_two_valid_certificates_in_conflict_stop_the_node(four):
 
     node._handle_peer_message(encode_certificate(four.certificate(B)))
 
-    assert node.status() == DecisionStatus.CONFLICTED
-    assert node.decision_context().status == DecisionStatus.CONFLICTED
+    assert node.conflicted
     assert node.state.root() == root
     assert node.local_events == [A]
     # No winner: the alternative is proof, and it did not enter the log.
@@ -843,7 +755,7 @@ def test_forged_certificate_in_conflict_does_not_stop_the_node(four):
 
     node._handle_peer_message(encode_certificate(forged))
 
-    assert node.status() != DecisionStatus.CONFLICTED
+    assert not node.conflicted
     assert node._handle_peer_message(encode_vote_request(signed(NEXT))) is None
     assert node._quorum.replica.votes() == [NEXT]
 
@@ -868,7 +780,7 @@ def test_halt_survives_a_restart_of_the_node(four):
 
     again = four.node()
 
-    assert again.status() == DecisionStatus.CONFLICTED
+    assert again.conflicted
     assert again.local_events == [A]
     asker = FakeConnection()
     again._handle_peer_message(encode_vote_request(signed(NEXT)), asker)
@@ -880,7 +792,7 @@ def test_status_still_answers_after_stop(four):
     _halt(node, four)
     node.stop()
 
-    assert node.status() == DecisionStatus.CONFLICTED
+    assert node.conflicted
 
 
 def test_evidence_after_stop_does_not_touch_the_closed_store(four):
@@ -989,7 +901,7 @@ def test_event_submitted_to_one_node_runs_on_all_four(network):
     for node in network.nodes:
         assert node.local_events == [A]
         assert node.state.balance("bob") == 8
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
 
 
 def test_node_that_voted_the_alternative_follows_the_certificate(network):
@@ -1026,7 +938,7 @@ def test_votes_split_between_alternatives_give_no_certificate(network):
         assert node.local_events == []
         assert node.state.root() == GENESIS.root()
         assert node._quorum.replica.votes() == [alternatives[index]]
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
 
 
 def test_one_vote_each_with_two_free_nodes_can_still_certify(network):
@@ -1045,7 +957,7 @@ def test_one_vote_each_with_two_free_nodes_can_still_certify(network):
     executed = {tuple(node.local_events) for node in network.nodes}
     assert executed == {(A,)}
     for node in network.nodes:
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
 
 
 def test_lost_certificate_leaves_that_node_behind_without_a_fork(network):

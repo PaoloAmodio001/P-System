@@ -601,7 +601,7 @@ def test_a_proof_of_equivocation_is_published_once(tmp_path):
 
         assert node._quorum.driver.equivocations
         assert node._quorum.driver.new_equivocations() == []
-        assert node.status() is not None
+        assert not node.conflicted
     finally:
         node.stop()
 

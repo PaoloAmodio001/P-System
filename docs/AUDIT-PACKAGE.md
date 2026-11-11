@@ -23,7 +23,7 @@ The Lean model is the specification. An honest validator votes when `auth && vot
 | `core/state.py`, `core/derive.py` | `State`, `StateDeriver` | The state as a function of the events |
 | `formal/lean/PSystem/` | All | The model, and whether it is the right one |
 
-**Out of scope:** the historical mode (`Node(quorum=None)`), which allows forks by design (`tests/test_p15_byzantine_safety.py`) and is not deployed by `psystem`, and most of `core/`, which serves that mode. Please do tell us if something in scope depends on it.
+The historical mode without a committee (`Node(quorum=None)`) has been removed, with the modules of `core/` that only it used.
 
 ## 2. Assumptions of trust
 

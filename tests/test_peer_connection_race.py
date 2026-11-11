@@ -5,6 +5,7 @@ import pytest
 
 import tests.test_p16_liveness as p16
 from core.state import State
+from tests.node_helpers import standalone_node
 from network.node import Node
 
 
@@ -23,7 +24,7 @@ class FakeConnection:
 
 def test_simultaneous_registration_keeps_preferred_connection():
     for _ in range(25):
-        node = Node(
+        node = standalone_node(
             "race-A",
             State({"alice": 10}),
             port=0,
@@ -63,7 +64,7 @@ def test_simultaneous_registration_keeps_preferred_connection():
 
 
 def test_stale_connection_cannot_remove_replacement():
-    node = Node(
+    node = standalone_node(
         "race-A",
         State({"alice": 10}),
         port=0,
@@ -95,7 +96,7 @@ def test_stale_connection_cannot_remove_replacement():
 def test_failed_connection_attempt_preserves_live_peer_state(monkeypatch):
     from types import SimpleNamespace
 
-    node = Node(
+    node = standalone_node(
         "race-A",
         State({"alice": 10}),
         port=0,
@@ -139,7 +140,7 @@ def test_immediate_disconnect_during_thread_start_is_not_success(monkeypatch):
     import network.node as node_module
     from network.peer import Peer
 
-    node = Node("race-A", State({"alice": 10}), port=0)
+    node = standalone_node("race-A", State({"alice": 10}), port=0)
     peer_id = "race-B"
 
     class DisconnectedConnection:
@@ -157,6 +158,12 @@ def test_immediate_disconnect_during_thread_start_is_not_success(monkeypatch):
 
         def close(self):
             self.connected = False
+
+        def enqueue(self, message):
+            raise ConnectionError("disconnected")
+
+        def charge(self, tokens):
+            pass
 
         def receive_loop(self, handler):
             pass
@@ -209,8 +216,8 @@ class _ObservedConnections(dict):
 def test_outgoing_connection_is_published_with_reset_attempts():
     from network.peer import Peer
 
-    node = Node("race-A", State({"alice": 10}), port=0)
-    target = Node("race-B", State({"alice": 10}), port=0)
+    node = standalone_node("race-A", State({"alice": 10}), port=0)
+    target = standalone_node("race-B", State({"alice": 10}), port=0)
     node._record_reconnect_failure(target.node_id)
     observed = _ObservedConnections(node)
     node.peer_connections = observed
@@ -235,8 +242,8 @@ def test_incoming_connection_is_published_with_reset_attempts():
 
     # race-Z does not prefer outgoing connections to race-A, so nothing
     # but the incoming registration can reset its state for this peer.
-    node = Node("race-Z", State({"alice": 10}), port=0)
-    initiator = Node("race-A", State({"alice": 10}), port=0)
+    node = standalone_node("race-Z", State({"alice": 10}), port=0)
+    initiator = standalone_node("race-A", State({"alice": 10}), port=0)
     node._record_reconnect_failure(initiator.node_id)
     observed = _ObservedConnections(node)
     node.peer_connections = observed

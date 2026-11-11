@@ -129,7 +129,7 @@ def run_node_mode(mode: str, path: Path) -> None:
             node._handle_peer_message(
                 encode_certificate(signed_certificate(event, (1, 2, 3)))
             )
-        report("HALTED", node.status().value)
+        report("HALTED", "CONFLICTED" if node.conflicted else "UNIQUE")
     else:
         connection = _ReplyHolder()
         node._handle_peer_message(

@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.node_tls_identity import get_node_tls_config
 from network.peer import Peer
@@ -44,8 +45,8 @@ def _closed_by_server(connection: ssl.SSLSocket) -> bool:
 # peers. It must still be handled: an unhandled one fails this test.
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_deeply_nested_handshake_does_not_stop_accepting_peers():
-    server = Node("handshake-server")
-    honest = Node("handshake-honest")
+    server = standalone_node("handshake-server")
+    honest = standalone_node("handshake-honest")
     server.start()
     honest.start()
     attacker = _open_tls_connection(server, "handshake-attacker")
@@ -78,8 +79,8 @@ def _server_closed_within(connection: socket.socket, seconds: float) -> bool:
 
 def test_silent_connection_does_not_block_an_honest_peer():
     # No certificate is needed: the connection never starts TLS.
-    server = Node("silent-server")
-    honest = Node("silent-honest")
+    server = standalone_node("silent-server")
+    honest = standalone_node("silent-honest")
     server.start()
     honest.start()
     silent = socket.create_connection(server.address())
@@ -95,7 +96,7 @@ def test_silent_connection_does_not_block_an_honest_peer():
 
 
 def test_silent_connection_is_closed_at_the_deadline():
-    server = Node("deadline-server")
+    server = standalone_node("deadline-server")
     server._server_controller.HANDSHAKE_TIMEOUT = 0.2
     server.start()
     silent = socket.create_connection(server.address())
@@ -109,7 +110,7 @@ def test_silent_connection_is_closed_at_the_deadline():
 
 def test_slowly_sent_bytes_do_not_extend_the_deadline():
     # The deadline is for the whole handshake, not for each read.
-    server = Node("slow-server")
+    server = standalone_node("slow-server")
     server._server_controller.HANDSHAKE_TIMEOUT = 0.5
     server.start()
     slow = socket.create_connection(server.address())
@@ -139,8 +140,8 @@ def test_slowly_sent_bytes_do_not_extend_the_deadline():
 
 
 def test_with_no_place_left_the_one_waiting_longest_goes():
-    server = Node("limit-server")
-    honest = Node("limit-honest")
+    server = standalone_node("limit-server")
+    honest = standalone_node("limit-honest")
     server._server_controller.MAX_PENDING_HANDSHAKES = 1
     server.start()
     honest.start()
@@ -159,7 +160,7 @@ def test_with_no_place_left_the_one_waiting_longest_goes():
 
 
 def test_stop_ends_a_handshake_in_progress():
-    server = Node("stop-server")
+    server = standalone_node("stop-server")
     server.start()
     controller = server._server_controller
     silent = socket.create_connection(server.address())
@@ -218,7 +219,7 @@ class _PeerWithNestedReply:
 
 
 def test_deeply_nested_handshake_reply_fails_the_connection_attempt():
-    client = Node("reply-client-direct")
+    client = standalone_node("reply-client-direct")
 
     with _PeerWithNestedReply("reply-evil-direct") as evil:
         assert client.connect_peer(evil.peer) is False
@@ -229,7 +230,7 @@ def test_deeply_nested_handshake_reply_fails_the_connection_attempt():
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_deeply_nested_handshake_reply_does_not_stop_reconnecting():
-    client = Node("reply-client-loop")
+    client = standalone_node("reply-client-loop")
     client.RECONNECT_BASE_DELAY = 0.01
 
     with _PeerWithNestedReply("reply-evil-loop") as evil:

@@ -27,7 +27,6 @@ import time
 import pytest
 
 from core.attestation import Committee, QuorumCertificate, Vote
-from core.decision_status import DecisionStatus
 from core.derive import StateDeriver
 from core.event import Transfer
 from core.signed_event import SignedTransfer
@@ -217,7 +216,7 @@ def assert_the_theorems_hold(nodes) -> None:
     assert_state_is_derive(nodes)
     assert same_state(nodes)
     for node in nodes:
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
 
 
 # --- Scenarios --------------------------------------------------------------------------
@@ -643,7 +642,7 @@ def test_two_certificates_in_conflict_over_real_tls_halt_and_choose_nothing(make
     assert wait_until(lambda: nodes[0].local_events == [event_a])
     connection.send(encode_certificate_sync([certificate(event_b)]))
 
-    assert wait_until(lambda: nodes[0].status() == DecisionStatus.CONFLICTED)
+    assert wait_until(lambda: nodes[0].conflicted)
     assert nodes[0].local_events == [event_a]
     assert nodes[0].state.balance("b") == 0
     faulty.close()
