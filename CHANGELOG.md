@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-rc2 — 2026-11-11
 
 - **Snapshot locks are signed by their sender.** `SnapshotAttestation` version 2 checks each lock as the reports of a closure
   do, so a faulty signer cannot lock a nonce its sender never signed. Store schema 7; older stores migrate on opening, and a
@@ -17,10 +17,13 @@
 - **`GET /v1/certificates/{id}`** reads an index by event id, no longer the whole log under the lock of the node.
 - **Wallet:** `next_nonce` and `unfinished` query an index on `CAST(nonce AS INTEGER)` instead of reading the whole journal;
   the wallet signs nonces from 0 to `2**63 - 1`.
+- **Tests:** the differential test of the node follows what survives a restart (store schema 6), with coverage floors on
+  restarts crossed with gathering, certificates, snapshots and epoch closures; the differentials with 15 seeds run on every
+  pull request and are a required check for `main`.
 - Readiness probe `/readyz`, `psystem validate` to check a configuration before starting, request correlation and retries in the API, an audit log with its chain
   checked at startup, signing keys refused when readable by others.
 
-## 1.0.0 (not tagged)
+## 1.0.0 (mai pubblicata come tag; questo contenuto è incluso in 1.0.0-rc1 e rc2)
 
 - **Quorum mode**: a committee of `3f+1` validators, certificates of `2f+1` votes, durable vote lock, halt with a proof on two
   conflicting certificates, synchronization of certificates between nodes.
