@@ -111,8 +111,8 @@ MUTATIONS = {
     ),
     # Vote requests.
     "request with the key taken as a signature": (
-        "        public_key=_hex_bytes(data[\"public_key\"], _PUBLIC_KEY_PATTERN),\n",
-        "        public_key=_hex_bytes(data[\"public_key\"], _SIGNATURE_PATTERN),\n",
+        'def _signed_event_of(data: dict) -> SignedTransfer:\n    return SignedTransfer(\n        transfer=_decode_quorum_event(data["transfer"]),\n        public_key=_hex_bytes(data["public_key"], _PUBLIC_KEY_PATTERN),\n',
+        'def _signed_event_of(data: dict) -> SignedTransfer:\n    return SignedTransfer(\n        transfer=_decode_quorum_event(data["transfer"]),\n        public_key=_hex_bytes(data["public_key"], _SIGNATURE_PATTERN),\n',
     ),
     "request with the signature taken as a key": (
         "        signature=_hex_bytes(data[\"signature\"], _SIGNATURE_PATTERN),\n",
@@ -128,11 +128,8 @@ MUTATIONS = {
         "        \"type\": \"VOTE_REQUEST\",\n",
     ),
     "certificate with votes that are not a list": (
-        "    data = _message_of_type(message, \"CERTIFICATE\", *fields)\n"
-        "\n"
-        "    if type(data[\"votes\"]) is not list:\n"
-        "        raise ValueError(\"INVALID QUORUM MESSAGE\")\n",
-        "    data = _message_of_type(message, \"CERTIFICATE\", *fields)\n",
+        '    if type(data["votes"]) is not list:\n        raise ValueError("INVALID QUORUM MESSAGE")\n\n    if has_epoch:\n',
+        '    if has_epoch:\n',
     ),
     "certificate encoded without its last vote": (
         "            for vote in certificate.votes\n",

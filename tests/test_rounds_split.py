@@ -206,3 +206,49 @@ def test_a_proposal_not_from_the_leader_is_ignored(network):
         assert driver.rounds.handle_proposal(proposal) == []
         state = driver.replica.round_state(PAYER, 0)
         assert all(round_ == 0 for round_, _ in state["prevotes"])
+
+
+def _certificate(network: Network, event: Transfer, members) -> "QuorumCertificate":
+    from core.attestation import QuorumCertificate, Vote
+
+    votes = tuple(
+        Vote.create(network.committee, network.runtimes[i].replica._identity, event) for i in members
+    )
+    return QuorumCertificate(event, votes)
+
+
+def test_a_prepare_by_sync_is_no_decision(network):
+    # A split can give 2f+1 votes of round 0 to a value that a round later loses. Sent as if it were
+    # a log, it must not be taken as decided: the decision of the other value would halt the node.
+    from network.message import encode_certificate, encode_certificate_sync
+
+    driver = network.drivers[0]
+    driver.handle_message(encode_certificate_sync([_certificate(network, A, (0, 1, 2))]))
+    assert driver._known == {}
+
+    driver.handle_message(encode_certificate(_certificate(network, B, (0, 1, 2, 3))))
+    assert not driver.halted
+    assert network.executed()[0] == [B]
+
+
+def test_a_prepare_shown_to_one_node_is_sent_on_once(network):
+    from network.message import encode_certificate
+
+    driver = network.drivers[0]
+    message = encode_certificate(_certificate(network, A, (1, 2, 3)))
+    first = driver.handle_message(message)
+    assert [m["type"] for m in first.broadcasts].count("CERTIFICATE") == 1
+    again = driver.handle_message(message)
+    assert [m["type"] for m in again.broadcasts].count("CERTIFICATE") == 0
+
+
+def test_a_node_that_gathers_sends_its_prepare_once(network):
+    gatherer = network.drivers[0]
+    [request] = gatherer.submit(signed(A)).broadcasts
+    votes = [network.drivers[i].handle_message(request).replies[0] for i in (1, 2)]
+
+    assert gatherer.handle_message(votes[0]).broadcasts == ()
+    prepared = gatherer.handle_message(votes[1]).broadcasts
+    assert [m["type"] for m in prepared].count("CERTIFICATE") == 1
+    # The same vote again, and three votes still: nothing new to send.
+    assert [m["type"] for m in gatherer.handle_message(votes[1]).broadcasts].count("CERTIFICATE") == 0

@@ -490,6 +490,12 @@ class QuorumDriver:
             if known is not None and known.event.canonical() == event.canonical():
                 continue
 
+            # A log holds decisions only. A prepare certificate is no decision (`decisions_agree`):
+            # taken as one, it would halt this node on the decision of the other value.
+            if not certificate.decides(self.replica.committee_of(certificate)):
+                self._cost += BAD_SIGNATURE_COST
+                return _NOTHING
+
             if self.replica.is_covered(event) and self.replica.has_executed_id(event.event_id()):
                 continue
 
@@ -582,8 +588,8 @@ class QuorumDriver:
                 del self._to_resend[canonical]
                 self._aggregating.pop(canonical, None)
 
-                # Its own certificate may be waiting for an earlier nonce, in memory. The row stays
-                # until it runs, since a restart would lose that certificate.
+                # Its own decision may be waiting for an earlier nonce. The row stays until it runs; the
+                # decision itself is on disk too (store schema 8), so a restart keeps it either way.
                 if known is None or known.event.canonical() != canonical:
                     forgotten.append(event.event_id())
                 continue
@@ -1109,7 +1115,17 @@ class QuorumDriver:
         if certificate.epoch != self.committee.epoch:
             return _NOTHING
 
-        return DriverOutput(broadcasts=tuple(self._take_prepare(certificate)))
+        event = certificate.event
+        new = (event.sender, event.nonce, certificate.round) not in self._prepares
+        out = self._take_prepare(certificate)
+
+        if new and not self.halted:
+            # Sent on once, with the precommit: whoever made it may have shown it to this node
+            # alone, and without it the others do not precommit until a round ends.
+            signed = self.rounds.signed.get(event.event_id())
+            out = [encode_certificate(certificate, signed), *out]
+
+        return DriverOutput(broadcasts=tuple(out))
 
     def _take_prepare(self, certificate: QuorumCertificate) -> list[dict]:
         """A valid prepare certificate of this epoch. Halt on another of the same round."""

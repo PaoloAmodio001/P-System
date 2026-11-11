@@ -26,7 +26,7 @@ import time
 
 import pytest
 
-from core.attestation import Committee, QuorumCertificate, Vote
+from core.attestation import PRECOMMIT, Committee, QuorumCertificate, Vote
 from core.derive import StateDeriver
 from core.event import Transfer
 from core.signed_event import SignedTransfer
@@ -38,6 +38,7 @@ from network.message import (
     encode_certificate,
     encode_certificate_sync,
     encode_certificate_sync_request,
+    encode_round_vote,
     encode_vote_request,
 )
 from network.node import Node
@@ -141,6 +142,19 @@ class FaultyMember:
         votes = self.collected(event)
         votes[FAULTY] = self.own_vote(event)
         return QuorumCertificate(event, tuple(votes[v] for v in sorted(votes)))
+
+    def prepare_and_precommit(self, node, signed: SignedTransfer) -> None:
+        """
+        Three votes of round 0 are a prepare certificate, not a decision. This member sends it to
+        `node` and its own precommit to all: with those of the two honest nodes, a decision.
+        """
+        precommit = Vote.create_phase(COMMITTEE, self.identity, signed.transfer, PRECOMMIT, 0)
+        message = encode_round_vote(signed.transfer, precommit, PRECOMMIT, 0)
+        message["public_key"] = signed.public_key.hex()
+        message["sender_signature"] = signed.signature.hex()
+        for connection in self.connections.values():
+            connection.send(message)
+        self.connections[node.node_id].send(encode_certificate(self.certificate(signed.transfer)))
 
     def close(self) -> None:
         for connection in self.connections.values():
@@ -422,7 +436,8 @@ def test_a_reader_without_the_lock_can_see_the_events_before_the_state(make_node
         return real(state)
 
     monkeypatch.setattr(State, "copy", spy)
-    votes = tuple(Vote.create(COMMITTEE, member, event.transfer) for member in MEMBERS[:3])
+    # All four: the votes of round 0 that decide.
+    votes = tuple(Vote.create(COMMITTEE, member, event.transfer) for member in MEMBERS)
     node._handle_quorum_message(encode_certificate(QuorumCertificate(event.transfer, votes)), None)
     assert (1, 0) in seen
 
@@ -479,9 +494,7 @@ def test_a_node_that_was_away_catches_up_when_it_connects(make_nodes):
         faulty.ask_vote(nodes[0], event)
         faulty.ask_vote(nodes[1], event)
         assert wait_until(lambda: len(faulty.collected(event.transfer)) == 2)
-        faulty.connections[nodes[0].node_id].send(
-            encode_certificate(faulty.certificate(event.transfer))
-        )
+        faulty.prepare_and_precommit(nodes[0], event)
         events.append(event.transfer)
 
     assert wait_until(lambda: all(n.local_events == events for n in nodes[:2]))
@@ -503,9 +516,7 @@ def _node_ahead_and_one_behind(make_nodes):
     faulty.ask_vote(ahead, event)
     faulty.ask_vote(other, event)
     assert wait_until(lambda: len(faulty.collected(event.transfer)) == 2)
-    faulty.connections[ahead.node_id].send(
-        encode_certificate(faulty.certificate(event.transfer))
-    )
+    faulty.prepare_and_precommit(ahead, event)
     assert wait_until(lambda: ahead.local_events == [event.transfer])
     faulty.close()
     return ahead, behind, event.transfer
@@ -561,9 +572,7 @@ def test_a_restarted_node_recovers_what_it_missed(make_nodes, tmp_path):
         faulty.ask_vote(nodes[0], event)
         faulty.ask_vote(nodes[1], event)
         assert wait_until(lambda: len(faulty.collected(event.transfer)) == 2)
-        faulty.connections[nodes[1].node_id].send(
-            encode_certificate(faulty.certificate(event.transfer))
-        )
+        faulty.prepare_and_precommit(nodes[1], event)
         missed.append(event.transfer)
 
     assert wait_until(lambda: nodes[1].local_events == [before.transfer, *missed])
@@ -634,7 +643,7 @@ def test_two_certificates_in_conflict_over_real_tls_halt_and_choose_nothing(make
     def certificate(event):
         return QuorumCertificate(
             event,
-            tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in (0, 1, 2)),
+            tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS),
         )
 
     connection = faulty.connections[nodes[0].node_id]

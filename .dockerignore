@@ -6,4 +6,6 @@
 !pyproject.toml
 !requirements.lock
 !README.md
+!formal/lean
+formal/lean/.lake
 **/__pycache__

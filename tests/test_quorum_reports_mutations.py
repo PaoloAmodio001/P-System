@@ -32,23 +32,12 @@ QUORUM = {
         "        votes = votes or []\n\n        try:\n            return EpochReport.create(self.committee, self._identity, change.change_id, votes)\n",
     ),
     "a report for an order that does not verify": (
-        "        if (\n"
-        "            self.governance is None\n"
-        "            or self.halted\n"
-        "            or not change.verify(self.governance, self.committee)\n"
-        "        ):\n"
-        "            self._cost += BAD_SIGNATURE_COST\n"
-        "            return _NOTHING\n"
-        "\n"
-        "        report = self.replica.report_epoch(change)\n",
-        "        if self.governance is None or self.halted:\n"
-        "            return _NOTHING\n"
-        "\n"
-        "        report = self.replica.report_epoch(change)\n",
+        '            or not change.verify(self.governance, self.committee)\n        ):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n\n        report = self._report(change)\n',
+        '        ):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n\n        report = self._report(change)\n',
     ),
     "a proposer does not report": (
-        "        report = self.replica.report_epoch(change)\n\n        if report is not None:\n            self._reports[report.validator] = report\n\n        closed = self._closure_if_reported()\n        return DriverOutput(broadcasts=(encode_epoch_change(change), *closed.broadcasts))\n",
-        "        closed = self._closure_if_reported()\n        return DriverOutput(broadcasts=(encode_epoch_change(change), *closed.broadcasts))\n",
+        '        report = self._report(change)\n\n        if report is not None:\n            self._reports[report.validator] = report\n\n        closed = self._closure_if_reported()\n',
+        '        closed = self._closure_if_reported()\n',
     ),
     "a report of any order counted": (
         "            or change_id != self._change.change_id\n",
@@ -98,8 +87,8 @@ QUORUM = {
         "            self.governance is None\n            or self._clock() - self._epoch_activity < self.EPOCH_RETRY_SECONDS\n",
     ),
     "a retry forgets its own report": (
-        "            self._change = reported\n            report = self.replica.report_epoch(reported)\n\n            if report is not None:\n                self._reports[report.validator] = report\n",
-        "            self._change = reported\n",
+        '            self._change = reported\n            report = self._report(reported)\n\n            if report is not None:\n                self._reports[report.validator] = report\n',
+        '            self._change = reported\n',
     ),
     "a voted closure gives no lock": (
         '            self._connection.execute(\n                "INSERT INTO report_locks (epoch, change_id, change) VALUES (?, ?, ?)",\n                (epoch, change.change_id, _change_text(change)),\n            )\n',

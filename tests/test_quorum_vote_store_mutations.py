@@ -48,9 +48,8 @@ MUTATIONS = {
         "",
     ),
     "unknown schema version opened": (
-        "            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4):\n"
-        "                raise VoteStoreError(\"UNSUPPORTED VERSION OF THE VOTE STORE\")\n",
-        "",
+        '            elif version not in (\n                _SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4\n            ):\n                raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")\n',
+        '',
     ),
     "migration without the halt table": (
         "                self._connection.execute(_HALT_TABLE)\n",
@@ -112,13 +111,8 @@ MUTATIONS = {
         "                        (epoch, event.sender, str(event.nonce)),\n",
     ),
     "vote not committed": (
-        "                    self._record_gathering(epoch, event_id)\n"
-        "\n"
-        "                self._commit()\n"
-        "                return True\n",
-        "                    self._record_gathering(epoch, event_id)\n"
-        "\n"
-        "                return True\n",
+        '                    self._write_round_state(epoch, event.sender, event.nonce, round_state)\n\n                self._commit()\n                return True\n',
+        '                    self._write_round_state(epoch, event.sender, event.nonce, round_state)\n\n                return True\n',
     ),
     "failed write reported as a refusal": (
         "                raise VoteStoreError(f\"VOTE NOT RECORDED: {error}\") from error\n",
@@ -156,10 +150,8 @@ MUTATIONS = {
         "                return\n",
     ),
     "signatures of the log lost": (
-        "            Vote(validator, bytes.fromhex(signature))\n"
-        "            for validator, signature in json.loads(signatures)\n",
-        "            Vote(validator, bytes.fromhex(signature))\n"
-        "            for validator, signature in json.loads(signatures)[:0]\n",
+        '            Vote(validator, bytes.fromhex(signature))\n            for validator, signature in data\n',
+        '            Vote(validator, bytes.fromhex(signature))\n            for validator, signature in data[:0]\n',
     ),
     # The halt.
     "a halted node still votes": (

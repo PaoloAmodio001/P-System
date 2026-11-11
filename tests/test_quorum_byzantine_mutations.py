@@ -69,11 +69,20 @@ IN_ATTESTATION = {
 }
 
 IN_QUORUM = {
-    "vote lock removed": (
-        "                if existing - {canonical}:\n"
-        "                    return False\n",
-        "",
-    ),
+    # The lock is kept twice: by the store, and by the step `request` of the Lean core in the
+    # replica. Either alone holds it, so the mutation removes both.
+    "vote lock removed": [
+        (
+            "                if existing - {canonical}:\n"
+            "                    return False\n",
+            "",
+        ),
+        (
+            '            if round_state["vote0"] != event.event_id():\n'
+            "                return None\n",
+            "",
+        ),
+    ],
     "a vote executes": (
         "            return Vote.create(self.committee, self._identity, event)\n",
         "            if self._is_fresh(event) and self._is_ready(event) and"
@@ -82,41 +91,16 @@ IN_QUORUM = {
         "            return Vote.create(self.committee, self._identity, event)\n",
     ),
     "a node refuses a certificate against its own vote": (
-        "        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)\n",
-        "        event = certificate.event\n"
-        "        return (\n"
-        "            self._can_run_now(event)\n"
-        "            and self.certificate_is_valid(certificate)\n"
-        "            and not any(\n"
-        "                (v.sender, v.nonce) == (event.sender, event.nonce)\n"
-        "                and v.canonical() != event.canonical()\n"
-        "                for v in self._store.votes()\n"
-        "            )\n"
-        "        )\n",
+        '        return (\n            self._can_run_now(certificate.event)\n            and certificate.decides(self._store.committee_of(certificate))\n            and self.certificate_is_valid(certificate)\n        )\n',
+        '        event = certificate.event\n        return (\n            self._can_run_now(event)\n            and certificate.decides(self._store.committee_of(certificate))\n            and self.certificate_is_valid(certificate)\n            and not any(\n                (v.sender, v.nonce) == (event.sender, event.nonce)\n                and v.canonical() != event.canonical()\n                for v in self._store.votes()\n            )\n        )\n',
     ),
     "conflict not noticed": (
-        "            self.replica.record_halt(known, certificate)\n"
-        "            self._buffer.clear()\n"
-        "            self._waiting.clear()\n"
-        "            self._aggregating.clear()\n"
-        "            return False\n",
-        "            return False\n",
+        '            self.replica.record_halt(known, certificate)\n            self._halted_now()\n            return False\n',
+        '            return False\n',
     ),
     "second alternative runs": (
-        "            self.replica.record_halt(known, certificate)\n"
-        "            self._buffer.clear()\n"
-        "            self._waiting.clear()\n"
-        "            self._aggregating.clear()\n"
-        "            return False\n",
-        # The halt stays, or this would die on the same line as the mutation above.
-        "            self.replica.record_halt(known, certificate)\n"
-        "            self._buffer.clear()\n"
-        "            self._waiting.clear()\n"
-        "            self._aggregating.clear()\n"
-        "            self.replica.state.balances[event.receiver] = (\n"
-        "                self.replica.state.balance(event.receiver) + event.amount\n"
-        "            )\n"
-        "            return False\n",
+        '            self.replica.record_halt(known, certificate)\n            self._halted_now()\n            return False\n',
+        '            self.replica.record_halt(known, certificate)\n            self._halted_now()\n            self.replica.state.balances[event.receiver] = (\n                self.replica.state.balance(event.receiver) + event.amount\n            )\n            return False\n',
     ),
     "buffer not retried": (
         "            self._no_longer_waiting(event_id)\n"
@@ -153,7 +137,10 @@ def test_mutation_in_attestation_is_detected(name):
 
 @pytest.mark.parametrize("name", IN_QUORUM)
 def test_mutation_in_quorum_is_detected(name):
-    old, new = IN_QUORUM[name]
-    assert QUORUM.count(old) == 1, name
-    result = _run(ATTESTATION, QUORUM.replace(old, new))
+    pairs = IN_QUORUM[name]
+    mutated = QUORUM
+    for old, new in [pairs] if isinstance(pairs, tuple) else pairs:
+        assert mutated.count(old) == 1, name
+        mutated = mutated.replace(old, new)
+    result = _run(ATTESTATION, mutated)
     assert result.returncode == 1, result.stdout + result.stderr

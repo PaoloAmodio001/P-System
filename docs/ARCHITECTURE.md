@@ -28,13 +28,19 @@ with the modules of `core/` that only it used.
 3. The node checks the signature, votes durably, and asks the others (`VOTE_REQUEST`).
 4. Each honest validator votes for the first alternative of that `(sender, nonce)`: durably, then
    signs (`VOTE`). A vote is a lock, not an execution.
-5. With `2f+1` valid votes the aggregator broadcasts a `CERTIFICATE`.
-6. Each node executes it when it is causally ready and valid on its state. The state is a function of
-   the set of certified events. Order of arrival does not matter.
-7. A node left behind asks with `CERTIFICATE_SYNC_REQUEST`, on connecting and at intervals.
+5. With all `n` valid votes the aggregator broadcasts a `CERTIFICATE`: a decision, the fast path. With
+   `2f+1` it broadcasts a prepare certificate, and each validator that receives one sends it on once
+   with its precommit (`ROUND_VOTE`); `2f+1` precommits are a decision.
+6. Each node executes a decision when it is causally ready and valid on its state. The state is a
+   function of the set of decided events. Order of arrival does not matter.
+7. A node left behind asks with `CERTIFICATE_SYNC_REQUEST`, on connecting and at intervals. A sync
+   carries decisions only.
 
-Nothing guarantees step 5: with votes split between two versions of a spend, no certificate exists,
-and nobody chooses.
+When the votes split between two versions of a spend and no value gets `2f+1`, each validator moves to
+round 1 at a timeout and reports to all (`NEW_ROUND`); the leader of the round proposes a value the
+reports justify (`PROPOSAL`), and the round goes on as above (`docs/PROTOCOL.md`, Rounds). The rules of
+a round are not written in Python: the node calls the definitions of `formal/lean/PSystem/QuorumRounds.lean`,
+compiled to a shared library (`network/quorum/lean_core.py`).
 
 ## Threads and locks
 

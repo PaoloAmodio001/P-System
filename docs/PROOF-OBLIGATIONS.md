@@ -112,6 +112,29 @@ properties:
 | `fork_with_faulty_receiver` | With the other hypotheses holding, the conclusion fails for a faulty receiver, so `hu` and `hv` are needed | FORMAL (witness, `f = 1`) |
 | `authorization_needs_unforgeable` | With a forged signature, an honest node executes an event that the check `auth` refuses | FORMAL (witness, `f = 1`) |
 
+### Rounds: a split vote is decided (`QuorumRounds`)
+
+Module `QuorumRounds` (2026-11-10). One key, `n = 3f+1`, an arbitrary list of inputs per honest
+validator, faulty validators unconstrained, `Unforgeable` as above for each phase.
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `decisions_agree` | Two honest validators never decide different values, whatever the network did | FORMAL (model) |
+| `grounds_agree` | Two decision certificates for one key, wherever they are shown, are for one value | FORMAL (model) |
+| `committed_locks`, `fast_locks` | After a commit in round `r`, or a decision of round 0 by all, no other value is prepared in any later round | FORMAL (model) |
+| `decided_in_closure`, `voted_in_closure` | A decided value is in every closure whose `2f+1` reporters list what they voted for in any round | FORMAL (model) |
+| `no_double_spend_next_epoch` | With those closures as locks, the next epoch decides the same value | FORMAL (model) |
+| `good_round_decides` | In a good round every honest validator prevotes, precommits and decides | CONDITIONAL (partial synchrony) |
+| `honest_leader_within_n_rounds` | With fewer than `n` faulty members, any `n` consecutive rounds have an honest leader | FORMAL (model) |
+| `split_votes_no_quorum`, `split_then_good_round_decides` | For `n = 4`: votes split two and two decide nothing in round 0, and a good round then decides at every validator | FORMAL (witness, `f = 1`) |
+
+The Python node does not reimplement the step of a validator: it calls `step`, `choose`,
+`justified` and `leader` of this module, compiled with `lake build PSystem:shared`
+(`PSystem/Core.lean`, `network/quorum/lean_core.py`). What is trusted around them is the JSON
+codec of `Core.lean`, the Lean compiler and runtime, `ctypes`, and the Python that verifies
+signatures, keeps the store and sends the messages: `EMPIRICAL`, by `tests/test_rounds_split.py`
+and the differentials.
+
 ### Link to `derive`
 
 Module `QuorumDerive`, on the same model. These results have no hypothesis
@@ -383,8 +406,11 @@ Status: `OPEN`; decisions are not modelled in Lean.
 
 Every liveness theorem must state its environmental assumptions.
 
-Status: no liveness theorem exists. `Backoff` only states properties of
-the retry formula.
+Status: `good_round_decides` (`QuorumRounds`) states them: a round after those the honest
+validators are in, an honest leader, and every message between honest members of that round
+delivered. It does not model time: that such a round comes is the hypothesis of partial
+synchrony, with `honest_leader_within_n_rounds` for the leader. `Backoff` only states properties
+of the retry formula.
 
 ### O6 — Machine-checking
 

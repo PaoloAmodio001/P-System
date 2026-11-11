@@ -1,9 +1,12 @@
 # P-System
 
 A registry of single-owner state. Each account has one owner, who orders their own operations with nonces. A fixed
-committee of `n = 3f+1` validators certifies events: an event runs only with a certificate signed by a quorum of `2f+1`,
-and an honest validator votes for the first version of a `(sender, nonce)` it sees. No node chooses between conflicting
-versions, and there is no global consensus. Every node derives the same state from the same set of certified events.
+committee of `n = 3f+1` validators decides, for each `(sender, nonce)`, which version runs. An honest validator votes for the
+first version it sees; with the votes of all `n` that version is decided at once. When the sender signed two versions and
+the votes split, rounds with a rotating leader decide one of them (a prepare of `2f+1`, then `2f+1` precommits): the key
+never stays locked within an epoch, under partial synchrony (`good_round_decides`), and two honest validators never decide
+different versions (`decisions_agree`). There is no global order: rounds run per key, and every node derives the same
+state from the same set of decided events.
 Python implementation, with a Lean 4 model of the protocol and machine-checked theorems about that model.
 
 ## Try it in five minutes

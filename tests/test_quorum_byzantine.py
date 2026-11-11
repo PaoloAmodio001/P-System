@@ -206,27 +206,43 @@ def _undo_executions(directory: Path) -> None:
     for path in directory.glob("*.sqlite"):
         connection = sqlite3.connect(path)
         connection.execute("DELETE FROM certificates")
+        connection.execute("DELETE FROM decided")
         connection.execute("DELETE FROM halt")
         connection.commit()
         connection.close()
 
 
 def test_forged_signatures_of_honest_members_make_no_quorum(tmp_path):
-    # The faulty member signs for real, and has to invent the other two. Honest member 0
-    # voted a, and the attacker wants b.
+    # The faulty member signs for real, and has to invent the other three: a decision of round 0
+    # takes all four. Honest member 0 voted a, and the attacker wants b.
     node = open_node(tmp_path / "0.sqlite", 0)
     assert ask_for_vote(node, A) is not None
     real = Vote.create(COMMITTEE, MEMBERS[3], B)
-    honest_on_other_event = [Vote.create(COMMITTEE, MEMBERS[i], A) for i in (1, 2)]
+    honest_on_other_event = [Vote.create(COMMITTEE, MEMBERS[i], A) for i in (0, 1, 2)]
     reused = [
         Vote(vote.validator, vote.signature) for vote in honest_on_other_event
     ]
-    invented = [Vote(1, bytes(64)), Vote(2, bytes((7,)) * 64)]
+    invented = [Vote(0, bytes((5,)) * 64), Vote(1, bytes(64)), Vote(2, bytes((7,)) * 64)]
 
-    for votes in (reused, invented, [real, real]):
+    for votes in (reused, invented, [real, real, real]):
         deliver(node, QuorumCertificate(B, (real, *votes)))
 
     assert executed(node) == []
+    assert not node.conflicted
+    node.stop()
+
+
+def test_a_node_that_voted_the_other_version_follows_a_commit(tmp_path):
+    # After a split, the rounds can decide the version a node did not vote for in round 0: its vote
+    # of round 0 must not stop it from executing the decision (`decisions_agree`).
+    from core.attestation import PRECOMMIT
+
+    node = open_node(tmp_path / "0.sqlite", 0)
+    assert ask_for_vote(node, B) is not None
+    precommits = tuple(Vote.create_phase(COMMITTEE, MEMBERS[i], A, PRECOMMIT, 1) for i in (1, 2, 3))
+    deliver(node, QuorumCertificate(A, precommits, phase=PRECOMMIT, round=1))
+
+    assert executed(node) == [A]
     assert not node.conflicted
     node.stop()
 
@@ -472,9 +488,10 @@ def tls_nodes(tmp_path):
 def test_event_runs_on_four_nodes_over_real_tls(tls_nodes):
     assert tls_nodes[0].submit(SignedTransfer.create(SENDER, A))
 
-    assert _wait_until(lambda: all(n.local_events == [A] for n in tls_nodes))
-    for node in tls_nodes:
-        assert node.state.balance("bob") == 8
+    # The node publishes its events and then its state: wait for both.
+    assert _wait_until(
+        lambda: all(n.local_events == [A] and n.state.balance("bob") == 8 for n in tls_nodes)
+    )
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")

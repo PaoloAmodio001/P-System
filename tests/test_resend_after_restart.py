@@ -308,6 +308,21 @@ def test_a_certificate_takes_an_event_out_of_the_numbers(drivers):
     assert drivers.first.gathering_oldest_seconds == 0.0
 
 
+def test_a_decision_from_another_node_takes_an_event_out_of_the_numbers(drivers):
+    from core.attestation import QuorumCertificate
+
+    event = transfer(0)
+    drivers.first.submit(event)
+    votes = tuple(
+        Vote.create(drivers.four.committee, member, event.transfer) for member in drivers.four.members
+    )
+    drivers.first.handle_message(encode_certificate(QuorumCertificate(event.transfer, votes)))
+
+    drivers.clock.now = 100.0 + 5.0
+    assert drivers.first.gathering_count == 0
+    assert drivers.first.gathering_oldest_seconds == 0.0
+
+
 class Connected:
     connected = True
 

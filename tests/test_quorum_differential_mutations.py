@@ -34,6 +34,10 @@ def _first_difference(corpus, directory) -> int | None:
         except VoteStoreError as error:
             print(f"[case {index}: store refused: {error}]")
             return index
+        except AssertionError as error:
+            # The harness itself could not go on: a snapshot signed by a quorum did not install.
+            print(f"[case {index}: harness stopped: {error!r}]")
+            return index
         if python != lean:
             print(f"[case {index}: output differs]")
             return index
@@ -57,8 +61,9 @@ class MemoryLockStore(SqliteVoteStore):
     def conflicts(self, old, new) -> bool:
         raise NotImplementedError
 
-    def record_vote(self, event, signed=None, gathering=False):
-        # `gathering` says only who asks for votes: no lock rule depends on it.
+    def record_vote(self, event, signed=None, gathering=False, round_state=None):
+        # `gathering` says only who asks for votes, and `round_state` is what the rounds keep: no
+        # lock rule depends on either.
         votes = self.votes_by_path[self._key]
         same = [v for v in votes if v.canonical() == event.canonical()]
         if any(self.conflicts(v, event) for v in votes if v not in same):
@@ -114,10 +119,10 @@ def test_refusing_a_repeated_vote_makes_no_difference_here(corpus, tmp_path, mon
     # Refusing or accepting a repeated vote gives no difference in the output, because
     # the event is already among the votes. Signing it again is tested elsewhere
     # (test_voting_again_gives_the_same_signature). This test records that limit.
-    def refuse_repeat(self, event, signed=None, gathering=False):
+    def refuse_repeat(self, event, signed=None, gathering=False, round_state=None):
         if any(v.canonical() == event.canonical() for v in original_votes(self)):
             return False
-        return original(self, event, signed, gathering)
+        return original(self, event, signed, gathering, round_state)
 
     original = SqliteVoteStore.record_vote
     original_votes = SqliteVoteStore.votes
@@ -272,13 +277,25 @@ def test_auth_ignored_is_noticed(corpus, tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "quorum",
     [
-        pytest.param(lambda self: 2 * self.f, id="quorum 2f"),
+        # A lower quorum makes prepare certificates of fewer votes, which the replica does not
+        # execute: tests/test_rounds_mutations.py has those mutations.
         pytest.param(lambda self: 2 * self.f + 2, id="quorum 2f+2"),
-        pytest.param(lambda self: self.f + 1, id="quorum f+1"),
     ],
 )
 def test_wrong_quorum_is_noticed(corpus, tmp_path, monkeypatch, quorum):
     monkeypatch.setattr(Committee, "quorum", property(quorum))
+    assert _first_difference(corpus, tmp_path) is not None
+
+
+@pytest.mark.parametrize(
+    "decides",
+    [
+        pytest.param(lambda self, committee: len(self.votes) >= committee.quorum, id="a prepare decides"),
+        pytest.param(lambda self, committee: len(self.votes) >= committee.n - 1, id="n-1 votes decide"),
+    ],
+)
+def test_wrong_decision_rule_is_noticed(corpus, tmp_path, monkeypatch, decides):
+    monkeypatch.setattr(QuorumCertificate, "decides", decides)
     assert _first_difference(corpus, tmp_path) is not None
 
 

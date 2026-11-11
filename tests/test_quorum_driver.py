@@ -528,6 +528,24 @@ def test_certificate_stays_waiting_after_a_failed_write(cluster):
     assert cluster.executed() == [A.canonical(), NEXT.canonical()]
 
 
+def test_certificate_held_stays_waiting_when_its_execution_fails(cluster, monkeypatch):
+    # The decision is on disk before it waits (store schema 8), so this write is the one that runs
+    # it. The same certificate again tries the buffer again.
+    real = cluster.store.append_certificate
+
+    def failing(certificate):
+        raise VoteStoreError("disk full")
+
+    monkeypatch.setattr(cluster.store, "append_certificate", failing)
+    with pytest.raises(VoteStoreError):
+        cluster.driver.handle_message(cluster.certificate_message(A))
+    assert cluster.executed() == []
+
+    monkeypatch.setattr(cluster.store, "append_certificate", real)
+    cluster.driver.handle_message(cluster.certificate_message(A))
+    assert cluster.executed() == [A.canonical()]
+
+
 def test_certificate_without_funds_waits_for_the_funds(cluster):
     payer = OTHER.identity_id
     spend = Transfer(payer, "dave", 15, 0)

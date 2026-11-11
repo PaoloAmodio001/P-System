@@ -335,10 +335,10 @@ def test_certificates_after_a_halt_in_the_same_batch_do_not_run(make_driver):
 
 
 def forged(event: Transfer) -> QuorumCertificate:
-    # Signed by member 3 on behalf of three members.
+    # Signed by member 3 on behalf of all four: the size of a decision, so that signatures are checked.
     votes = tuple(
         Vote(index, Vote.create(COMMITTEE, MEMBERS[3], event).signature)
-        for index in (0, 1, 2)
+        for index in (0, 1, 2, 3)
     )
     return QuorumCertificate(event, votes)
 
@@ -385,6 +385,16 @@ def test_a_frame_of_bad_certificates_stops_at_the_first(make_driver, monkeypatch
     calls = _count_verifications(monkeypatch)
     driver.handle_message(wire(batch))
     assert len(calls) == 1
+
+
+def test_a_frame_of_prepares_stops_at_the_first_with_no_signature_checked(make_driver, monkeypatch):
+    # A log holds decisions only. A prepare, valid or not, is refused before any signature.
+    driver = make_driver()
+    batch = encode_certificate_sync([certificate(alice(n), (0, 1, 2)) for n in range(50)])
+    calls = _count_verifications(monkeypatch)
+    driver.handle_message(wire(batch))
+    assert calls == []
+    assert driver.replica.executed == []
 
 
 def test_sending_the_log_again_checks_no_signature(make_driver, monkeypatch):

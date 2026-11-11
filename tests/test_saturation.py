@@ -208,7 +208,8 @@ def bad_request() -> dict:
 def test_each_kind_of_bad_signature_costs_the_peer(tmp_path):
     driver = driver_at(tmp_path / "a.sqlite")
     event = transfer(0)
-    forged = QuorumCertificate(event, tuple(Vote(index, b"\1" * 64) for index in range(3)))
+    # All four, the size of a decision: the signatures are what is wrong.
+    forged = QuorumCertificate(event, tuple(Vote(index, b"\1" * 64) for index in range(4)))
     assert driver.handle_message(wire(bad_request())).cost == BAD_SIGNATURE_COST
     assert driver.handle_message(wire(encode_certificate(forged))).cost == BAD_SIGNATURE_COST
     assert driver.handle_message(wire(encode_certificate_sync([forged]))).cost == BAD_SIGNATURE_COST

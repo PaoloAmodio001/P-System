@@ -17,12 +17,17 @@ the model, by the rules of the protocol:
   and `auth` there depends only on the event.
 - An event whose sender is not an identity can never be authorized. That one is a line
   `U` for Lean, so `auth` refuses it there too.
-- After each valid certificate, those seen since the last restart run one at a time, always
+- Only a decision executes: all `n` votes of round 0, so Lean runs with `Q = n` (see
+  `decision_quorum` in differential A). A valid certificate of `2f+1` to `n-1` votes is a prepare:
+  Lean takes it as no certificate, and the node keeps it in memory and halts on a second one of
+  another value for the same key. A node that gathers votes sends its prepare once, at `2f+1`, and
+  gathers on until `n`.
+- After each valid decision, those seen since the last restart run one at a time, always
   the smallest id that can run, until none can. Lean says which that is, so the oracle has no
   rule of execution of its own. The model needs no buffer: it runs what it is given, and
   proves nothing about this order. The order is a rule of the node, and this is where it is
   checked.
-- A restart loses the buffer: only what ran is still known afterwards. What the node took
+- A restart keeps the decisions not yet run (store schema 8) and loses the prepares. What the node took
   with a submit and has not run is not lost: the store keeps it, and after a
   restart the node gathers votes for it again, starting from none (store schema 6). The
   restart is not in the model, which has no buffer; it is a rule of the node, checked here.
@@ -80,7 +85,12 @@ from tests.test_quorum_differential import (
     _random_entries,
     _signed,
     _split_outputs,
+    decision_quorum,
 )
+
+# The messages of the rounds are what the Lean core returns (`lean_core.step`), and they are compared
+# in tests/test_rounds_split.py: this oracle is about round 0, and leaves them out.
+ROUND_MESSAGES = {"ROUND_VOTE", "NEW_ROUND", "PROPOSAL"}
 
 CASES = int(os.environ.get("PSYSTEM_DIFF_NODE_CASES", "500"))
 MIN_SEEN = 25
@@ -136,7 +146,7 @@ def _entries_are_valid(entries, quorum: int) -> bool:
 
 
 def _lean_header(case: NodeCase) -> list[str]:
-    lines = [f"N {3 * case.f + 1}", f"Q {2 * case.f + 1}"]
+    lines = [f"N {3 * case.f + 1}", f"Q {decision_quorum(case.f)}"]
     lines += [
         f"A {name} {case.balances[name]} {case.nonces.get(name, 0)}"
         for name in ACCOUNTS
@@ -167,6 +177,11 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
     plan = Plan()
     quorum = 2 * case.f + 1
     n = 3 * case.f + 1
+    decision = decision_quorum(case.f)
+    # The prepare certificates of round 0 this node holds, by key: in memory, a restart loses them.
+    prepares: dict[tuple, bytes] = {}
+    # What a restart found on disk and gathers again.
+    resumed: set[bytes] = set()
     own = 0
     votes_held: dict[tuple, bytes] = {}
     known: dict[tuple, bytes] = {}
@@ -187,6 +202,8 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
         key = (event.sender, event.nonce)
         canonical = event.canonical()
         holder = known.get(key)
+        # A decision ends the gathering of its event, run or not: there is nothing more to ask for.
+        collecting.pop(canonical, None)
 
         if holder is not None and holder != canonical:
             halted = True
@@ -218,6 +235,21 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
             # certificate comes: one that cannot run is gathered again after a restart.
             gathering.pop(by_id[new[0]].canonical(), None)
 
+    def prepare(event: Transfer) -> bool:
+        """A valid prepare certificate of round 0: kept, or a halt if another value has one."""
+        nonlocal halted
+        key = (event.sender, event.nonce)
+        holder = prepares.get(key)
+        if holder is None:
+            prepares[key] = event.canonical()
+            count("prepares")
+            return True
+        if holder != event.canonical():
+            halted = True
+            collecting.clear()
+            count("halts on two prepares")
+        return False
+
     def vote_for(event: Transfer) -> bool:
         key = (event.sender, event.nonce)
         canonical = event.canonical()
@@ -228,6 +260,24 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
         votes_held[key] = canonical
         count("votes given")
         return True
+
+    def gathered(event: Transfer, votes: set[int]) -> list[str]:
+        """
+        The votes gathered so far for an event this node asks for: with all `n`, a decision; with
+        `2f+1`, a prepare certificate, sent once; gathering goes on until the decision.
+        """
+        if len(votes) >= decision:
+            if event.canonical() in resumed:
+                count("certificates made after a restart")
+            del collecting[event.canonical()]
+            accept(event, _valid_entry_line(event, sorted(votes)))
+            count("certificates made here")
+            return ["CERTIFICATE"]
+        if len(votes) >= quorum and (event.sender, event.nonce) not in prepares:
+            prepares[(event.sender, event.nonce)] = event.canonical()
+            count("prepares made here")
+            return ["CERTIFICATE"]
+        return []
 
     for message in case.messages:
         kind = message[0]
@@ -256,9 +306,15 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
                     _lean_event(event),
                     ";".join(_lean_entry(entry, event) for entry in entries) or "-",
                 )
-                if _entries_are_valid(entries, quorum):
+                if _entries_are_valid(entries, decision):
                     accept(event, line)
                     count("valid certificates")
+                elif _entries_are_valid(entries, quorum):
+                    # Lean, with `Q = n`, takes it as no certificate: so does the replica.
+                    plan.inputs.append(line)
+                    if prepare(event):
+                        # The first is sent on to the others.
+                        broadcast = ["CERTIFICATE"]
                 else:
                     plan.inputs.append(line)
                     count("invalid certificates")
@@ -274,27 +330,14 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
                     gathering.setdefault(event.canonical(), event)
                     votes = collecting.setdefault(event.canonical(), (event, set()))[1]
                     votes.add(own)
-                    if len(votes) >= quorum:
-                        del collecting[event.canonical()]
-                        accept(event, _valid_entry_line(event, sorted(votes)))
-                        broadcast = ["CERTIFICATE"]
-                    else:
-                        broadcast = ["VOTE_REQUEST"]
+                    broadcast = gathered(event, votes) or ["VOTE_REQUEST"]
 
         elif kind == "VOTE":
             _, event, validator, valid = message
             entry = collecting.get(event.canonical())
             if entry is not None and valid and validator < n:
                 entry[1].add(validator)
-                if len(entry[1]) >= quorum:
-                    votes = sorted(entry[1])
-                    if own not in entry[1]:
-                        # Only after a restart does a gathering lack the vote of this node.
-                        count("certificates made after a restart")
-                    del collecting[event.canonical()]
-                    accept(event, _valid_entry_line(event, votes))
-                    broadcast = ["CERTIFICATE"]
-                    count("certificates made here")
+                broadcast = gathered(event, entry[1])
 
         elif kind == "EVIDENCE":
             count("evidence")
@@ -313,17 +356,25 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
             }
             if collecting:
                 count("restarts still gathering")
+            resumed = set(collecting)
             executed = _executed_ids(driver, directory, case, plan.inputs)
             if executed:
                 count("restarts with a log")
             if any(_event_id_as_nat(item[0]) not in executed for item in seen.values()):
-                # A certificate came and waits in the buffer: the restart loses it.
+                # A certificate came and waits in the buffer: the restart keeps it.
                 count("restarts with a certificate waiting")
+            # Decisions held and not run are on disk (store schema 8): the node takes them again.
+            seen = {
+                canonical: item
+                for canonical, item in seen.items()
+                if _event_id_as_nat(item[0]) not in executed
+            }
             known = {
                 (by_id[value].sender, by_id[value].nonce): by_id[value].canonical()
                 for value in executed
             }
-            seen = {}
+            known.update({(item[0].sender, item[0].nonce): canonical for canonical, item in seen.items()})
+            prepares = {}
 
         plan.ends.append(len(plan.inputs))
         plan.replies.append(reply)
@@ -511,7 +562,9 @@ def run_node(case: NodeCase, directory: Path) -> Result:
 
             result.lines.append(show(node))
             result.replies.append(any(m["type"] == "VOTE" for m in asker.sent))
-            result.broadcasts.append([m["type"] for m in peer.sent[before:]])
+            result.broadcasts.append(
+                [m["type"] for m in peer.sent[before:] if m["type"] not in ROUND_MESSAGES]
+            )
             result.malformed.append(malformed)
             result.halted.append(bool(node._quorum_halt_events))
             result.unsigned += asker.unsigned
@@ -687,11 +740,22 @@ def _add_children_waiting_for_a_parent(rng, case: NodeCase, expected: dict) -> N
         case.balances[sender] = max(case.balances[sender], 2)
         expected[sender] = 1
 
-    quorum = 2 * case.f + 1
+    n = 3 * case.f + 1
     case.pool += [parent, *children]
     for event in (*children, parent):
-        entries = [Entry(v) for v in rng.sample(range(3 * case.f + 1), quorum)]
+        entries = [Entry(v) for v in rng.sample(range(n), n)]
         case.messages.append(("CERTIFICATE", event, entries))
+
+
+def _add_two_prepares(rng, case: NodeCase, n: int) -> None:
+    """Two versions of one key, each with valid votes of round 0 short of a decision."""
+    first = rng.choice(case.pool) if case.pool else Transfer(ACCOUNTS[0], "dave", 1, 0)
+    second = Transfer(first.sender, "dave" if first.receiver != "dave" else ACCOUNTS[1], 1, first.nonce)
+    for event in (first, second):
+        if all(e.canonical() != event.canonical() for e in case.pool):
+            case.pool.append(event)
+        size = rng.randint(2 * case.f + 1, n - 1)
+        case.messages.append(("CERTIFICATE", event, [Entry(v) for v in rng.sample(range(n), size)]))
 
 
 def random_case(rng: random.Random) -> NodeCase:
@@ -712,6 +776,9 @@ def random_case(rng: random.Random) -> NodeCase:
 
     n = 3 * case.f + 1
 
+    if case.f > 0 and rng.random() < 0.15:
+        _add_two_prepares(rng, case, n)
+
     for _ in range(rng.randint(1, 14)):
         event = rng.choice(case.pool)
         draw = rng.random()
@@ -731,7 +798,7 @@ def random_case(rng: random.Random) -> NodeCase:
                 # A restart while gathering: the votes before it are lost, and the node
                 # gathers again from those that come after it.
                 cut = rng.randint(0, min(len(voters), 2 * case.f))
-                after = rng.sample(range(n), rng.randint(2 * case.f + 1, n))
+                after = rng.sample(range(n), n if rng.random() < 0.7 else rng.randint(2 * case.f + 1, n))
                 voters = voters[:cut] + [None] + after
             restarted = False
             for validator in voters:
@@ -772,6 +839,9 @@ EXERCISED = (
     "submits of a certified event",
     "evidence",
     "halts",
+    "prepares",
+    "prepares made here",
+    "halts on two prepares",
     "restarts",
     "restarts with a log",
     "restarts still gathering",

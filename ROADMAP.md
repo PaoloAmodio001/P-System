@@ -13,7 +13,8 @@ Next steps, in order. None of them is done, and none is a promise.
 3. Narrow the gap between the Python code and the Lean model, which today is covered by differential tests only.
 4. Prove what is now argued by hand: execution across epochs (today certification only), `SingleVersion` from the
    signature of the sender, and finite runs for the hypotheses on infinite chains of epochs.
-5. A liveness statement that models who gathers the votes, under a network model with fairness.
+5. ~~A liveness statement~~: `good_round_decides` and `honest_leader_within_n_rounds` (`QuorumRounds.lean`), under partial
+   synchrony. Still to do: a split still open at the end of an epoch stays locked (`docs/PROOF-SCOPE.md`).
 
 ## Outside the code
 

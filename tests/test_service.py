@@ -723,7 +723,7 @@ def test_a_node_cannot_prove_what_was_not_certified():
     members, committee, verifier = _verifier()
     event = Transfer("alice", "bob", 1, 0)
     one_signature = Vote.create(committee, members[0], event).signature
-    forged = QuorumCertificate(event, tuple(Vote(i, one_signature) for i in range(3)))
+    forged = QuorumCertificate(event, tuple(Vote(i, one_signature) for i in range(committee.n)))
     client = LyingClient({"/v1/certificates": encode_certificate(forged), "/v1/closures": {"closures": []}})
     assert not client.verify_final(event, verifier)
 
@@ -734,7 +734,7 @@ def test_a_certificate_for_another_event_proves_nothing():
 
     members, committee, verifier = _verifier()
     other = Transfer("alice", "carol", 1, 0)
-    valid = QuorumCertificate(other, tuple(Vote.create(committee, members[i], other) for i in range(3)))
+    valid = QuorumCertificate(other, tuple(Vote.create(committee, members[i], other) for i in range(committee.n)))
     client = LyingClient({"/v1/certificates": encode_certificate(valid), "/v1/closures": {"closures": []}})
     assert not client.verify_final(Transfer("alice", "bob", 1, 0), verifier)
 

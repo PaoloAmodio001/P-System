@@ -193,13 +193,8 @@ IN_QUORUM = {
         "            for closure in self.replica.closures(0)\n",
     ),
     "certificates made without their epoch": (
-        "            tuple(votes[validator] for validator in sorted(votes)),\n"
-        "            self.committee.epoch,\n"
-        "        )\n"
-        "        self._accept(certificate)\n",
-        "            tuple(votes[validator] for validator in sorted(votes)),\n"
-        "        )\n"
-        "        self._accept(certificate)\n",
+        '            tuple(votes[validator] for validator in sorted(votes)),\n            self.committee.epoch,\n        )\n        committee = self.committee\n',
+        '            tuple(votes[validator] for validator in sorted(votes)),\n        )\n        committee = self.committee\n',
     ),
     "vote kept without its proof": (
         "        vote = self.replica.handle_vote_request(signed.transfer, signed)\n",

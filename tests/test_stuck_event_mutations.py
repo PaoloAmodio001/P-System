@@ -32,8 +32,8 @@ MUTATIONS = {
             "                self._clock(),\n",
         ),
         "never asked again": (
-            "*snapshot.broadcasts, *self._resend_requests()),",
-            "*snapshot.broadcasts),",
+            '*snapshot.broadcasts, *self._resend_requests(), *rounds),',
+            '*snapshot.broadcasts, *rounds),',
         ),
         "always the same wait": (
             "            pending.wait = min(2 * pending.wait, self.RESEND_LONGEST_SECONDS)\n",
