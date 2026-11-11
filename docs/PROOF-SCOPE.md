@@ -10,9 +10,9 @@ A valid signature alone is never an authorization to execute.
 
 ## Verification status policy
 
-The status labels used in the documentation (`FORMAL`, `CONDITIONAL`, `TRIVIAL`, `EMPIRICAL`, `REFINEMENT`, `ASSUMPTION`, `OPEN`) are defined in `docs/PROOF-OBLIGATIONS.md`; The Python proof ledger (`proof/`, output in `audit-reports/`) uses its own statuses: `PROPERTY_TESTED`, `EMPIRICALLY_SUPPORTED` and `EXHAUSTIVELY_CHECKED` all mean `EMPIRICAL` (checked by execution, not proved); no ledger entry is `FORMAL`. In the current ledger 15 entries are `PROPERTY_TESTED` and 1 is `EMPIRICALLY_SUPPORTED`.
+The status labels used in the documentation (`FORMAL`, `CONDITIONAL`, `TRIVIAL`, `EMPIRICAL`, `REFINEMENT`, `ASSUMPTION`, `OPEN`) are defined in `docs/PROOF-OBLIGATIONS.md`.
 
-Passing tests, benchmarks, or simulations do not automatically produce a formal `PROVEN` status. The proof ledger records the evidence and keeps unsupported claims as `NOT_PROVEN` until the corresponding proof obligation is discharged.
+Passing tests, benchmarks, or simulations never make a claim `FORMAL`: a claim stays as strong as its evidence.
 
 ## Explicit non-claims
 
@@ -22,7 +22,7 @@ Every node runs with a committee: the historical mode without one (`quorum=None`
 
 ## Quorum mode
 
-Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is implemented in Python behind `Node(quorum=QuorumConfig(...))`, in the package `network/quorum/` (store, replica, driver, runtime). Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`: `FORMAL (model)` for the Lean model, `EMPIRICAL` for the link with Python. That link is made of the differential tests and of the behaviour tests in `tests/test_quorum_byzantine.py`, and it is not a refinement proof. So Byzantine safety is not established for the running code.
+Quorum mode is specified in `docs/FORMAL-SPECIFICATION.md`, section 13.1, and is implemented behind `Node(quorum=QuorumConfig(...))`, in the package `network/quorum/` (store, replica, driver, runtime). Its proof status is obligation O7 in `docs/PROOF-OBLIGATIONS.md`: `FORMAL (model)` for the Lean model. The vote lock, the execution of a certificate and the rounds are not reimplemented in Python: the node calls the compiled Lean definitions, and `CoreExec.lean` proves that the arguments Python passes are enough for the answer to be the model's (`docs/PROOF-OBLIGATIONS.md`, "Python and Lean"). What surrounds the calls (signatures, the store, the driver, the network, the JSON in between) is `EMPIRICAL`: differential tests, their mutations, and the behaviour tests in `tests/test_quorum_byzantine.py`. A proof about the Python code itself is not possible, for want of a formal semantics of Python. So Byzantine safety is proved for the decisions the node executes, and tested for the code around them.
 
 O7 and the theorems of phase B cover safety in the Lean model, for a chain of committees of `n = 3f+1` validators, each with at most `f` faulty. They do not establish unconditional liveness, totality, recovery from lost votes, or the security of Ed25519 and SHA-256. `honest_sender_certifies` is about liveness with delivery as a hypothesis. Observers (nodes outside the committee that only execute) are not covered: a node leaving a committee keeps executing, and no theorem says more about it than about any node that receives certificates. A committee chosen badly by governance breaks the hypothesis `Epoch.safe`, and no theorem removes that.
 

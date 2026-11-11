@@ -1,6 +1,6 @@
 """An event of an honest sender that stopped with every node up, and what prevents it.
 
-Measured in archive/docs/piano-bizantino.md. The node with the lower id called back a peer that had already called it,
+Measured with scripts/probe_stuck_event.py. The node with the lower id called back a peer that had already called it,
 and closed the connection in use: what was queued, in flight or still to be answered on it was lost, and
 nothing sent it again. These tests stage that moment with proxies, so that they do not depend on timing.
 """

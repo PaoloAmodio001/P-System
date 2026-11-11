@@ -16,10 +16,12 @@ from core.attestation import (
     RoundReport,
     Snapshot,
     SnapshotAttestation,
+    PRECOMMIT,
+    VOTE,
     Vote,
     is_well_formed_event,
+    phase_payload,
 )
-from core.derive import StateDeriver
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.state import State
@@ -28,7 +30,6 @@ from network.remote_signer import SignerUnavailable
 from network.quorum.common import (
     LOG,
     VoteStoreError,
-    is_executable_event,
 )
 from network.message import decode_certificate, encode_certificate
 from network.quorum import lean_core
@@ -96,9 +97,15 @@ class QuorumReplica:
                 self._log_by_id[certificate.event.event_id()] = certificate
                 continue
 
-            if not self._can_replay(certificate):
+            rows = self._execution(certificate, old_keys=False)
+            if rows is None:
                 raise VoteStoreError("LOG OF CERTIFICATES DOES NOT REPLAY")
-            self._execute(certificate)
+            self._execute(certificate, rows)
+
+    @property
+    def initial_state(self) -> State:
+        """The genesis state: what an empty log starts from."""
+        return self._initial_state
 
     @property
     def committee(self) -> Committee:
@@ -166,8 +173,9 @@ class QuorumReplica:
             self.derive_steps += len(pending)
 
             for event in pending:
-                if self._runs_on(state, ids, event):
-                    StateDeriver._apply_one(state, event)
+                rows = self._runs_on(state, ids, event)
+                if rows is not None:
+                    self._apply_rows(state, rows)
                     ids.add(event.event_id())
                     progress = True
                 else:
@@ -246,14 +254,15 @@ class QuorumReplica:
                 )
                 return False
 
-            if not self._runs_on(state, ids, event):
+            rows = self._runs_on(state, ids, event)
+            if rows is None:
                 LOG.critical(
                     "the log of this node does not run after a snapshot",
                     extra={"sender": event.sender, "nonce": event.nonce},
                 )
                 return False
 
-            StateDeriver._apply_one(state, event)
+            self._apply_rows(state, rows)
             ids.add(event.event_id())
 
         self._store.record_snapshot(snapshot)
@@ -585,67 +594,107 @@ class QuorumReplica:
     def handle_certificate(self, certificate: QuorumCertificate) -> bool:
         """
         Execute the certificate if it can run now. True if it was executed. A
-        halted node executes nothing. That check is here and not in `_can_execute`,
+        halted node executes nothing. That check is here and not in `_execution`,
         because the log replayed at a restart holds what ran before the halt.
         """
-        if self._store.halted() or not self._can_execute(certificate):
+        if self._store.halted():
+            return False
+
+        rows = self._execution(certificate, old_keys=True)
+        if rows is None:
             return False
 
         # On disk first: if this fails, the state has not changed.
         self._store.append_certificate(certificate)
-        self._execute(certificate)
+        self._execute(certificate, rows)
         return True
 
-    def _can_run_now(self, event: Transfer) -> bool:
-        # The check on the event comes first, because the others assume it.
-        return (
-            is_well_formed_event(event)
-            and self._is_fresh(event)
-            and self._is_ready(event)
-            and self._is_executable(event)
-        )
+    # --- Execution: the Lean core decides --------------------------------------------------------
+    #
+    # Whether a certificate executes, and what it does to the state, is `executes` and `ApplyEvent`
+    # of `formal/lean/PSystem/CoreExec.lean`, called through `lean_core.execute`. Python hands over
+    # what the theorems there say is enough: the rows of the sender and the receiver, the executed ids
+    # among the event and its parents, and the result of checking each signature. What stays here
+    # is outside the model: the types of the fields, Ed25519, the epoch of the certificate, and the
+    # rule on keys of ended committees (`QuorumOldKeys.lean`).
 
-    def _can_execute(self, certificate: QuorumCertificate) -> bool:
-        # Signatures last: they are the only expensive check, and the result does
-        # not depend on the order because the checks have no side effects. Only a decision runs: a
-        # prepare certificate alone could lose a later round (`Rounds.decisions_agree`).
-        return (
-            self._can_run_now(certificate.event)
-            and certificate.decides(self._store.committee_of(certificate))
-            and self.certificate_is_valid(certificate)
-        )
+    def _decision_quorum(self, committee: Committee, phase: str) -> int | None:
+        """How many valid signers a certificate of this phase needs to decide, or None if it never does."""
+        if committee.unlock:
+            return committee.quorum if phase == VOTE else None
+        if phase == PRECOMMIT:
+            return committee.quorum
+        if phase == VOTE:
+            return committee.n
+        return None
 
-    def _can_replay(self, certificate: QuorumCertificate) -> bool:
-        return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)
+    def _checks(self, certificate: QuorumCertificate, quorum: int, committee: Committee) -> list | None:
+        """
+        `[member, verified]` for each vote, or None when the certificate has what the model cannot
+        hold (a signer outside the committee, a field of the wrong type). Signatures are checked only
+        when the signers could make a decision: otherwise the answer is no whatever they are.
+        """
+        if type(certificate.epoch) is not int or certificate.epoch != committee.epoch:
+            return None
+        if type(certificate.votes) is not tuple or not all(type(v) is Vote for v in certificate.votes):
+            return None
+        signers = [vote.validator for vote in certificate.votes]
+        if not all(committee.has_validator(signer) for signer in signers):
+            return None
+        if len(set(signers)) != len(signers) or len(signers) < quorum:
+            return [[signer, False] for signer in signers]
+        try:
+            payload = phase_payload(committee, certificate.phase, certificate.round, certificate.event)
+        except (ValueError, TypeError, AttributeError):
+            return None
+        return [[vote.validator, vote._verify_payload(committee, payload)] for vote in certificate.votes]
+
+    def _execution(self, certificate: QuorumCertificate, old_keys: bool) -> list | None:
+        """The rows of the two accounts after the certificate if it executes now, else None."""
+        event = certificate.event
+        if not is_well_formed_event(event):
+            return None
+        if old_keys and not (
+            certificate.epoch >= self.committee.epoch or self._store.is_locked_event(event)
+        ):
+            return None
+        committee = self._store.committee_of(certificate)
+        quorum = self._decision_quorum(committee, certificate.phase)
+        if quorum is None:
+            return None
+        checks = self._checks(certificate, quorum, committee)
+        if checks is None:
+            return None
+        return self._core_execute(committee.n, quorum, self.state, self._executed_ids, event, checks)
 
     @staticmethod
-    def _runs_on(state: State, ids: set[str], event: Transfer) -> bool:
-        return (
-            event.event_id() not in ids
-            and set(event.parents) <= ids
-            and event.amount > 0
-            and event.sender != event.receiver
-            and StateDeriver._execution_failure(state, event) is None
-        )
+    def _core_execute(n: int, quorum: int, state: State, ids: set[str], event: Transfer, checks: list):
+        rows = [[account, state.balance(account), state.nonce(account)] for account in (event.sender, event.receiver)]
+        known = [x for x in (event.event_id(), *event.parents) if x in ids]
+        return lean_core.execute(n, quorum, rows, known, event, checks)
 
-    def _is_fresh(self, event: Transfer) -> bool:
-        return event.event_id() not in self._executed_ids
+    @classmethod
+    def _runs_on(cls, state: State, ids: set[str], event: Transfer) -> list | None:
+        """An event of the log, whose certificate was valid: a certificate of no signers needs none."""
+        if not is_well_formed_event(event):
+            return None
+        return cls._core_execute(1, 0, state, ids, event, [])
 
-    def _is_ready(self, event: Transfer) -> bool:
-        return set(event.parents) <= self._executed_ids
-
-    def _is_executable(self, event: Transfer) -> bool:
-        return (
-            is_executable_event(event)
-            and StateDeriver._execution_failure(self.state, event) is None
-        )
+    @staticmethod
+    def _apply_rows(state: State, rows: list) -> None:
+        # Balances of both, as `StateDeriver` writes them; a nonce only where it moved, so that an
+        # account that only receives keeps no nonce entry, as before.
+        for account, balance, nonce in rows:
+            state.balances[account] = balance
+            if state.nonce(account) != nonce:
+                state.nonces[account] = nonce
 
     def certificate_of(self, event_id: str) -> QuorumCertificate | None:
         """The certificate of an event this node executed and still holds, without reading the log."""
         return self._log_by_id.get(event_id)
 
-    def _execute(self, certificate: QuorumCertificate) -> None:
-        StateDeriver._apply_one(self.state, certificate.event)
+    def _execute(self, certificate: QuorumCertificate, rows: list) -> None:
+        self._apply_rows(self.state, rows)
         self.log.append(certificate)
         self._log_by_id[certificate.event.event_id()] = certificate
         self._executed_ids.add(certificate.event.event_id())

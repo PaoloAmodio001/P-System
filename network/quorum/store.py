@@ -35,6 +35,7 @@ from network.message import (
     encode_snapshot_body,
 )
 from network.remote_signer import make_private
+from network.quorum import lean_core
 from network.quorum.common import VoteStoreError
 
 
@@ -760,18 +761,22 @@ class SqliteVoteStore:
                 if self._is_below_floor(event):
                     return False
 
-                existing = {
-                    row[0]
-                    for row in self._connection.execute(
+                rows = sorted(
+                    self._connection.execute(
                         """
-                        SELECT canonical FROM votes
+                        SELECT canonical, event_id FROM votes
                         WHERE epoch = ? AND ((sender = ? AND nonce = ?) OR event_id = ?)
                         """,
                         (epoch, event.sender, str(event.nonce), event_id),
-                    )
-                }
+                    ).fetchall()
+                )
+                existing = {row[0] for row in rows}
 
-                if existing - {canonical}:
+                # The lock is `Quorum.voteAllowed` of the Lean core, given the votes with this key or
+                # this id: the answer it gives on all of them (`Core.voteAllowed_local`).
+                if rows and not lean_core.vote_allowed(
+                    [(_event_from_canonical(other), other_id) for other, other_id in rows], event
+                ):
                     return False
 
                 if existing:

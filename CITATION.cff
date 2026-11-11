@@ -5,15 +5,17 @@ authors:
   - family-names: "Amodio"
     given-names: "Paolo"
 license: "Apache-2.0"
+version: "1.0.0"
 type: software
 repository-code: "https://github.com/PaoloAmodio001/P-System"
 abstract: >-
   A registry of single-owner state without global consensus: a committee of
-  3f+1 validators certifies events with quorum certificates of 2f+1
-  signatures, and every node derives the same state from the same set of
-  certified events. Python implementation, with a Lean 4 model of the
-  protocol and machine-checked safety theorems about that model; the link
-  between code and model is tested, not proved.
+  3f+1 validators decides, for each sender and nonce, which version runs,
+  with rounds that end a split vote under partial synchrony, and every node
+  derives the same state from the same set of decided events. Python
+  implementation whose vote lock, execution and rounds are compiled Lean 4
+  definitions, with machine-checked theorems about safety, progress and the
+  boundary between Python and Lean.
 keywords:
   - distributed systems
   - quorum certificates

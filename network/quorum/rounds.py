@@ -63,6 +63,10 @@ class RoundDriver:
         self.prepared: set[tuple] = set()
         # When each key entered its round, for the keys not decided.
         self.started: dict[tuple[str, int], float] = {}
+        # What this node sent in the round each key is in, and when it last sent it: a message lost
+        # to a partition is sent again, and does not wait for the next timeout, up to a minute.
+        self.sent: dict[tuple[str, int], tuple[int, list[dict]]] = {}
+        self.resent_at: dict[tuple[str, int], float] = {}
 
         if self.enabled:
             now = self.clock()
@@ -149,7 +153,23 @@ class RoundDriver:
                 out.append(encode_new_round(signed, epoch))
                 out.extend(self._take_report(signed))
 
+        self._remember(key, after, out)
         return out
+
+    ROUND_MESSAGES = ("ROUND_VOTE", "NEW_ROUND", "PROPOSAL")
+
+    def _remember(self, key: tuple[str, int], state: dict, messages: list[dict]) -> None:
+        """The messages of the round the key is in, to send again until it is decided."""
+        if state["decided"] is not None:
+            self.sent.pop(key, None)
+            self.resent_at.pop(key, None)
+            return
+        round_, kept = self.sent.get(key, (state["round"], []))
+        if round_ != state["round"]:
+            round_, kept = state["round"], []
+        kept = kept + [m for m in messages if m.get("type") in self.ROUND_MESSAGES and m not in kept]
+        self.sent[key] = (round_, kept)
+        self.resent_at.setdefault(key, self.clock())
 
     def _sign(self, value: str, phase: str, round_: int) -> tuple[Vote | None, Transfer | None]:
         """
@@ -346,6 +366,9 @@ class RoundDriver:
 
         self.proposed.add((sender, nonce, round_))
         message = encode_proposal(proposal, self.committee.epoch)
+        state = self.replica.round_state(sender, nonce)
+        if state is not None:
+            self._remember((sender, nonce), state, [message])
         return [message, *self.handle_proposal(proposal)]
 
     @staticmethod
@@ -427,8 +450,14 @@ class RoundDriver:
             state = self.replica.round_state(*key)
             if state is None or state["decided"] is not None:
                 self.started.pop(key, None)
+                self.sent.pop(key, None)
                 continue
             if now - since >= self.timeout_of(state["round"]):
                 out.extend(self._step(*key, {"kind": "timeout"}))
+            elif key in self.sent and now - self.resent_at.get(key, now) >= self.ROUND_FIRST_SECONDS:
+                # Within the round: what may have been lost goes again (`good_round_decides` needs
+                # the messages of the round to arrive, not to arrive the first time).
+                self.resent_at[key] = now
+                out.extend(self.sent[key][1])
 
         return out

@@ -1,0 +1,212 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+
+\title{P-System: consensusless payments across committee changes,\\
+with rounds that end a split vote and a Lean core that runs in the node}
+\author{Paolo Amodio}
+\date{P-System \code{1.0.0}. Not submitted, not published, not peer reviewed.}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Payment systems built on Byzantine quorum certificates need no consensus when each account has one
+owner, as FastPay and Astro show. Two problems remain: changing the committee, and a sender who signs
+two versions of one spend, which can lock that spend for good. We describe a protocol that changes
+committee with no consensus and ends a split vote with rounds per key, and its implementation. Its
+model is in Lean~4: safety over a chain of committees, and progress within an epoch under partial
+synchrony. The decisions of the running node (the vote lock, the execution of a certificate, the steps of
+a round) are the definitions of the model compiled to a shared library, with theorems that what the
+Python around them passes is enough. That Python is tested and not proved. We report fault campaigns on
+four virtual machines of one host, a liveness failure they found, and its correction.
+Every theorem named here is in \code{formal/lean/PSystem}, every number in a file of the repository,
+and \code{tests/test\_documents.py} checks both.
+\end{abstract}
+
+\section{The protocol}
+
+A committee has $n = 3f+1$ members, at most $f$ of them faulty. Each key $(\mathit{sender},
+\mathit{nonce})$ is decided on its own; there is no global order.
+
+\paragraph{Round 0.} An honest member votes for the first version of a key it receives, durably, and
+never for another. The votes of all $n$ members decide that version at once. $2f+1$ of them are a
+\emph{prepare} certificate: each member that holds one precommits it, and $2f+1$ precommits decide.
+A prepare alone is never executed: with $3f+1$ members no rule on $2f+1$ votes alone can be recovered
+safely (\code{split\_lock\_ambiguous\_general}).
+
+\paragraph{Rounds.} A member with an open key moves to round $r+1$ at a timeout (2~s, doubling up to
+60~s) and sends a signed report to all: its vote of round 0 and the highest prepare it holds. The leader
+of round $r$ is member $(k + r) \bmod n$, $k$ from the hash of the key. With $2f+1$ reports it proposes
+the value of the highest prepare among them, or else one that $f+1$ voted in round 0, or else any version
+its sender signed. A member prevotes a proposal only if it comes from the leader and the reports justify
+it; $2f+1$ prevotes are a prepare of the round, and the precommits follow. Until a key is decided, a
+member sends again, every 2~s, the messages it sent in its current round.
+
+\paragraph{Epochs.} A threshold identity of governance signs an \emph{order} naming the next
+committee. A member that receives it stops voting, waits up to 8~s for its open keys, and gives a
+\emph{report}: every version it voted for in this epoch, in any round, with its sender's signature. It
+reports for one order per epoch, for good. An order with $2f+1$ valid reports is a \emph{closure}; whoever
+gathers one installs it, with no vote on it. Every version in the reports becomes a \emph{lock}: later
+committees vote only for a version that agrees with the locks of its key.
+
+\paragraph{Snapshots.} A state with the ids of the events behind it, signed by $2f+1$ members, each
+of which derived it. A node can restart from one, prune what it covers, and apply a floor under which it
+no longer votes.
+
+\section{What is proved}
+
+All of this is about the model. There is no \code{sorry}, \code{admit}, \code{axiom}, \code{opaque}
+or \code{native\_decide}, and \code{formal/lean/AuditPSystem.lean} prints only \code{propext},
+\code{Quot.sound} and \code{Classical.choice} for each of 269 theorems in 27 modules. Signatures are
+parameters, and \code{Unforgeable} is a hypothesis about a run: nothing here is about Ed25519 or SHA-256.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}p{0.36\textwidth}L@{}}
+\toprule
+Theorem & Statement \\
+\midrule
+\code{decisions\_agree}, \code{grounds\_agree} & Two honest members never decide different versions of a key, whatever the network did, through any number of rounds \\
+\code{good\_round\_decides} & In a round after those the honest members are in, with an honest leader and the messages between honest members delivered, every honest member decides \\
+\code{honest\_leader\_within\_n\_rounds} & With fewer than $n$ faulty members, any $n$ consecutive rounds have an honest leader \\
+\code{voted\_in\_closure}, \code{no\_double\_spend\_next\_epoch} & A decided version is in every closure whose reporters list what they voted for in any round, and the next epoch decides the same \\
+\code{no\_double\_spend}, \code{state\_is\_derive}, \code{convergence\_after\_exchange} & For one committee: honest nodes never execute conflicting events, a state is a function of the set of events, nodes that exchange logs agree \\
+\code{no\_double\_spend\_across\_epochs}, \code{closure\_preserves\_certified} & Over a chain of committees, each with its own bound, two conflicting events never both get a certificate \\
+\code{order\_unique}, \code{no\_double\_spend\_any\_closures} & Two orders cannot both get a quorum of reports, and members can install different closures of one epoch \\
+\code{certified\_passes\_threshold}, \code{no\_double\_spend\_with\_unlock} & With the optional $n = 5f+1$, $q = 4f+1$, freeing a nonce with fewer than $2f+1$ reports creates no conflict \\
+\code{accepted\_complete}, \code{old\_keys\_no\_double\_spend} & A certificate of an ended committee counts only for an event in the locks; with one version of each spend in the locks, this is safe with stolen keys \\
+\code{resume\_is\_derive}, \code{no\_double\_spend\_views} & A restart from a snapshot reaches the derived state; pruning locks under a floor keeps safety \\
+\code{step\_certificate}, \code{executes\_local}, \code{apply\_local}, \code{voteAllowed\_local}, \code{execValue\_json} & The vote lock and the execution the node calls are those of the model, on the arguments Python passes (section~\ref{sec:link}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Across epochs, safety is about certification: the model of epochs has no execution, which is proved
+for one committee only. Each hypothesis of the epoch results has a counterexample that shows it is
+needed, for instance \code{prune\_without\_floor\_lets\_conflict\_through} and
+\code{order\_unique\_needs\_the\_bound}.
+
+\section{Progress}
+
+No deterministic protocol decides with one crash and no bound on delays (FLP), so progress needs a
+hypothesis. \code{good\_round\_decides} states it as a good round: one after the rounds the honest members
+are in, with an honest leader, in which their messages arrive. What happened before is arbitrary. With
+timeouts that double, honest members end up in such a round once delays are bounded, and
+\code{honest\_leader\_within\_n\_rounds} gives the leader. The two theorems \code{split\_votes\_no\_quorum}
+and \code{split\_then\_good\_round\_decides} are the case that used to stall: four members, votes split two
+and two, no prepare in round 0, and a good round after it decides at every member.
+
+The model does not say that the messages of a round arrive the first time they are sent, and the
+campaigns showed why it matters (section~\ref{sec:vm}). The node now sends them again within the round.
+
+What progress does not cover: a split still open at the end of an epoch, after the wait of 8~s, is
+reported with both versions and stays locked in the next epoch. Waiting without a bound could stop the
+change of epoch, so we chose the bound.
+
+\section{Python and Lean}\label{sec:link}
+
+A proof that Python code is equivalent to a model needs a formal semantics of Python, and there is no
+verified translation from Python to Lean. We did not attempt it. Instead the decisions are the model's
+code. \code{lake build PSystem:shared} compiles the Lean definitions to a library that the node loads
+(\code{network/quorum/lean\_core.py}): \code{Quorum.voteAllowed} for the vote lock, \code{executes} and
+\code{ApplyEvent} for the execution of a certificate, and \code{Rounds.step}, \code{choose},
+\code{justified} and \code{leader} for the rounds.
+
+What can be proved about the boundary is proved in \code{CoreExec.lean} and \code{Core.lean}:
+\code{step\_certificate} says the execution in \code{Quorum.step} is \code{executes} with each signature
+replaced by the result of checking it; \code{executes\_local}, \code{apply\_local} and
+\code{apply\_elsewhere} that the rows of the sender and the receiver, and the executed ids among the event
+and its parents, are all the state the answer depends on; \code{voteAllowed\_local} that the lock depends
+only on the votes with the key or the id of the event, which is what the store selects; and
+\code{execValue\_json}, \code{voteValue\_json} that on the JSON encoding of any argument the exported
+function returns the encoding of the model's answer.
+
+What remains trusted is listed in \code{docs/PROOF-OBLIGATIONS.md}: the Python that builds the
+arguments and writes the answer back, \code{Json.parse} and \code{Json.compress}, \code{ctypes}, the Lean
+compiler and runtime, and what the model leaves out (Ed25519, SQLite, the network, the driver around the
+decisions, the rule on keys of ended committees). It is tested: differential tests compare the node with
+the Lean models after each input, on adversarial random inputs, for one replica, through the node, on real
+TLS, across epochs and snapshots with restarts; mutation tests check that each rule of the remaining Python
+is noticed when it is broken.
+
+\section{Findings}
+
+\paragraph{A closure needs no agreement.} Our first design voted on one closure per epoch. Two proposers
+could split those votes so that no closure ever formed, after voting on events had stopped. Since
+\code{closure\_preserves\_certified} holds for any quorum of reports, the votes are not needed; what must
+be unique is the next committee, and a lock on the order gives that.
+
+\paragraph{A prepare is not a decision.} Moving from round-0 certificates of $2f+1$ to rounds, the
+differential tests found two gaps in the node: a prepare received by synchronization was taken as a
+decision, and could halt a node on the real decision of the other version; and a prepare received was
+not sent on, so a gatherer that showed it to one member left the others without a precommit until a
+round ended.
+
+\paragraph{Old keys.} With the keys of an ended committee, stolen after its closure, our implementation
+executed a transfer its sender never signed. A node now takes a certificate of an ended committee only
+for an event in its locks.
+
+\paragraph{A message sent once.} A campaign on virtual machines found honest transfers not final two
+minutes after a long partition healed (section~\ref{sec:vm}).
+
+\section{Fault campaigns on virtual machines}\label{sec:vm}
+
+VMRESULTS
+
+\section{Related work}
+
+What each work is reported to do, from its paper; none has been run against this system.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}p{0.2\textwidth}LLL@{}}
+\toprule
+& Consensus & Committee change & Equivocated spend \\
+\midrule
+FastPay & None & Fixed committee & Locked \\
+Astro & None, reliable broadcast & Not handled & Not its subject \\
+Kuznetsov, Tonkikh & None on the configuration & Its subject, forward-secure signatures & Not its subject \\
+Sui Lutris & For shared objects and at the epoch boundary & Through consensus & Unlocked at the end of an epoch \\
+Bythos & Verifies broadcast protocols in Coq, with code extraction & Not covered & Not covered \\
+This work & None & By a threshold identity & Decided by rounds within an epoch; locked if still split at its end \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Bythos proves more about its protocols and extracts running code from the proofs. Here the decisions are
+compiled from the model, but the code around them is written by hand and tested.
+
+\section{Limits}
+
+\begin{itemize}
+\item The Python around the Lean core is tested, not proved, and so is everything the model leaves out.
+\item Progress needs partial synchrony; a split open at the end of an epoch stays locked.
+\item Governance chooses the committee; more than $f$ faulty members can fork, and a governance that signs
+two orders stops an epoch for good.
+\item The campaigns ran four virtual machines on one host: never separate machines, independent operators,
+an external audit or a pilot.
+\item Only single-owner state. Every member sees every event.
+\item One author, working with an AI model that wrote much of the code and the proofs. The proofs are
+checked by Lean; the rest has been checked by no independent person.
+\end{itemize}
+
+\begin{thebibliography}{9}\small
+\bibitem{guerraoui} R.~Guerraoui, P.~Kuznetsov, M.~Monti, M.~Pavlovic, D.-A.~Seredinschi. The Consensus Number of a Cryptocurrency. PODC 2019. arXiv:1906.05574.
+\bibitem{fastpay} M.~Baudet, G.~Danezis, A.~Sonnino. FastPay: High-Performance Byzantine Fault Tolerant Settlement. AFT 2020. arXiv:2003.11506.
+\bibitem{astro} D.~Collins et al. Online Payments by Merely Broadcasting Messages. DSN 2020. arXiv:2004.13184.
+\bibitem{kt} P.~Kuznetsov, A.~Tonkikh. Asynchronous Reconfiguration with Byzantine Failures. DISC 2020. doi:10.4230/LIPIcs.DISC.2020.27.
+\bibitem{sui} S.~Blackshear et al. Sui Lutris: A Blockchain Combining Broadcast and Consensus. CCS 2024. arXiv:2310.18042.
+\bibitem{bythos} Q.~Zhao, G.~P\^irlea, K.~Grzeszkiewicz, S.~Gilbert, I.~Sergey. Compositional Verification of Composite Byzantine Protocols. CCS 2024. doi:10.1145/3658644.3690355.
+\bibitem{flp} M.~J.~Fischer, N.~A.~Lynch, M.~S.~Paterson. Impossibility of Distributed Consensus with One Faulty Process. JACM 32(2), 1985.
+\bibitem{pbft} M.~Castro, B.~Liskov. Practical Byzantine Fault Tolerance. OSDI 1999.
+\end{thebibliography}
+
+\end{document}

@@ -1,5 +1,7 @@
 # P-System
 
+Version 1.0.0.
+
 A registry of single-owner state. Each account has one owner, who orders their own operations with nonces. A fixed
 committee of `n = 3f+1` validators decides, for each `(sender, nonce)`, which version runs. An honest validator votes for the
 first version it sees; with the votes of all `n` that version is decided at once. When the sender signed two versions and
@@ -7,7 +9,9 @@ the votes split, rounds with a rotating leader decide one of them (a prepare of 
 never stays locked within an epoch, under partial synchrony (`good_round_decides`), and two honest validators never decide
 different versions (`decisions_agree`). There is no global order: rounds run per key, and every node derives the same
 state from the same set of decided events.
-Python implementation, with a Lean 4 model of the protocol and machine-checked theorems about that model.
+Python implementation, with a Lean 4 model of the protocol and machine-checked theorems about that model. The vote lock, the
+execution of a certificate and the rounds are the Lean definitions themselves, compiled and called by the node, with theorems
+that what Python hands them is enough; the Python around them is tested, not proved (`docs/PROOF-OBLIGATIONS.md`).
 
 ## Try it in five minutes
 
@@ -47,10 +51,14 @@ Checks: `pytest -q -m "not slow"` (minutes), `pytest -q` (mutations and differen
 ## What is proved in Lean
 
 About the model in `formal/lean/`, with at most `f` faulty validators per committee and unforgeable signatures. Only the
-three standard axioms of Lean are used, for all 244 theorems; `scripts/check_axioms.py` checks it.
+three standard axioms of Lean are used, for all 269 theorems; `scripts/check_axioms.py` checks it.
 
 | Theorem | Statement | Status |
 |---|---|---|
+| `decisions_agree` | Two honest validators never decide different versions of one `(sender, nonce)`, whatever the network does, through any number of rounds | FORMAL |
+| `good_round_decides`, `honest_leader_within_n_rounds` | In a round with an honest leader every honest validator decides; one comes within any `n` rounds | CONDITIONAL: partial synchrony, a round in which messages between honest members arrive |
+| `no_double_spend_next_epoch`, `voted_in_closure` | A decided version is in every closure, and the next epoch decides the same | FORMAL |
+| `step_certificate`, `executes_local`, `apply_local`, `voteAllowed_local` | The vote lock and the execution the node calls are the model's, and what Python passes them is enough | FORMAL (the Python that builds the arguments is tested) |
 | `no_double_spend` | Two honest nodes never execute different events for one `(sender, nonce)` | FORMAL |
 | `delivered_certs_agree` | Two valid certificates for one `(sender, nonce)` are for one event | FORMAL |
 | `executed_authorized` | An executed event passed the check `auth` of an honest validator | FORMAL |
@@ -71,8 +79,11 @@ The full list with the exact hypotheses is in `docs/PROOF-OBLIGATIONS.md`.
 ## Limits
 
 - Only single-owner state: shared objects written by several owners need consensus, which this design does not provide.
-- The link between the Python code and the Lean model is tested (differential tests), not proved: there is no refinement proof.
-- Progress is not guaranteed: votes split between two versions of a spend give no certificate, and that nonce stays locked.
+- The vote lock, the execution of a certificate and the rounds are the compiled Lean definitions; the Python around them
+  (signatures, store, driver, network) is tested, not proved: a proof about Python code is not possible without a formal
+  semantics of Python.
+- Progress needs partial synchrony, as for any deterministic protocol (FLP). Within an epoch a split vote is decided by the
+  rounds; a split still open when an epoch closes, after a wait of 8 seconds, stays locked in the next epoch.
 - The governance that chooses each committee is a trust assumption that no theorem removes.
 - No external audit and no run on separate machines: a research prototype, not for use where an error can cause harm.
 

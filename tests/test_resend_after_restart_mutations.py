@@ -2,7 +2,7 @@
 
 Left out: test_a_node_killed_while_gathering_finishes_when_it_comes_back and
 test_the_metrics_of_a_real_node_say_what_is_stuck, whose nodes are separate processes that import the real
-modules. The first was seen to fail by hand without the change: see archive/docs/piano-bizantino.md.
+modules. The first was seen to fail by hand without the change.
 """
 
 from pathlib import Path

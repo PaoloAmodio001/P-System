@@ -312,7 +312,7 @@ authority is lost, start from a new authority.
 
 This is for the node/member **signing key** (identity), not TLS certificates (see "Rotating certificates").
 
-- **Comando:** `python3 scripts/rotate_key.py --old <path-old-key> --new <path-new-key>`
-- **Cosa fa:** genera una nuova chiave di firma con permessi `0600` e stampa una procedura coordinata di sostituzione.
-- **Cosa NON fa:** **non** esegue la rotazione su committee/nodi/deployment. La sostituzione effettiva richiede coordinamento (cambio committee/epoch, aggiornamento configurazione/genesis secondo il flusso operativo, riavvio e verifica nodi) — vedere anche "Changing the committee" e "Governance".
-- **Quando usarlo:** sospetta compromissione della chiave o rotazione periodica secondo policy; da eseguire solo come parte di una procedura coordinata e tracciata.
+- **Command:** `python3 scripts/rotate_key.py --old <path-old-key> --new <path-new-key>`
+- **What it does:** makes a new signing key with permissions `0600` and prints a coordinated procedure for the replacement.
+- **What it does not do:** it does **not** rotate anything on the committee, the nodes or the deployment. The replacement needs coordination (a change of committee or epoch, the configuration and genesis updated by the operational flow, nodes restarted and checked): see also "Changing the committee" and "Governance".
+- **When to use it:** a key suspected to be compromised, or a periodic rotation by policy; only as part of a coordinated procedure that is tracked.

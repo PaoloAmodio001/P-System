@@ -105,8 +105,8 @@ MUTATIONS = {
     "votes allowed after a halt": (VOTE_CHECK, ""),
     "certificates recorded after a halt": (CERTIFICATE_CHECK, ""),
     "replica executes after a halt": (
-        "        if self._store.halted() or not self._can_execute(certificate):\n",
-        "        if not self._can_execute(certificate):\n",
+        '        if self._store.halted():\n            return False\n\n        rows = self._execution(certificate, old_keys=True)\n',
+        '        rows = self._execution(certificate, old_keys=True)\n',
     ),
     "order of arrival kept": (
         "        low, high = sorted(\n"

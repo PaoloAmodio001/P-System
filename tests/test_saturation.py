@@ -1,6 +1,6 @@
 """An attacker that exhausts memory or CPU today, and does not after these defenses.
 
-archive/docs/proposte/passo-4.md has what each attack cost before them. Each limit here must leave the result
+Each limit here must leave the result
 of an honest sender alone: a test below delivers in every order, with a buffer that holds almost nothing.
 """
 

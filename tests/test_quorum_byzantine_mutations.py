@@ -73,9 +73,8 @@ IN_QUORUM = {
     # replica. Either alone holds it, so the mutation removes both.
     "vote lock removed": [
         (
-            "                if existing - {canonical}:\n"
-            "                    return False\n",
-            "",
+            '                if rows and not lean_core.vote_allowed(\n',
+            '                if False and not lean_core.vote_allowed(\n',
         ),
         (
             '            if round_state["vote0"] != event.event_id():\n'
@@ -84,15 +83,12 @@ IN_QUORUM = {
         ),
     ],
     "a vote executes": (
-        "            return Vote.create(self.committee, self._identity, event)\n",
-        "            if self._is_fresh(event) and self._is_ready(event) and"
-        " self._is_executable(event):\n"
-        "                self._execute(QuorumCertificate(event, ()))\n"
-        "            return Vote.create(self.committee, self._identity, event)\n",
+        '            return Vote.create(self.committee, self._identity, event)\n',
+        '            rows = self._runs_on(self.state, self._executed_ids, event)\n            if rows is not None:\n                self._execute(QuorumCertificate(event, ()), rows)\n            return Vote.create(self.committee, self._identity, event)\n',
     ),
     "a node refuses a certificate against its own vote": (
-        '        return (\n            self._can_run_now(certificate.event)\n            and certificate.decides(self._store.committee_of(certificate))\n            and self.certificate_is_valid(certificate)\n        )\n',
-        '        event = certificate.event\n        return (\n            self._can_run_now(event)\n            and certificate.decides(self._store.committee_of(certificate))\n            and self.certificate_is_valid(certificate)\n            and not any(\n                (v.sender, v.nonce) == (event.sender, event.nonce)\n                and v.canonical() != event.canonical()\n                for v in self._store.votes()\n            )\n        )\n',
+        '        checks = self._checks(certificate, quorum, committee)\n        if checks is None:\n            return None\n',
+        '        checks = self._checks(certificate, quorum, committee)\n        if checks is None or any(\n            (v.sender, v.nonce) == (event.sender, event.nonce) and v.canonical() != event.canonical()\n            for v in self._store.votes()\n        ):\n            return None\n',
     ),
     "conflict not noticed": (
         '            self.replica.record_halt(known, certificate)\n            self._halted_now()\n            return False\n',

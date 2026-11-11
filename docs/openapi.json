@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "P-System node API",
-  "version": "1",
+  "version": "1.0.0",
   "description": "What a node says about state may be behind, or false if the node is faulty: only a certificate proves something. See docs/API.md. Not ready for production: docs/VALIDATION-PLAN.md."
  },
  "components": {

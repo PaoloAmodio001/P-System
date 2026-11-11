@@ -37,7 +37,6 @@ automatically prove that the Python implementation satisfies it.
 | With `n = 5f+1`, unlocking a split nonce loses no certified event | `certified_passes_threshold`, `no_double_spend_with_unlock` | `tests/test_unlock.py`, `tests/test_unlock_differential.py` | FORMAL (model), EMPIRICAL (Python) |
 | One validator across epochs follows the model | None | `tests/test_epoch_differential.py` | EMPIRICAL |
 | Safety under network faults between real processes | None | `tests/chaos.py`, `scripts/soak.py` | EMPIRICAL, on one machine |
-| Reconciliation preserves event knowledge | None | Network reconciliation and canonical-view tests | EMPIRICAL |
 | Retry delays are bounded, positive and unbounded in time | `backoff_bounded`, `backoff_positive`, `retryTime_ge_index`, `retry_hits_stable_availability` (`Backoff.lean`), properties of the formula | Reconnect and retry tests | FORMAL (formula only); not liveness |
 | Network security and authorization | None; no cryptography is modelled | Signature, authorization and TLS tests | EMPIRICAL |
 | Security-relevant service events are recorded in a local append-only hash chain, and an edit is detected | None | `tests/test_audit.py`, `tests/test_service.py` | EMPIRICAL; the file is local and its deletion is not detected |
@@ -61,7 +60,7 @@ automatically prove that the Python implementation satisfies it.
 
 Theorems cited by earlier versions of this table (P01–P16, `R1_*`,
 `r17_*`, `apply_event_deterministic`) were removed from the Lean model;
-they are kept under the tag `pre-lean-cleanup`. The review that led to
+they are kept under commit `e10f4a4`. The review that led to
 the removal is summarised in `docs/PROOF-OBLIGATIONS.md`.
 
 The test paths and theorem names above are candidate evidence references
@@ -85,7 +84,7 @@ Do not claim superiority from the existence of benchmark scripts alone.
 
 1. Reproduce Python tests and the Lean build from a documented environment.
 2. Inspect each cited theorem statement and its assumptions.
-3. Map Python event, state, conflict, and reconciliation behavior to the formal model.
+3. Map Python event, state, conflict and synchronization behavior to the formal model.
 4. Run benchmarks and report comparative measurements.
 5. Curate tracked source files and exclude accidental files and local backups.
 6. Review the complete repository for secrets, licensing issues, and unsupported claims.

@@ -124,8 +124,8 @@ class PeerConnection:
             if SecureTransport.is_revoked(connection, tls_config):
                 raise ValueError("CERTIFICATE OF THE PEER IS REVOKED")
 
-            # Il timeout breve serve solo per stabilire la connessione.
-            # La connessione TLS persistente deve poter restare inattiva.
+            # The short timeout is only for establishing the connection.
+            # The persistent TLS connection must be able to stay idle.
             connection.settimeout(None)
 
             self.connection = _duplex(connection)

@@ -2,7 +2,7 @@
 
 Left out: test_a_burst_is_not_lost_to_a_call_back and test_a_burst_lost_with_two_connections_runs_all_the_same,
 whose nodes are separate processes that import the real modules. Each was seen to fail by hand without
-the correction: see archive/docs/piano-bizantino.md.
+the correction, with scripts/probe_stuck_event.py.
 """
 
 from pathlib import Path

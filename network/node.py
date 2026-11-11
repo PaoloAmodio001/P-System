@@ -372,8 +372,8 @@ class Node:
             # Nothing it sends may end the thread that reconnects.
             connection.close()
 
-            # Un tentativo concorrente fallito non deve segnare come
-            # fallito un peer che dispone già di una connessione valida.
+            # A concurrent attempt that failed must not mark as
+            # failed a peer that already has a valid connection.
             with self._peer_connections_lock:
                 current = self.peer_connections.get(peer.node_id)
 
@@ -409,8 +409,8 @@ class Node:
             handshake.node_id,
             connection,
         ):
-            # Una connessione concorrente può aver già registrato
-            # una connessione valida verso lo stesso peer.
+            # A concurrent connection may already have registered
+            # a valid connection to the same peer.
             current = self.peer_connections.get(handshake.node_id)
             return current is not None and current.connected
 
@@ -422,9 +422,9 @@ class Node:
         thread.start()
         self._request_certificates(connection)
 
-        # Il successo è già stato registrato alla pubblicazione. Il lock
-        # serializza questo controllo con la callback di disconnessione:
-        # segnala False se la connessione è già stata rimossa o chiusa.
+        # The success was registered when it was published. The lock
+        # orders this check with the callback of a disconnection:
+        # it gives False if the connection was already removed or closed.
         with self._peer_connections_lock:
             if (
                 self.peer_connections.get(handshake.node_id) is connection
@@ -460,8 +460,8 @@ class Node:
         node_id: str,
         connection: PeerConnection,
     ) -> bool:
-        # In caso di connessioni simultanee, preferire quella
-        # iniziata dal nodo con ID lessicograficamente inferiore.
+        # With simultaneous connections, keep the one
+        # started by the node with the lower id.
         close_existing = None
         reject_candidate = False
 
@@ -508,9 +508,9 @@ class Node:
         node_id: str,
         connection: PeerConnection,
     ) -> None:
-        # Da chiamare con _peer_connections_lock. Prima azzera il backoff,
-        # poi rende visibile la connessione: anche chi legge senza lock
-        # non vede mai una connessione nuova con attempts residui.
+        # Call with _peer_connections_lock held. It resets the backoff first,
+        # then makes the connection visible: a reader without the lock
+        # never sees a new connection with attempts left over.
         self._record_reconnect_success(node_id)
         self.peer_connections[node_id] = connection
         self._new_connection = True
@@ -521,8 +521,8 @@ class Node:
                 if current is connection:
                     self.peer_connections.pop(node_id, None)
 
-                    # Aggiorna il backoff prima di consentire la
-                    # registrazione concorrente di una sostituzione.
+                    # Update the backoff before a replacement
+                    # can be registered concurrently.
                     self._record_reconnect_failure(node_id)
                     break
 
@@ -531,8 +531,8 @@ class Node:
         node_id: str,
         expected_connection: PeerConnection,
     ) -> bool:
-        # Non rimuovere una connessione sostitutiva se è fallita
-        # una vecchia connessione usata da un invio precedente.
+        # Do not remove a replacement connection when what failed
+        # is an old connection used by an earlier send.
         with self._peer_connections_lock:
             if self.peer_connections.get(node_id) is not expected_connection:
                 return False
@@ -542,7 +542,7 @@ class Node:
 
         expected_connection.close()
 
-        # Conserva self.peers per consentire la riconnessione automatica.
+        # Keep self.peers, so that the node reconnects by itself.
         return True
 
     def remove_peer(self, node_id: str) -> None:

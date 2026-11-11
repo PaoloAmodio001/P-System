@@ -455,7 +455,7 @@ class QuorumDriver:
         if base is None or base.is_legacy:
             return ()
 
-        initial = self.replica._initial_state
+        initial = self.replica.initial_state
 
         for sender, floor in base.state.nonces.items():
             needed = max(frontier.get(sender, 0), initial.nonce(sender))

@@ -84,8 +84,16 @@ class _Core:
         self.runtime.lean_mk_string.restype = ctypes.c_void_p
         self.runtime.lean_mk_string.argtypes = [ctypes.c_char_p]
         self.functions = {}
-        for name in ("step", "choose", "justified", "leader"):
-            function = getattr(self.library, f"psystem_rounds_{name}")
+        symbols = {
+            "step": "psystem_rounds_step",
+            "choose": "psystem_rounds_choose",
+            "justified": "psystem_rounds_justified",
+            "leader": "psystem_rounds_leader",
+            "execute": "psystem_execute",
+            "vote_allowed": "psystem_vote_allowed",
+        }
+        for name, symbol in symbols.items():
+            function = getattr(self.library, symbol)
             function.restype = ctypes.c_void_p
             function.argtypes = [ctypes.c_void_p]
             self.functions[name] = function
@@ -95,7 +103,7 @@ class _Core:
         # One call at a time: the runtime is shared, and calls are short.
         self.lock = threading.Lock()
 
-    def call(self, name: str, argument: dict):
+    def call(self, name: str, argument):
         text = json.dumps(argument, separators=(",", ":")).encode()
         if b"\0" in text:
             raise LeanCoreError("NUL IN ARGUMENT")
@@ -143,3 +151,45 @@ def justified(n: int, f: int, round_: int, value: str, reports: list[dict]) -> b
 def leader(n: int, offset: int, round_: int) -> int:
     """The leader of a round: `Rounds.leader`."""
     return _get().call("leader", {"n": n, "k": offset, "r": round_})
+
+
+def event_argument(event, event_id: str | None = None) -> list:
+    """
+    An event as `PSystem/Core.lean` decodes it: `[id, sender, receiver, amount, nonce, [parents]]`,
+    ids as the integers their SHA-256 hex stands for, parents in the order of the canonical form, so
+    that two events are equal in Lean when their canonical forms are. `event_id` is the id recorded
+    with it, when there is one. The caller has checked the event is well formed.
+    """
+    return [
+        int(event_id if event_id is not None else event.event_id(), 16),
+        event.sender,
+        event.receiver,
+        event.amount,
+        event.nonce,
+        [int(parent, 16) for parent in sorted(event.parents)],
+    ]
+
+
+def vote_allowed(votes: list[tuple], event) -> bool:
+    """The vote lock, `Quorum.voteAllowed`. `votes` are `(event, id)` and may be only those with the
+    key or the id of `event`: the answer is the same (`Core.voteAllowed_local`)."""
+    return _get().call(
+        "vote_allowed",
+        [[event_argument(vote, vote_id) for vote, vote_id in votes], event_argument(event)],
+    )
+
+
+def execute(n: int, quorum: int, rows: list, ids: list[str], event, checks: list) -> list | None:
+    """
+    Whether `Quorum.step` executes a certificate, and the rows of its two accounts after it.
+
+    `rows` are `[account, balance, nonce]` of the sender and the receiver, `ids` those executed among
+    the id of the event and its parents, `checks` the `[member, signature verified]` of each vote. By
+    `Core.executes_local` and `Core.apply_local` this is the answer on the whole state. None if it
+    does not execute.
+    """
+    answer = _get().call(
+        "execute",
+        [n, quorum, rows, [int(x, 16) for x in ids], event_argument(event), checks],
+    )
+    return answer["rows"] if answer["executes"] else None

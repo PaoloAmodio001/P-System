@@ -252,3 +252,27 @@ def test_a_node_that_gathers_sends_its_prepare_once(network):
     assert [m["type"] for m in prepared].count("CERTIFICATE") == 1
     # The same vote again, and three votes still: nothing new to send.
     assert [m["type"] for m in gatherer.handle_message(votes[1]).broadcasts].count("CERTIFICATE") == 0
+
+
+def test_after_a_long_partition_the_split_is_decided_soon_after_the_heal(network):
+    # Campaign seed 103 of scripts/vm_lab.py: after a long partition the keys were in rounds whose
+    # timeout had reached a minute, and the messages sent on entering them had been lost. Nothing
+    # went again before the next timeout, and honest transfers were not final within the two
+    # minutes after the heal. The messages of a round now go again every ROUND_FIRST_SECONDS.
+    split(network)
+    network.cut = {(i, j) for i in range(4) for j in range(4) if (i < 2) != (j < 2)}
+    for _ in range(12):
+        network.tick(network.drivers[0].rounds.ROUND_LONGEST_SECONDS + 1)
+        network.run()
+    assert all(d.replica.round_state(PAYER, 0)["round"] >= 6 for d in network.drivers)
+
+    network.cut = set()
+    waited = 0.0
+    while waited < 10 and not all(d.replica.log for d in network.drivers):
+        network.tick(1.0)
+        network.run()
+        waited += 1.0
+
+    executed = network.executed()
+    assert executed[0] in ([A], [B]) and executed == [executed[0]] * 4
+    assert waited <= network.drivers[0].rounds.ROUND_FIRST_SECONDS + 1

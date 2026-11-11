@@ -509,3 +509,55 @@ import PSystem
 #print axioms PSystem.Rounds.split_votes_no_quorum
 
 #print axioms PSystem.Rounds.split_then_good_round_decides
+
+-- CoreExec.lean and Core.lean: what the Python node calls
+
+#print axioms PSystem.Core.certValid_checked
+
+#print axioms PSystem.Core.step_certificate
+
+#print axioms PSystem.Core.stateOf_sender
+
+#print axioms PSystem.Core.stateOf_receiver
+
+#print axioms PSystem.Core.executableBool_local
+
+#print axioms PSystem.Core.contains_idsOf
+
+#print axioms PSystem.Core.r17Ready_local
+
+#print axioms PSystem.Core.executes_local
+
+#print axioms PSystem.Core.apply_local
+
+#print axioms PSystem.Core.apply_elsewhere
+
+#print axioms PSystem.Core.voteAllowed_local
+
+#print axioms PSystem.Core.getNat_toJson
+
+#print axioms PSystem.Core.getStr_toJson
+
+#print axioms PSystem.Core.getBool_toJson
+
+#print axioms PSystem.Core.mapM_getNat
+
+#print axioms PSystem.Core.natList_json
+
+#print axioms PSystem.Core.event_json
+
+#print axioms PSystem.Core.row_json
+
+#print axioms PSystem.Core.member_json
+
+#print axioms PSystem.Core.signer_json
+
+#print axioms PSystem.Core.mapM_of_inverse
+
+#print axioms PSystem.Core.execRequest_json
+
+#print axioms PSystem.Core.voteRequest_json
+
+#print axioms PSystem.Core.execValue_json
+
+#print axioms PSystem.Core.voteValue_json

@@ -99,7 +99,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # The run of the differentials required before a merge (archive/CLAUDE.md, rule 7), on every
+  # The run of the differentials required before a merge (15 seeds), on every
   # pull request, so that it cannot be left out: on 9 November 2026 two commits reached main with
   # only the 3 default seeds, and seed 8 of differential B diverged. A job of its own, because
   # with 15 seeds it takes longer than the rest of the suite. A green run says that these seeds

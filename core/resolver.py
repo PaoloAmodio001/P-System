@@ -29,8 +29,8 @@ class ConflictResolver:
 
     @staticmethod
     def compatible(events: list[Transfer]) -> bool:
-        # Mantiene il controllo d'integrità degli ID anche per input
-        # contenenti eventi duplicati o oggetti non canonici.
+        # Keeps the check on the integrity of ids, also for inputs
+        # with repeated events or objects that are not canonical.
         payload_by_id = {}
         event_by_sender_nonce = {}
 

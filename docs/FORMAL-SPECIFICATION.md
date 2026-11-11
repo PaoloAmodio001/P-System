@@ -322,7 +322,7 @@ Required safety properties include:
 - authenticated event integrity;
 - Byzantine equivocation detection;
 - decision-status correctness;
-- reconciliation consistency.
+- consistency of the synchronization of decisions.
 
 ---
 

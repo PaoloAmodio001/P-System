@@ -1,7 +1,23 @@
 # Changelog
 
-## Unreleased
+The only release is 1.0.0. The earlier tags and releases (0.1.0, 0.1.1, 1.0.0-rc1) were removed, so that no other
+version can be taken by mistake.
 
+## 1.0.0
+
+- **Rounds end a split vote.** With all `n` votes of round 0 a version is decided at once; otherwise `2f+1` votes prepare it,
+  `2f+1` precommits decide it, and after a timeout rounds with a rotating leader decide one version (`decisions_agree`,
+  `good_round_decides` in `QuorumRounds.lean`). Before them a nonce whose votes split stayed locked for good.
+- **The decisions of the node are Lean code.** The vote lock, the execution of a certificate and the steps of a round are
+  the definitions of the model, compiled into a shared library and called by the node (`network/quorum/lean_core.py`);
+  `CoreExec.lean` proves that what Python passes is enough. The Docker image builds the library with the pinned toolchain.
+- **Decisions survive a restart** (store schema 8), and an epoch closes after its members waited up to 8 seconds for their
+  open keys, reporting every version they voted for in any round.
+- **A prepare is sent on once**, and a sync carries decisions only: a prepare taken as a decision could halt a node.
+- **The historical mode without a committee is removed**, with the modules of `core/` that only it used, and
+  `network/quorum.py` is split into `network/quorum/`.
+- **Campaigns on four virtual machines** (`scripts/vm_lab.py`): latency, loss, corruption, partitions, crashes, power cuts,
+  a Byzantine validator and a sender that signs two versions, for hours.
 - **Snapshot locks are signed by their sender.** `SnapshotAttestation` version 2 checks each lock as the reports of a closure
   do, so a faulty signer cannot lock a nonce its sender never signed. Store schema 7; older stores migrate on opening, and a
   lock that cannot be signed still refuses votes.
@@ -19,11 +35,8 @@
   the wallet signs nonces from 0 to `2**63 - 1`.
 - Readiness probe `/readyz`, `psystem validate` to check a configuration before starting, request correlation and retries in the API, an audit log with its chain
   checked at startup, signing keys refused when readable by others.
-
-## 1.0.0 (not tagged)
-
-- **Quorum mode**: a committee of `3f+1` validators, certificates of `2f+1` votes, durable vote lock, halt with a proof on two
-  conflicting certificates, synchronization of certificates between nodes.
+- **Quorum mode**: a committee of `3f+1` validators, durable vote lock, halt with a proof on two conflicting decisions,
+  synchronization of decisions between nodes.
 - **Epochs**: governance of `k` of `m`, closures as an order of governance and any quorum of reports, locks carried from epoch
   to epoch, members that change and rotate keys; a certificate of an ended committee counts only for an event in the locks.
 - **Snapshots** signed by a quorum, with optional pruning of certificates, of votes of ended epochs and of locks under a floor.
@@ -36,9 +49,4 @@
   pacing, limits on handshakes, frames and buffered certificates, a revocation list.
 - **Keys**: encrypted at rest, or in a separate signer process with its own vote lock.
 - **SDK**: `Wallet`, which cannot sign two events for one nonce, and `ChainVerifier`, a light client.
-- **Lean 4 model** of the protocol and its theorems: see `docs/PROOF-OBLIGATIONS.md`. The link with Python is tested by
-  differential tests against the model and by mutation tests, not proved.
-
-## 0.1.0
-
-Research prototype: a Lean model of the derivation, and a Python implementation in the historical mode, without committee.
+- **Lean 4 model** of the protocol and its theorems: see `docs/PROOF-OBLIGATIONS.md`.

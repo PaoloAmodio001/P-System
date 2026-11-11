@@ -30,8 +30,8 @@ CHANGES = {
             "            self._store.is_locked_event(certificate.event)\n",
         ),
         "the replay applies the rule of arrival": (
-            "        return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)\n",
-            "        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)\n",
+            '            rows = self._execution(certificate, old_keys=False)\n',
+            '            rows = self._execution(certificate, old_keys=True)\n',
         ),
         "a lock on the spend, not the event": (
             "                        \"SELECT 1 FROM locks WHERE sender = ? AND nonce = ? AND canonical = ?\",\n"

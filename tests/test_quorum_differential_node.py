@@ -279,6 +279,13 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
             return ["CERTIFICATE"]
         return []
 
+    def too_few(gathered_again: set) -> None:
+        # A gathering resumed by the last restart that ended short of a prepare.
+        for canonical in gathered_again:
+            entry = collecting.get(canonical)
+            if entry is not None and len(entry[1]) < quorum:
+                count("too few votes after a restart")
+
     for message in case.messages:
         kind = message[0]
         reply = False
@@ -335,6 +342,8 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
         elif kind == "VOTE":
             _, event, validator, valid = message
             entry = collecting.get(event.canonical())
+            if entry is not None and not valid and event.canonical() in resumed:
+                count("invalid votes after a restart")
             if entry is not None and valid and validator < n:
                 entry[1].add(validator)
                 broadcast = gathered(event, entry[1])
@@ -347,6 +356,7 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
 
         elif kind == "RESTART":
             count("restarts")
+            too_few(resumed)
             # The votes gathered were in memory; what was being gathered was on disk. A node
             # that halted does not gather again.
             collecting = {
@@ -382,6 +392,7 @@ def make_plan(case: NodeCase, driver: Path, directory: Path) -> Plan:
         plan.malformed.append(malformed)
         plan.halted.append(halted)
 
+    too_few(resumed)
     return plan
 
 
@@ -794,20 +805,27 @@ def random_case(rng: random.Random) -> NodeCase:
         elif draw < 0.75:
             case.messages.append(("SUBMIT", event))
             voters = rng.sample(range(n), rng.randint(0, n))
+            after_valid = 0.85
             if rng.random() < 0.75:
-                # A restart while gathering: the votes before it are lost, and the node
-                # gathers again from those that come after it.
+                # A restart while gathering: the votes before it are lost, and the node gathers
+                # again from those that come after it. What comes after has one shape of four.
                 cut = rng.randint(0, min(len(voters), 2 * case.f))
-                after = rng.sample(range(n), n if rng.random() < 0.7 else rng.randint(2 * case.f + 1, n))
-                voters = voters[:cut] + [None] + after
+                shape = rng.choice(("decides", "prepares", "too few", "invalid"))
+                if shape == "decides" or shape == "invalid":
+                    size = n
+                elif shape == "prepares":
+                    size = rng.randint(2 * case.f + 1, n)
+                else:
+                    size = rng.randint(0, 2 * case.f)
+                after_valid = 0.3 if shape == "invalid" else 0.95
+                voters = voters[:cut] + [None] + rng.sample(range(n), size)
             restarted = False
             for validator in voters:
                 if validator is None:
                     case.messages.append(("RESTART",))
                     restarted = True
                 else:
-                    # After a restart mostly valid votes, so that a quorum forms often enough.
-                    valid = rng.random() < (0.95 if restarted else 0.85)
+                    valid = rng.random() < (after_valid if restarted else 0.85)
                     case.messages.append(("VOTE", event, validator, valid))
         elif draw < 0.80:
             case.messages.append(
@@ -847,6 +865,8 @@ EXERCISED = (
     "restarts still gathering",
     "restarts with a certificate waiting",
     "certificates made after a restart",
+    "too few votes after a restart",
+    "invalid votes after a restart",
     "executed later by a retry",
     "several ready together",
 )

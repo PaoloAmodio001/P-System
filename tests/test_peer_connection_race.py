@@ -53,8 +53,8 @@ def test_simultaneous_registration_keeps_preferred_connection():
             assert outgoing.connected
             assert not incoming.connected
 
-            # Una disconnessione tardiva non deve rimuovere
-            # la connessione sostitutiva ancora valida.
+            # A late disconnection must not remove
+            # the replacement connection, still valid.
             node._peer_disconnected(incoming)
 
             assert node.peer_connections.get(peer_id) is outgoing

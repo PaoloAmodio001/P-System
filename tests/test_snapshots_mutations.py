@@ -175,12 +175,12 @@ QUORUM = {
         "                continue\n",
     ),
     "a log that does not run believed": (
-        "            if not self._runs_on(state, ids, event):\n                LOG.critical(\n                    \"the log of this node does not run after a snapshot\",\n",
-        "            if False:\n                LOG.critical(\n                    \"the log of this node does not run after a snapshot\",\n",
+        '            rows = self._runs_on(state, ids, event)\n            if rows is None:\n                LOG.critical(\n                    "the log of this node does not run after a snapshot",\n',
+        '            rows = self._runs_on(state, ids, event) or []\n            if False:\n                LOG.critical(\n                    "the log of this node does not run after a snapshot",\n',
     ),
     "the log is not run after the snapshot": (
-        "            StateDeriver._apply_one(state, event)\n            ids.add(event.event_id())\n\n        self._store.record_snapshot(snapshot)\n",
-        "        self._store.record_snapshot(snapshot)\n",
+        '            self._apply_rows(state, rows)\n            ids.add(event.event_id())\n\n        self._store.record_snapshot(snapshot)\n',
+        '        self._store.record_snapshot(snapshot)\n',
     ),
     "not on disk": (
         "        self._store.record_snapshot(snapshot)\n        self.base = snapshot\n",

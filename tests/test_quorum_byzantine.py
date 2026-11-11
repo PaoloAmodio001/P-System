@@ -1,6 +1,6 @@
 """Quorum mode against a sender that lies and a member of the committee that lies.
 
-tests/test_p15_byzantine_safety.py requires a fork in the old mode, and stays as it is.
+The historical mode without a committee forked under this dissemination, and it has been removed.
 Here the same dissemination gives none, for every way it can go: all the ways the honest
 nodes can vote, all that the faulty member can sign, all that can reach each node. The
 hypothesis is tested too: with more than f faulty members the fork comes back.

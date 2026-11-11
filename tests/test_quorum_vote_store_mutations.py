@@ -82,9 +82,8 @@ MUTATIONS = {
     ),
     # The vote lock.
     "vote lock removed": (
-        "                if existing - {canonical}:\n"
-        "                    return False\n",
-        "",
+        '                if rows and not lean_core.vote_allowed(\n',
+        '                if False and not lean_core.vote_allowed(\n',
     ),
     "same event again refused": (
         "                        self._commit()\n"

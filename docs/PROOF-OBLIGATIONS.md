@@ -135,6 +135,45 @@ codec of `Core.lean`, the Lean compiler and runtime, `ctypes`, and the Python th
 signatures, keeps the store and sends the messages: `EMPIRICAL`, by `tests/test_rounds_split.py`
 and the differentials.
 
+### Python and Lean
+
+A formal proof that Python code is equivalent to the model is not possible here: CPython has no
+formal semantics to state it in, and there is no verified translation from Python to Lean. What is
+done instead is to make the decisions of the node **be** the Lean code, and to prove what can be
+proved about the boundary.
+
+The node calls, compiled with `lake build PSystem:shared` (`network/quorum/lean_core.py`):
+
+| Decision | Lean definition | Called from |
+|---|---|---|
+| The vote lock | `Quorum.voteAllowed` | `SqliteVoteStore.record_vote` |
+| Whether a certificate executes, and the new state | `executes`, `ApplyEvent` (`CoreExec`) | `QuorumReplica._execution`, the replay of the log, snapshots |
+| A step of a validator in the rounds | `Rounds.step`, `choose`, `justified`, `leader` | `RoundDriver` |
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `step_certificate` | The execution of a certificate in `Quorum.step` is `executes`, with each signature replaced by the result of checking it | FORMAL |
+| `executes_local` | `executes` reads the state only at the sender and the receiver, and the executed ids only at the event and its parents | FORMAL |
+| `apply_local`, `apply_elsewhere` | `ApplyEvent` on the rows of those two accounts gives what it gives on the whole state, and changes no other account | FORMAL |
+| `voteAllowed_local` | The vote lock reads only the votes with the key or the id of the event, which is what the SQL of the store selects | FORMAL |
+| `execValue_json`, `voteValue_json` | On the JSON encoding of any argument, the exported function returns the encoding of the model's answer (`execRequest_json`, `voteRequest_json`: decoding inverts encoding) | FORMAL |
+
+Trusted, and tested rather than proved:
+
+- the Python that builds the arguments: the two rows read from `State`, the executed ids among the
+  event and its parents, the `[member, verified]` of each signature, the quorum of the phase; and the
+  Python that writes the two rows back (`tests/test_quorum_differential_mutations.py` mutates each);
+- `Json.compress` and `Json.parse` of the Lean library, `json` of Python, `ctypes`, the Lean
+  compiler and runtime;
+- what the model leaves out: Ed25519 and SHA-256, the types of the fields, SQLite, the network, the
+  driver (buffer, resends, order of retries, epochs), and the rule on keys of ended committees,
+  checked in Python before the call (`QuorumOldKeys.lean` is about that rule);
+- the halt on two certificates, and the check a client makes with `sdk.ChainVerifier`, which use
+  `QuorumCertificate.verify` and `decides` in Python, so that a client needs no Lean runtime.
+
+Differentials A to C still run: they now test this boundary and the driver, not a second copy of
+the rules.
+
 ### Link to `derive`
 
 Module `QuorumDerive`, on the same model. These results have no hypothesis
@@ -191,7 +230,7 @@ sender can leave its account blocked.
 | `QuorumReports` | a closure needs no votes: a lock on the order, and any quorum of reports |
 | `QuorumUnlock` | unlocking with `n = 5f+1` for every `f`, and why it fails with `n = 3f+1` |
 
-- 26 modules, 244 theorem declarations, about 6200 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
+- 27 modules, 269 theorem declarations, about 6200 lines. `formal/lean/QuorumCheck.lean` and `formal/lean/EpochCheck.lean` are test drivers, not part
   of the proofs.
 - `lake build`: passing, with `autoImplicit` off. No `sorry`, `admit`, `axiom`,
   `opaque` or `native_decide`.
@@ -274,7 +313,7 @@ Hypotheses that remain, in `no_double_spend_across_epochs`:
 
 ## History: review and removal of the earlier model
 
-Until the tag `pre-lean-cleanup` the Lean model also contained the
+Until commit `e10f4a4` the Lean model also contained the
 modules P01–P16, `Refinement.lean` and 13 R17 modules (about 290
 theorems in 37 files). A theorem-by-theorem review on 2026-11-03 gave:
 
@@ -298,7 +337,7 @@ go through events outside the list. For a parent id `p` of `e`, the
 outside event `x` with id `p` and parents `[e.id]` gives the cycle
 `e → x → e`; and closure under `DirectParent` would require every event
 with id `p`, infinitely many, to be in a finite list. Machine-checked
-against `pre-lean-cleanup` (`acyclic_forces_no_parents`,
+against commit `e10f4a4` (`acyclic_forces_no_parents`,
 `parent_closed_forces_no_parents`; `TopologicalOrder` implies `Acyclic`
 by `R1_5_topological_order_implies_acyclicity`). The current model does
 not use these definitions: causality is `R17Ready` on processed ids.
@@ -360,11 +399,10 @@ not use these definitions: causality is `R17Ready` on processed ids.
 - Genuine (small): `R1_6_1_sequence_state_transition_refinement`, an
   induction between the two Lean copies.
 
-To inspect the removed modules: `git checkout pre-lean-cleanup`.
+To inspect the removed modules: `git checkout e10f4a4`.
 
-The Python proof ledger (`proof/specification.py`) still uses the
-property IDs P01–P16. They name Python properties and their tests (for
-example `tests/test_p15_byzantine_safety.py`), not Lean modules.
+The property IDs P01–P16 survive in the names of some tests (for example
+`tests/test_p14_tls_real.py`): they name Python properties, not Lean modules.
 
 ## Cross-cutting obligations
 
@@ -461,12 +499,14 @@ into `main`, run all fifteen:**
 
 On 2026-11-04 the fifteen seeds (45000 cases) gave no difference.
 
-## CONDITIONAL claims (README) — ipotesi, enforcement, evidenza
+## CONDITIONAL claims of the README: hypothesis, enforcement, evidence
 
-Per ogni claim CONDITIONAL del README, la riga indica: ipotesi non scaricata dal teorema, chi la enforcea (codice o test), evidenza (test). I teoremi Lean non sono modificati.
+For each CONDITIONAL claim of the README, the row gives the hypothesis the theorem does not discharge, what enforces it
+(code or tests), and the evidence (tests). The Lean theorems are not changed.
 
-| Teorema/claim (README) | Ipotesi (hard part) | Enforced by | Evidenza (test) |
+| Theorem or claim (README) | Hypothesis (the hard part) | Enforced by | Evidence (tests) |
 |---|---|---|---|
-| `old_certificate_outside_locks_refused`, `accepted_complete`, `old_keys_no_double_spend` | `SingleVersion` / le lock tengono una sola versione per ogni spesa quando si accettano certificati con chiavi di comitati terminati (chiavi rubate: safety solo sotto questa ipotesi) | Controllo lock/certificati di vecchie epoche in `network/quorum/replica.py` (accettazione certificati vs lock/eventi bloccati); verifiche di protocollo sui lock/closure | `tests/test_quorum_old_keys.py`, `tests/test_stolen_key_two_versions.py` |
-| `asset_supply_conserved` | Ogni evento resta dentro o fuori l'insieme di conti dichiarato (trasferimenti asset non attraversano confini di asset); la supply totale di quell'insieme resta invariata | **Codice runtime**: `core/derive.check_supply_conservation` solleva `SupplyViolation` (set violato, delta) prima di certificazione/esecuzione; controlli in derivazione, replica quorum e submission driver; API restituisce errore strutturato. Validazione autorizzazione conserva stesso asset. | `tests/test_supply_conservation.py`, `tests/test_assets.py` |
-| `honest_sender_certifies` | Delivery e raccolta firme non modellate (nessun attore di raccolta nel modello; ipotesi di consegna/ricezione voti) | **Test/empirico** (non enforcement di liveness in produzione): percorsi di voto/certificazione, raccolta firme idempotente e osservabile in `network/quorum/driver.py`; assenza di liveness garantita | `tests/test_quorum_differential_processes.py`, `tests/test_signature_collection.py` |
+| `old_certificate_outside_locks_refused`, `accepted_complete`, `old_keys_no_double_spend` | `SingleVersion`: the locks hold one version of each spend when certificates signed with keys of ended committees are accepted (stolen keys: safety only under this hypothesis) | The check of locks against certificates of old epochs in `network/quorum/replica.py`, before the Lean core is called; the protocol checks on locks and closures | `tests/test_quorum_old_keys.py`, `tests/test_stolen_key_two_versions.py` |
+| `asset_supply_conserved` | Each event stays inside or outside the declared set of accounts (transfers do not cross the boundary of an asset); the total supply of that set does not change | **Runtime code**: `core/derive.check_supply_conservation` raises `SupplyViolation` (the set, the delta) before certification or execution; checks in derivation, in the quorum replica and when submitting; the API answers with a structured error. Authorization keeps transfers inside one asset. | `tests/test_supply_conservation.py`, `tests/test_assets.py` |
+| `good_round_decides` | Partial synchrony: a round with an honest leader in which the messages between honest members arrive | The rounds of `network/quorum/rounds.py`, which call the compiled `Rounds.step`; timeouts that double up to 60 s | `tests/test_rounds_split.py`, `tests/test_rounds_mutations.py`, the campaigns of `scripts/vm_lab.py` |
+| `honest_sender_certifies` | Delivery and the gathering of signatures are not modelled (no gatherer in the model; a hypothesis on the delivery of votes) | **Tests, empirical** (no liveness enforced in production): the paths of voting and certification, idempotent and observable gathering in `network/quorum/driver.py` | `tests/test_quorum_differential_processes.py`, `tests/test_signature_collection.py` |
