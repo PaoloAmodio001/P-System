@@ -1,4 +1,4 @@
-"""Synchronization of certificates (network/quorum.py and network/message.py).
+"""Synchronization of certificates (network/quorum/ and network/message.py).
 
 No network here: the messages of one driver are given to another, after a pass through JSON.
 The real network is in tests/test_quorum_differential_network.py.
@@ -13,7 +13,7 @@ from core.derive import StateDeriver
 from core.event import Transfer
 from core.state import State
 from crypto.identity import Identity
-from network import quorum as quorum_module
+from network.quorum import driver as quorum_module
 from network.message import (
     decode_certificate_sync,
     decode_certificate_sync_request,

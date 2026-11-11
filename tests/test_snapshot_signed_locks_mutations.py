@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [
     str(Path("tests") / "test_snapshot_signed_locks.py"),
@@ -92,14 +92,14 @@ CASES = [(module, name) for module, mutations in MUTATIONS.items() for name in m
 
 @pytest.mark.parametrize("module", MUTATIONS)
 def test_the_tests_pass_on_the_real_source(module):
-    result = run_tests_on(module, PATHS[module].read_text(), TESTS)
+    result = run_tests_on(module, (quorum_source() if module == "network.quorum" else PATHS[module].read_text()), TESTS)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(("module", "name"), CASES)
 def test_mutation_is_detected(module, name):
     old, new = MUTATIONS[module][name]
-    source = PATHS[module].read_text()
+    source = (quorum_source() if module == "network.quorum" else PATHS[module].read_text())
     assert source.count(old) == 1, name
     result = run_tests_on(module, source.replace(old, new), TESTS)
     assert result.returncode == 1, result.stdout + result.stderr

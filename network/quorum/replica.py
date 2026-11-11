@@ -1,0 +1,524 @@
+"""
+The rules of the model on top of the store: votes, certificates, execution, epochs and snapshots. No network.
+
+Quorum mode: docs/FORMAL-SPECIFICATION.md, section 13.1. The model is in formal/lean/PSystem/Quorum.lean.
+"""
+
+from collections.abc import Callable
+
+from core.attestation import (
+    Committee,
+    EpochChange,
+    EpochClosure,
+    EpochReport,
+    QuorumCertificate,
+    Snapshot,
+    SnapshotAttestation,
+    Vote,
+    is_well_formed_event,
+)
+from core.derive import StateDeriver
+from core.event import Transfer
+from core.signed_event import SignedTransfer
+from core.state import State
+from crypto.identity import Identity
+from network.remote_signer import SignerUnavailable
+from network.quorum.common import (
+    LOG,
+    VoteStoreError,
+    is_executable_event,
+)
+from network.quorum.store import SqliteVoteStore
+
+
+class QuorumReplica:
+    """
+    The protocol of an honest node: `step` in formal/lean/PSystem/Quorum.lean.
+
+    `handle_vote_request` is the `voteRequest` branch and `handle_certificate` the
+    `certificate` branch. An input that is refused changes nothing, so delivering
+    it again is the same as trying again, and the model needs no buffer.
+
+    The signing key stays here, and the only path to a signature goes through the
+    vote lock. That, together with Ed25519, is what the hypothesis `Unforgeable`
+    means for this code.
+
+    Not thread-safe: the caller serializes the calls.
+    """
+
+    def __init__(
+        self,
+        identity: Identity,
+        initial_state: State,
+        store: SqliteVoteStore,
+        auth: Callable[[Transfer], bool],
+    ) -> None:
+        if identity.public_key != store.validator:
+            raise ValueError("VOTE STORE BELONGS TO ANOTHER VALIDATOR")
+
+        if initial_state.root() != store.committee.genesis_root:
+            raise ValueError("INITIAL STATE IS NOT THE GENESIS OF THE COMMITTEE")
+
+        self._identity = identity
+        self._store = store
+        self._auth = auth
+        self._initial_state = initial_state
+        self.state = initial_state.copy()
+        self.log: list[QuorumCertificate] = []
+        # Steps of `_derives_snapshot` so far: see `QuorumDriver._handle_snapshot_request`.
+        self.derive_steps = 0
+        # The same certificates by event id, so that a client asking for one does not scan the log.
+        self._log_by_id: dict[str, QuorumCertificate] = {}
+        self._executed_ids: set[str] = set()
+        self.nonce_locked_permanently_total = 0
+        # What the state started from, if not the genesis: signatures over these events are not read
+        # again, which is the whole cost of a restart. `resume_is_derive` says nothing is lost.
+        self.base = store.snapshot()
+
+        if self.base is not None:
+            # This node checked it when it took it, also if it was signed before version 2.
+            if not self._snapshot_is_good(self.base, allow_legacy=True):
+                raise VoteStoreError("SNAPSHOT DOES NOT VERIFY")
+
+            self.state = self.base.state.copy()
+            self._executed_ids = set(self.base.ids)
+
+        for certificate in store.certificates():
+            if self.is_covered(certificate.event):
+                if certificate.event.event_id() not in self._executed_ids:
+                    raise VoteStoreError("LOG OF CERTIFICATES DOES NOT FIT THE SNAPSHOT")
+
+                self.log.append(certificate)
+                self._log_by_id[certificate.event.event_id()] = certificate
+                continue
+
+            if not self._can_replay(certificate):
+                raise VoteStoreError("LOG OF CERTIFICATES DOES NOT REPLAY")
+            self._execute(certificate)
+
+    @property
+    def committee(self) -> Committee:
+        """The committee in force, which changes when a closure is installed."""
+        return self._store.committee
+
+    @property
+    def executed_count(self) -> int:
+        """All it executed, also what it has pruned or got inside a snapshot."""
+        return len(self._executed_ids)
+
+    def is_covered(self, event: Transfer) -> bool:
+        return self.base is not None and event.nonce < self.base.floor(event.sender)
+
+    def has_executed_id(self, event_id: str) -> bool:
+        return event_id in self._executed_ids
+
+    def executed_since_base(self) -> int:
+        start = self._initial_state if self.base is None else self.base.state
+        return sum(self.state.nonces.values()) - sum(start.nonces.values())
+
+    def _snapshot_is_good(self, snapshot: Snapshot, allow_legacy: bool = False) -> bool:
+        committee = self._store.committee_at(snapshot.epoch)
+        return (
+            committee is not None
+            and snapshot.verify(committee, allow_legacy)
+            # Each execution moves one nonce by one, so the two counts must agree.
+            and len(snapshot.ids)
+            == sum(snapshot.state.nonces.values()) - sum(self._initial_state.nonces.values())
+        )
+
+    def candidate_snapshot(self) -> Snapshot:
+        return Snapshot(self.committee.epoch, self.state.copy(), tuple(sorted(self._executed_ids)))
+
+    def _derives_snapshot(self, digest: str, nonces: dict[str, int]) -> bool:
+        """
+        What an honest member checks before signing: `Attests` in the model. It holds the events
+        under `nonces` and they come to this digest. A member behind says no and the proposer asks
+        again. One that pruned past `nonces` starts from its base, so it comes to this digest only
+        if this is its base. The state decides by itself, whatever is left out: `ids` count too.
+        """
+        start = self._initial_state if self.base is None else self.base.state
+
+        # What this would come to anyway. It saves a pass over the log for each request sent again.
+        if any(self.state.nonce(sender) < nonce for sender, nonce in nonces.items()):
+            return False
+
+        # The work done, which the driver charges to the peer that asked.
+        self.derive_steps += len(self.log)
+        pending = [
+            certificate.event
+            for certificate in self.log
+            if start.nonce(certificate.event.sender)
+            <= certificate.event.nonce
+            < nonces.get(certificate.event.sender, 0)
+        ]
+        state = start.copy()
+        ids = set() if self.base is None else set(self.base.ids)
+        progress = True
+
+        # A part of a valid order may need another order: funds come from what is left out.
+        while pending and progress:
+            progress = False
+            waiting = []
+            self.derive_steps += len(pending)
+
+            for event in pending:
+                if self._runs_on(state, ids, event):
+                    StateDeriver._apply_one(state, event)
+                    ids.add(event.event_id())
+                    progress = True
+                else:
+                    waiting.append(event)
+
+            pending = waiting
+
+        return Snapshot(self.committee.epoch, state, tuple(sorted(ids))).digest == digest
+
+    def attest_snapshot(
+        self,
+        epoch: int,
+        digest: str,
+        nonces: dict[str, int],
+    ) -> SnapshotAttestation | None:
+        if (
+            not self.is_member
+            or self._store.halted()
+            or epoch != self.committee.epoch
+            or not self._derives_snapshot(digest, nonces)
+        ):
+            return None
+
+        locks = self._store.locks_over(nonces)
+
+        if locks is None:
+            LOG.warning("a lock from an older store has no signature of its sender: no snapshot signed")
+            return None
+
+        try:
+            return SnapshotAttestation.create(self.committee, self._identity, digest, locks)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def install_snapshot(self, snapshot: Snapshot) -> bool:
+        """
+        Start from this snapshot and go on with what this node has beyond it. True if it did. It comes
+        from a committee this node holds, and the one in force unless it is this node's own file: the
+        keys of an ended committee can be stolen. The order of the log does not change. An event still
+        runs after what it ran after, or sooner, with the same debits and more credits.
+        """
+        if (
+            snapshot.epoch != self.committee.epoch
+            or not self._snapshot_is_good(snapshot)
+            or (
+                self.base is not None
+                and self.base.digest == snapshot.digest
+                and self.base.epoch == snapshot.epoch
+                and not self.base.is_legacy
+            )
+            or (
+                self.base is not None
+                and any(
+                    snapshot.floor(sender) < nonce
+                    for sender, nonce in self.base.state.nonces.items()
+                )
+            )
+        ):
+            return False
+
+        state = snapshot.state.copy()
+        ids = set(snapshot.ids)
+
+        for certificate in self.log:
+            event = certificate.event
+
+            if event.nonce < snapshot.floor(event.sender):
+                if event.event_id() in ids:
+                    continue
+
+                # At most `f` faulty cannot do this: `no_double_spend`. This node keeps what it has.
+                LOG.critical(
+                    "snapshot does not hold an event this node executed",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+                return False
+
+            if not self._runs_on(state, ids, event):
+                LOG.critical(
+                    "the log of this node does not run after a snapshot",
+                    extra={"sender": event.sender, "nonce": event.nonce},
+                )
+                return False
+
+            StateDeriver._apply_one(state, event)
+            ids.add(event.event_id())
+
+        self._store.record_snapshot(snapshot)
+        self.base = snapshot
+        self.state = state
+        self._executed_ids = ids
+        return True
+
+    def prune_covered(self) -> list[QuorumCertificate]:
+        """Drop the certificates the snapshot covers, on disk first. Returns what went."""
+        covered = [c for c in self.log if self.is_covered(c.event)]
+
+        if covered:
+            self._store.forget_certificates([c.event.event_id() for c in covered])
+            self.log = [c for c in self.log if not self.is_covered(c.event)]
+
+            for certificate in covered:
+                self._log_by_id.pop(certificate.event.event_id(), None)
+
+        return covered
+
+    def apply_floor(self) -> None:
+        if self.base is not None:
+            self._store.apply_floor(self.base)
+
+    @property
+    def is_member(self) -> bool:
+        return self.committee.index_of(self._identity.public_key) is not None
+
+    def certificate_is_valid(self, certificate: QuorumCertificate) -> bool:
+        """
+        The signatures verify, and for a committee that has ended, the event is in the locks.
+        Keys of an ended committee can be stolen, and with enough of them any signature verifies.
+        Everything really certified in an epoch is in the locks of the next one
+        (`closure_preserves_certified`), so this loses nothing real: `QuorumOldKeys.lean`.
+        """
+        return certificate.verify(self._store.committee_of(certificate)) and (
+            certificate.epoch >= self.committee.epoch
+            or self._store.is_locked_event(certificate.event)
+        )
+
+    def certificate_was_valid(self, certificate: QuorumCertificate) -> bool:
+        """For the log of this node, read back: it passed the rule above when it arrived."""
+        return certificate.verify(self._store.committee_of(certificate))
+
+    @property
+    def executed(self) -> list[Transfer]:
+        return [certificate.event for certificate in self.log]
+
+    def votes(self) -> list[Transfer]:
+        """Read from the store: what counts is what would survive a restart."""
+        return self._store.votes()
+
+    def halted(self) -> bool:
+        return self._store.halted()
+
+    def record_halt(
+        self,
+        first: QuorumCertificate,
+        second: QuorumCertificate,
+    ) -> None:
+        self._store.record_halt(first, second)
+        LOG.critical(
+            "node halted: two valid certificates in conflict",
+            extra={"sender": first.event.sender, "nonce": first.event.nonce},
+        )
+
+    def halt_proof(self) -> tuple[QuorumCertificate, QuorumCertificate] | None:
+        return self._store.halt_proof()
+
+    def handle_vote_request(
+        self,
+        event: Transfer,
+        signed: SignedTransfer | None = None,
+        gathering: bool = False,
+    ) -> Vote | None:
+        """
+        Return a vote, or None if the event is refused. The signature comes after
+        the vote is durably recorded. If that fails the error propagates, and no
+        signature exists.
+        """
+        if not is_well_formed_event(event):
+            return None
+
+        if not self._auth(event):
+            return None
+
+        if not self.is_member:
+            return None
+
+        # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted
+        # by `auth && voteAllowed`, independent of static/state executability.
+        # Executability is enforced at certificate execution (executableBool/r17Ready).
+        if not self._store.record_vote(event, signed, gathering):
+            return None
+
+        return self._signed_vote(event)
+
+    def gathering(self) -> list[SignedTransfer]:
+        return self._store.gathering()
+
+    def forget_gathering(self, event_ids: list[str]) -> None:
+        self._store.forget_gathering(event_ids)
+
+    def _signed_vote(self, event: Transfer) -> Vote | None:
+        """
+        With a signer in another process, it can refuse or be away. No signature then: the
+        same as no vote, and a request sent again asks again, since the vote stays recorded.
+        """
+        try:
+            return Vote.create(self.committee, self._identity, event)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def report_epoch(self, change: EpochChange) -> EpochReport | None:
+        """
+        Stop voting and report, durably in that order. None if this node has no vote in this epoch,
+        because it is not a member of the committee, or if it already reported for another order.
+        """
+        if not self.is_member or self._store.halted() or self._store.is_restored():
+            return None
+
+        votes = self._store.close_epoch(change)
+
+        if votes is None:
+            return None
+
+        try:
+            return EpochReport.create(self.committee, self._identity, change.change_id, votes)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def reported_change(self) -> EpochChange | None:
+        return self._store.reported_change()
+
+    def install_closure(self, closure: EpochClosure) -> None:
+        closing = self._store.committee
+        epoch = closing.epoch
+        self._store.install_closure(closure)
+        self._log_permanently_locked_nonces(closing, closure, epoch)
+
+    def _log_permanently_locked_nonces(
+        self,
+        committee: Committee,
+        closure: EpochClosure,
+        epoch: int,
+    ) -> None:
+        by_key: dict[tuple[str, int], dict[bytes, int]] = {}
+        for report in closure.reports:
+            seen: set[tuple[tuple[str, int], bytes]] = set()
+            for signed in report.votes:
+                event = signed.transfer
+                key = (event.sender, event.nonce)
+                canonical = event.canonical()
+                marker = (key, canonical)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                by_key.setdefault(key, {})
+                by_key[key][canonical] = by_key[key].get(canonical, 0) + 1
+
+        if committee.unlock:
+            threshold = 2 * committee.f + 1
+            for (sender, nonce), counts in sorted(by_key.items()):
+                supported = sum(1 for n in counts.values() if n >= threshold)
+                if len(counts) > 1 and supported == 0:
+                    # split but freed by unlock (not permanently locked)
+                    LOG.info(
+                        "nonce.split_unlocked",
+                        extra={
+                            "sender": sender,
+                            "nonce": nonce,
+                            "epoch": epoch,
+                            "divergent_votes": sum(counts.values()),
+                            "versions": len(counts),
+                        },
+                    )
+            return
+
+        for (sender, nonce), counts in sorted(by_key.items()):
+            if len(counts) <= 1:
+                continue
+            divergent = sum(counts.values())
+            self.nonce_locked_permanently_total += 1
+            LOG.error(
+                "nonce.locked_permanently",
+                extra={
+                    "sender": sender,
+                    "nonce": nonce,
+                    "epoch": epoch,
+                    "reason": "split_votes_no_unlock",
+                    "divergent_votes": divergent,
+                    "versions": len(counts),
+                },
+            )
+
+    def committee_before_last(self) -> Committee:
+        return self._store.committee_at(self.committee.epoch - 1)
+
+    def group(self):
+        return self._store.group()
+
+    def committee_of(self, certificate: QuorumCertificate) -> Committee:
+        return self._store.committee_of(certificate)
+
+    def closures(self, after_epoch: int = 0) -> list[EpochClosure]:
+        return self._store.closures(after_epoch)
+
+    def handle_certificate(self, certificate: QuorumCertificate) -> bool:
+        """
+        Execute the certificate if it can run now. True if it was executed. A
+        halted node executes nothing. That check is here and not in `_can_execute`,
+        because the log replayed at a restart holds what ran before the halt.
+        """
+        if self._store.halted() or not self._can_execute(certificate):
+            return False
+
+        # On disk first: if this fails, the state has not changed.
+        self._store.append_certificate(certificate)
+        self._execute(certificate)
+        return True
+
+    def _can_run_now(self, event: Transfer) -> bool:
+        # The check on the event comes first, because the others assume it.
+        return (
+            is_well_formed_event(event)
+            and self._is_fresh(event)
+            and self._is_ready(event)
+            and self._is_executable(event)
+        )
+
+    def _can_execute(self, certificate: QuorumCertificate) -> bool:
+        # Signatures last: they are the only expensive check, and the result does
+        # not depend on the order because the checks have no side effects.
+        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)
+
+    def _can_replay(self, certificate: QuorumCertificate) -> bool:
+        return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)
+
+    @staticmethod
+    def _runs_on(state: State, ids: set[str], event: Transfer) -> bool:
+        return (
+            event.event_id() not in ids
+            and set(event.parents) <= ids
+            and event.amount > 0
+            and event.sender != event.receiver
+            and StateDeriver._execution_failure(state, event) is None
+        )
+
+    def _is_fresh(self, event: Transfer) -> bool:
+        return event.event_id() not in self._executed_ids
+
+    def _is_ready(self, event: Transfer) -> bool:
+        return set(event.parents) <= self._executed_ids
+
+    def _is_executable(self, event: Transfer) -> bool:
+        return (
+            is_executable_event(event)
+            and StateDeriver._execution_failure(self.state, event) is None
+        )
+
+    def certificate_of(self, event_id: str) -> QuorumCertificate | None:
+        """The certificate of an event this node executed and still holds, without reading the log."""
+        return self._log_by_id.get(event_id)
+
+    def _execute(self, certificate: QuorumCertificate) -> None:
+        StateDeriver._apply_one(self.state, certificate.event)
+        self.log.append(certificate)
+        self._log_by_id[certificate.event.event_id()] = certificate
+        self._executed_ids.add(certificate.event.event_id())

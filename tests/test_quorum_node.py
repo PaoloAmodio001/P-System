@@ -1,4 +1,4 @@
-"""Node in quorum mode: how the rules of network/quorum.py meet the network.
+"""Node in quorum mode: how the rules of network/quorum/ meet the network.
 
 The rules themselves are tested in test_quorum_driver.py. With quorum=None the node
 must not change at all, and for that the proof is that the existing tests of Node

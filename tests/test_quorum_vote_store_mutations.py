@@ -3,7 +3,7 @@
 These replace the mutations of phase 5.2, whose script was lost with /tmp on 2026-11-04.
 The counts of that time are not reused: only this file counts.
 
-Each mutation breaks one rule of SqliteVoteStore in network/quorum.py.
+Each mutation breaks one rule of SqliteVoteStore in network/quorum/.
 
 The tests that start a process stay out, because that process imports the real module: the
 crash tests and the test with two processes. No mutation here checks them.
@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 MODULE = "network.quorum"
-SOURCE = (ROOT / "network" / "quorum.py").read_text()
+SOURCE = quorum_source()
 TESTS = [
     str(Path("tests") / "test_quorum_vote_store.py"),
     "-k",

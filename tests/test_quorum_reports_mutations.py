@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_quorum_reports.py"), "-k", "not real_proposers"]
 
@@ -177,7 +177,7 @@ MESSAGE = {
 }
 
 SOURCES = {
-    "network.quorum": (ROOT / "network" / "quorum.py").read_text(),
+    "network.quorum": quorum_source(),
     "core.attestation": (ROOT / "core" / "attestation.py").read_text(),
     "network.remote_signer": (ROOT / "network" / "remote_signer.py").read_text(),
     "network.message": (ROOT / "network" / "message.py").read_text(),

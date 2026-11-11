@@ -10,7 +10,7 @@ from core.attestation import Vote
 from core.event import Transfer
 from core.state import State
 from crypto.identity import Identity
-from network import quorum as quorum_module
+from network.quorum import driver as quorum_module
 from network.message import encode_certificate, encode_vote, encode_vote_request
 from tests.node_helpers import standalone_node
 from network.node import Node

@@ -9,7 +9,7 @@ This is EMPIRICAL evidence of correspondence, not a refinement proof.
 
 The input for Lean comes from the messages and not from what the node did. If it came
 from a trace of the replica, the code under test would choose its own input. So a small
-oracle here, which uses nothing of network/quorum.py, turns each message into inputs of
+oracle here, which uses nothing of network/quorum/, turns each message into inputs of
 the model, by the rules of the protocol:
 
 - A request with a valid signature by its sender is a `voteRequest`. One with a bad

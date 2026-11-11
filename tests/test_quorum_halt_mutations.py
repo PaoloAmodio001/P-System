@@ -1,6 +1,6 @@
 """The tests of the durable halt must be able to fail.
 
-Each mutation removes one rule from the source of network/quorum.py, and the tests
+Each mutation removes one rule from the source of network/quorum/, and the tests
 of the halt must notice. The mutated source runs in a separate process, in place of
 the real module, so a mutation cannot leak into another test.
 
@@ -14,17 +14,21 @@ from pathlib import Path
 
 import pytest
 
+from tests.mutation_support import quorum_source
+
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = (ROOT / "network" / "quorum.py").read_text()
+SOURCE = quorum_source()
 
 RUNNER = """
 import sys
+
+from tests.mutation_support import apply_source
 
 import network.quorum
 import pytest
 
 try:
-    exec(compile(sys.argv[1], "network/quorum.py", "exec"), network.quorum.__dict__)
+    apply_source("network.quorum", sys.argv[1])
 except Exception:
     # Python exits with 1 on an uncaught exception, the same as a failing test.
     sys.exit(3)
@@ -163,7 +167,7 @@ MUTATIONS = {
 
 
 def run_with_source(source: str, tests: list[str]) -> subprocess.CompletedProcess:
-    """Run `tests` with `source` in place of network/quorum.py."""
+    """Run `tests` with `source` in place of network/quorum/."""
     return subprocess.run(
         [sys.executable, "-c", RUNNER, source, *tests],
         cwd=ROOT,

@@ -11,20 +11,24 @@ from pathlib import Path
 
 import pytest
 
+from tests.mutation_support import quorum_source
+
 ROOT = Path(__file__).resolve().parent.parent
 ATTESTATION = (ROOT / "core" / "attestation.py").read_text()
-QUORUM = (ROOT / "network" / "quorum.py").read_text()
+QUORUM = quorum_source()
 
 # In this order, because each module takes names from the one before when it is imported.
 RUNNER = """
 import sys
+
+from tests.mutation_support import apply_source
 
 import core.attestation
 
 try:
     exec(compile(sys.argv[1], "core/attestation.py", "exec"), core.attestation.__dict__)
     import network.quorum
-    exec(compile(sys.argv[2], "network/quorum.py", "exec"), network.quorum.__dict__)
+    apply_source("network.quorum", sys.argv[2])
 except Exception:
     # Python exits with 1 on an uncaught exception, the same as a failing test.
     sys.exit(3)

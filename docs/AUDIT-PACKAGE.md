@@ -11,9 +11,9 @@ The Lean model is the specification. An honest validator votes when `auth && vot
 | File | What to read | Why it matters |
 |---|---|---|
 | `core/attestation.py` | `vote_payload`, `Vote`, `QuorumCertificate.verify`, `Committee`, `EpochChange.verify`, `EpochReport.verify`, `EpochClosure.verify`, `EpochClosure.locks`, `ClosureHeader.verify`, `Snapshot`, `SnapshotAttestation`, `is_authorized_transfer`, `stays_in_one_asset` | What signatures mean, and what counts as valid |
-| `network/quorum.py` | `SqliteVoteStore.record_vote`, `close_epoch`, `install_closure`, `apply_floor`, `record_snapshot`, `group`, `_open_schema` | The vote lock and the one on the order: **losing either breaks safety** |
-| `network/quorum.py` | `QuorumReplica.handle_vote_request`, `handle_certificate`, `certificate_is_valid`, `attest_snapshot`, `install_snapshot`, `prune_covered` | The rules of an honest node |
-| `network/quorum.py` | `QuorumDriver`, whole class, `QuorumRuntime.handle_group`, `_rebuild` | What reaches the rules, what is sent, what a failed write undoes |
+| `network/quorum/store.py` | `SqliteVoteStore.record_vote`, `close_epoch`, `install_closure`, `apply_floor`, `record_snapshot`, `group`, `_open_schema` | The vote lock and the one on the order: **losing either breaks safety** |
+| `network/quorum/replica.py` | `QuorumReplica.handle_vote_request`, `handle_certificate`, `certificate_is_valid`, `attest_snapshot`, `install_snapshot`, `prune_covered` | The rules of an honest node |
+| `network/quorum/driver.py`, `network/quorum/runtime.py` | `QuorumDriver`, whole class, `QuorumRuntime.handle_group`, `_rebuild` | What reaches the rules, what is sent, what a failed write undoes |
 | `network/message.py`, `network/fragments.py` | The decoders of quorum messages | Input from the network, before any authentication of content |
 | `network/peer_connection.py`, `network/secure_transport.py`, `network/node_server.py` | `Pacer`, `enqueue`, `DuplexTLSStream`, `is_revoked`, `_make_room`, `_handshake` | TLS, framing, limits |
 | `network/node.py` | The quorum paths: `_handle_quorum_message`, `_send_quorum_output`, `_sync_loop`, `_close_revoked` | Locks, threads, ordering |

@@ -41,6 +41,7 @@ def sources() -> str:
         "core/*.py",
         "crypto/*.py",
         "network/*.py",
+        "network/quorum/*.py",
         "sdk/*.py",
         "scripts/*",
         "benchmarks/*.py",

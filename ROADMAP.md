@@ -5,7 +5,7 @@ Next steps, in order. None of them is done, and none is a promise.
 ## Code
 
 1. ~~Remove the historical mode~~: done, with the modules of `core/`, the tests and the benchmarks that only it used.
-2. **Split `network/quorum.py`** into store, replica, driver and configuration, and remove the accesses to private members
+2. ~~Split `network/quorum.py`~~: done (`network/quorum/`: common, store, replica, driver, runtime). Still to do: remove the accesses to private members
    across them (`_initial_state`, `StateDeriver._apply_one`, `StateDeriver._execution_failure`).
 
 ## Model and evidence

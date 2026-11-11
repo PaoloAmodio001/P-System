@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_snapshots.py"), "-k", "not real_nodes"]
 
@@ -378,7 +378,7 @@ QUORUM = {
 
 SOURCES = {
     "core.attestation": (ROOT / "core" / "attestation.py").read_text(),
-    "network.quorum": (ROOT / "network" / "quorum.py").read_text(),
+    "network.quorum": quorum_source(),
 }
 
 

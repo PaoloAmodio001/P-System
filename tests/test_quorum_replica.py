@@ -7,7 +7,7 @@ restart, and the checks made when a replica starts.
 
 import pytest
 
-import network.quorum
+import network.quorum.replica
 from core.attestation import Committee, QuorumCertificate, Vote, vote_payload
 from core.derive import StateDeriver
 from core.event import Transfer
@@ -110,7 +110,7 @@ def test_refused_vote_gives_no_signature(path, members, committee, monkeypatch):
     def fail(*_):
         raise AssertionError("signed a refused vote")
 
-    monkeypatch.setattr(network.quorum.Vote, "create", fail)
+    monkeypatch.setattr(network.quorum.replica.Vote, "create", fail)
     assert replica.handle_vote_request(B) is None
 
 
@@ -127,7 +127,7 @@ def test_failed_write_gives_no_signature(path, members, committee, monkeypatch):
     replica = open_replica(path, members, committee)
     signed = []
     monkeypatch.setattr(
-        network.quorum.Vote, "create", lambda *args: signed.append(args)
+        network.quorum.replica.Vote, "create", lambda *args: signed.append(args)
     )
 
     def fail(_event, _signed=None, _gathering=False):
@@ -150,7 +150,7 @@ def test_vote_is_on_disk_when_it_is_signed(path, members, committee, monkeypatch
         seen.append([event.canonical() for event in other.votes()])
         return original(*args)
 
-    monkeypatch.setattr(network.quorum.Vote, "create", checking)
+    monkeypatch.setattr(network.quorum.replica.Vote, "create", checking)
     replica.handle_vote_request(A)
     other.close()
     assert seen == [[A.canonical()]]

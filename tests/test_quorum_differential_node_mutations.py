@@ -1,6 +1,6 @@
 """Differential test B must be able to fail.
 
-Each mutation breaks one rule outside the replica, in network/quorum.py or network/node.py,
+Each mutation breaks one rule outside the replica, in network/quorum/ or network/node.py,
 and the comparison with runNode must report a divergence. Only that counts: a crash, or the
 floor on what a corpus exercises, is not a detection. One seed, stopping at the first
 difference, so this is fast unless a mutation survives.
@@ -20,8 +20,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.mutation_support import quorum_source
+
 ROOT = Path(__file__).resolve().parent.parent
-QUORUM = (ROOT / "network" / "quorum.py").read_text()
+QUORUM = quorum_source()
 NODE = (ROOT / "network" / "node.py").read_text()
 
 # network.quorum comes first and network.node after, because node.py takes its classes
@@ -29,10 +31,12 @@ NODE = (ROOT / "network" / "node.py").read_text()
 RUNNER = """
 import sys
 
+from tests.mutation_support import apply_source
+
 import network.quorum
 
 try:
-    exec(compile(sys.argv[1], "network/quorum.py", "exec"), network.quorum.__dict__)
+    apply_source("network.quorum", sys.argv[1])
     import network.node
     exec(compile(sys.argv[2], "network/node.py", "exec"), network.node.__dict__)
 except Exception:

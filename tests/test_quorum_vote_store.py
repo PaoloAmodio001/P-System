@@ -1,4 +1,4 @@
-"""Durable votes (network/quorum.py).
+"""Durable votes (network/quorum/).
 
 record_vote must follow voteAllowed in formal/lean/PSystem/Quorum.lean, and what
 it accepted must survive the death of the process.

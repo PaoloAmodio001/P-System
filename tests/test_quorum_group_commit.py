@@ -1,4 +1,4 @@
-"""Several messages, one transaction (network/quorum.py and PeerConnection.receive_loop).
+"""Several messages, one transaction (network/quorum/ and PeerConnection.receive_loop).
 
 The rule: a group decides what the same messages decide one by one, and no signature leaves
 before the commit. A property test compares the two on random mixes, including conflicts,

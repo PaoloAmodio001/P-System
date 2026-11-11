@@ -68,6 +68,6 @@ authors of the code, and it is what an audit should start from and attack.
 
 ## What an external audit should do
 
-Code audit of `network/quorum.py`, `core/attestation.py` and `network/secure_transport.py`; a review of the protocol in
+Code audit of `network/quorum/`, `core/attestation.py` and `network/secure_transport.py`; a review of the protocol in
 `docs/PROTOCOL.md` by a distributed-systems researcher; cryptographic review of what is signed; penetration test of a real
 deployment; a Jepsen-style analysis. None of these has been done, and none can be replaced by tests written here.

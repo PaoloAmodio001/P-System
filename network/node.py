@@ -30,7 +30,7 @@ REPLY_BYTES_PER_TOKEN = 1024
 class Node:
     """
     A validator, or a node that follows a committee: docs/FORMAL-SPECIFICATION.md, section 13.1.
-    The rules are in network/quorum.py, and here is only how they meet the network.
+    The rules are in network/quorum/, and here is only how they meet the network.
     """
 
     SIMULTANEOUS_DIAL_SECONDS = 3.0

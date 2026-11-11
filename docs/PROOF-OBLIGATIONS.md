@@ -420,7 +420,7 @@ Status: done for the Lean model (sections above); the witnesses cover only
 `n = 4`, `f = 1`.
 
 The link to Python is `EMPIRICAL`, not `REFINEMENT`, and so far covers only
-`QuorumReplica` (`network/quorum.py`), which no node uses yet.
+`QuorumReplica` (`network/quorum/replica.py`), which no node uses yet.
 `tests/test_quorum_differential.py` compares it with `runNode` after each input,
 on adversarial random inputs. `tests/test_quorum_differential_mutations.py` checks
 that the comparison notices each rule being broken. Events the model cannot
@@ -441,6 +441,6 @@ Per ogni claim CONDITIONAL del README, la riga indica: ipotesi non scaricata dal
 
 | Teorema/claim (README) | Ipotesi (hard part) | Enforced by | Evidenza (test) |
 |---|---|---|---|
-| `old_certificate_outside_locks_refused`, `accepted_complete`, `old_keys_no_double_spend` | `SingleVersion` / le lock tengono una sola versione per ogni spesa quando si accettano certificati con chiavi di comitati terminati (chiavi rubate: safety solo sotto questa ipotesi) | Controllo lock/certificati di vecchie epoche in `network/quorum.py` (accettazione certificati vs lock/eventi bloccati); verifiche di protocollo sui lock/closure | `tests/test_quorum_old_keys.py`, `tests/test_stolen_key_two_versions.py` |
+| `old_certificate_outside_locks_refused`, `accepted_complete`, `old_keys_no_double_spend` | `SingleVersion` / le lock tengono una sola versione per ogni spesa quando si accettano certificati con chiavi di comitati terminati (chiavi rubate: safety solo sotto questa ipotesi) | Controllo lock/certificati di vecchie epoche in `network/quorum/replica.py` (accettazione certificati vs lock/eventi bloccati); verifiche di protocollo sui lock/closure | `tests/test_quorum_old_keys.py`, `tests/test_stolen_key_two_versions.py` |
 | `asset_supply_conserved` | Ogni evento resta dentro o fuori l'insieme di conti dichiarato (trasferimenti asset non attraversano confini di asset); la supply totale di quell'insieme resta invariata | **Codice runtime**: `core/derive.check_supply_conservation` solleva `SupplyViolation` (set violato, delta) prima di certificazione/esecuzione; controlli in derivazione, replica quorum e submission driver; API restituisce errore strutturato. Validazione autorizzazione conserva stesso asset. | `tests/test_supply_conservation.py`, `tests/test_assets.py` |
-| `honest_sender_certifies` | Delivery e raccolta firme non modellate (nessun attore di raccolta nel modello; ipotesi di consegna/ricezione voti) | **Test/empirico** (non enforcement di liveness in produzione): percorsi di voto/certificazione, raccolta firme idempotente e osservabile in `network/quorum.py`; assenza di liveness garantita | `tests/test_quorum_differential_processes.py`, `tests/test_signature_collection.py` |
+| `honest_sender_certifies` | Delivery e raccolta firme non modellate (nessun attore di raccolta nel modello; ipotesi di consegna/ricezione voti) | **Test/empirico** (non enforcement di liveness in produzione): percorsi di voto/certificazione, raccolta firme idempotente e osservabile in `network/quorum/driver.py`; assenza di liveness garantita | `tests/test_quorum_differential_processes.py`, `tests/test_signature_collection.py` |
