@@ -44,7 +44,7 @@ Checks: `pytest -q -m "not slow"` (minutes), `pytest -q` (mutations and differen
 ## What is proved in Lean
 
 About the model in `formal/lean/`, with at most `f` faulty validators per committee and unforgeable signatures. Only the
-three standard axioms of Lean are used, for all 199 theorems; `scripts/check_axioms.py` checks it.
+three standard axioms of Lean are used, for all 243 theorems; `scripts/check_axioms.py` checks it.
 
 | Theorem | Statement | Status |
 |---|---|---|

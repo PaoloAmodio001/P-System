@@ -18,7 +18,7 @@ To end an epoch a threshold identity of governance signs an **order** naming the
 
 ## 2. What is proved
 
-All of this is about the model. There is no `sorry`, `admit`, `axiom`, `opaque` or `native_decide`, and `formal/lean/AuditPSystem.lean` prints only `propext`, `Quot.sound` and `Classical.choice` for each of 199 theorems in 24 modules. Signatures are parameters, and `Unforgeable` is a hypothesis about a run, so nothing here is about Ed25519 or SHA-256. Delivery is a hypothesis wherever a result speaks of progress. **Across epochs, safety means certification and not execution:** the model of epochs has no execution, and `Certified` is defined by the votes of honest signers, with no signatures. The step from a certificate to two nodes executing is proved for one committee only.
+All of this is about the model. There is no `sorry`, `admit`, `axiom`, `opaque` or `native_decide`, and `formal/lean/AuditPSystem.lean` prints only `propext`, `Quot.sound` and `Classical.choice` for each of 243 theorems in 26 modules. Signatures are parameters, and `Unforgeable` is a hypothesis about a run, so nothing here is about Ed25519 or SHA-256. Delivery is a hypothesis wherever a result speaks of progress. **Across epochs, safety means certification and not execution:** the model of epochs has no execution, and `Certified` is defined by the votes of honest signers, with no signatures. The step from a certificate to two nodes executing is proved for one committee only.
 
 | Theorem | Statement |
 |---|---|

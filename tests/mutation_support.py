@@ -40,6 +40,18 @@ def source_of_module(module: str) -> str:
 def _exec_into(name: str, text: str) -> None:
     module = importlib.import_module(name)
     before = dict(module.__dict__)
+
+    if name.startswith("network.quorum."):
+        # A mutation can use a name that another module of the package defines or imports, as
+        # it could when they were one module.
+        for part in QUORUM_PARTS:
+            other = importlib.import_module(f"network.quorum.{part}")
+            if other is module:
+                continue
+            for key, value in other.__dict__.items():
+                if not key.startswith("__"):
+                    module.__dict__.setdefault(key, value)
+
     exec(compile(text, module.__file__, "exec"), module.__dict__)
 
     if not name.startswith("network.quorum"):
