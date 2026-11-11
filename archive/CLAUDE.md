@@ -147,6 +147,7 @@ Non attribuire a P-System applicazioni industriali o spaziali già operative qua
 - Il repository ha un hook di pre-commit, da installare con `sh scripts/install_hooks.sh`, che blocca il commit se `pytest -q -m "not slow"` o `lake build` falliscono. Non aggirarlo con `--no-verify`.
 - Alla fine di ogni fase e prima di ogni push eseguire la suite completa `pytest -q`, inclusi test differenziali e mutazionali, e `lake build`.
 - Prima di un merge su `main`, eseguire inoltre i test differenziali con `PSYSTEM_DIFF_SEEDS=15`.
+  Nota del 2026-11-10: questo controllo è stato saltato. I commit `cdfc9cd` (7 novembre, store schema 6) e `dba3839` (8 novembre) sono arrivati su `main` con i merge delle PR #5 e #6 del 9 novembre (`a94f4ee`) avendo girato solo i 3 seed di default. Con 15 seed il differenziale B divergeva al seed 20270007. Da allora il job CI `differentials-15-seeds` esegue i differenziali a 15 seed su ogni pull request.
 - Se un controllo fallisce, non effettuare il push: analizzare il problema, correggerlo e ripetere i controlli.
 - Effettuare il push del branch di lavoro al termine di ogni fase completata.
 - Non effettuare mai push o merge su `main` senza autorizzazione esplicita di Paolo.
@@ -244,6 +245,21 @@ Non effettuare push o merge su `main` senza autorizzazione esplicita di Paolo.
 - Mantenere aggiornato `docs/piano-bizantino.md`.
 - Non interrompere il lavoro per attività secondarie quando esistono componenti fondamentali ancora incompleti.
 - Non dichiarare completata una fase senza averne verificato i criteri di uscita.
+
+### 10.1 Decisioni autonome e punti di arresto (dal 2026-11-10)
+
+Le decisioni tecniche si prendono senza fermarsi a chiedere, e si riferiscono a Paolo dopo, con il motivo: scelte di implementazione, schemi dello store, struttura dei test, ordine del lavoro, nomi, limiti numerici.
+
+Serve il via esplicito di Paolo, e ci si ferma prima, solo per:
+
+1. push o merge su `main`;
+2. tag, release e pubblicazione su Zenodo o altrove;
+3. una divergenza tra Python e i teoremi Lean: fermarsi e portare il caso minimo, senza aggiustare il test per farlo passare;
+4. modifiche al modello formale in `formal/`, all'enunciato di un teorema, o alle regole in `archive/CLAUDE.md` e `CLAUDE.local.md`.
+
+Ci si ferma anche davanti a una decisione irreversibile che potrebbe ragionevolmente andare in due modi: preparare tutto, spiegare la scelta e aspettare.
+
+Per gli schemi dello store: non cambiare lo schema due volte. Se una migrazione di oggi ne renderà necessaria un'altra domani, farne una sola che copra entrambe, oppure rinviare tutto e registrare il limite noto nel piano.
 
 ## 11. Criterio finale di successo
 

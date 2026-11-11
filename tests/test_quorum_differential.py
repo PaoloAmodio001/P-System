@@ -261,11 +261,18 @@ def python_run(case: Case, directory: Path, stats: dict | None = None) -> list[s
     store, replica = open_replica(True)
     lines = [_show(replica, ids_by_canonical)]
     pruned: list[Transfer] = []
+    from_snapshot = False
+
+    def count(name: str) -> None:
+        if stats is not None:
+            stats[name] = stats.get(name, 0) + 1
 
     for item in case.inputs:
         if item[0] in CONTROL:
             if item[0] != "R":
                 _take_snapshot(replica, committee, identities)
+                from_snapshot = True
+                count("restart after a snapshot")
             if item[0] == "P":
                 pruned.extend(c.event for c in replica.prune_covered())
             store.close()
@@ -282,7 +289,8 @@ def python_run(case: Case, directory: Path, stats: dict | None = None) -> list[s
                 _python_vote(committee, identities, entry, item[1])
                 for entry in item[2]
             )
-            replica.handle_certificate(QuorumCertificate(item[1], votes))
+            if replica.handle_certificate(QuorumCertificate(item[1], votes)) and from_snapshot:
+                count("cert executed after a restart from a snapshot")
 
         lines.append(_show(replica, ids_by_canonical, pruned))
 
@@ -589,6 +597,9 @@ DECISIVE_RULES = (
     f"cert: {ON_SAME_ID_EVENT}",
     f"cert: {BY_OTHER_VALIDATOR}",
     f"cert: {GARBAGE}",
+    # Crossings with a restart, which no single rule covers.
+    "restart after a snapshot",
+    "cert executed after a restart from a snapshot",
 )
 
 

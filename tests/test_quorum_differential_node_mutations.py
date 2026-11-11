@@ -186,6 +186,18 @@ IN_QUORUM = {
         "        return certificate\n",
         "        return certificate\n",
     ),
+    "gathering not resumed after a restart": (
+        "        if not self.halted:\n"
+        "            self._resume_gathering()\n",
+        "",
+    ),
+    "gathering forgotten when a certificate comes, not when it runs": (
+        "        self._accept(certificate)\n"
+        "        return certificate\n",
+        "        self._accept(certificate)\n"
+        "        self.replica.forget_gathering([event.event_id()])\n"
+        "        return certificate\n",
+    ),
     "submit asks even when its own vote is refused": (
         "        if vote is None:\n"
         "            return _NOTHING\n"
