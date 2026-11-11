@@ -23,6 +23,16 @@ from tests.failure_evidence import ROOT
 from tests.test_quorum_node import GENESIS, PAYER, signed
 from tests.test_stuck_event import FIRST, UNTIL_A_STALL_HOLDS, Drivers, requested, transfer
 
+from network.quorum.rounds import RoundDriver
+
+
+@pytest.fixture(autouse=True)
+def _no_round_timeouts(monkeypatch):
+    # These tests are about asking again; the rounds that follow a split have their own tests.
+    monkeypatch.setattr(RoundDriver, "ROUND_FIRST_SECONDS", float("inf"))
+    monkeypatch.setattr(RoundDriver, "ROUND_LONGEST_SECONDS", float("inf"))
+
+
 BURST = 20
 
 
@@ -110,11 +120,14 @@ def test_the_votes_of_before_are_gone_and_its_own_vote_comes_back(drivers):
     restart(drivers)
     voted = drivers.first.replica.votes()
     drivers.at(0)
-    # Its own, signed again, and no second row: one peer is not enough, two are.
+    # Its own, signed again, and no second row: one peer is not enough, two make a prepare
+    # certificate, and the third a decision, which runs.
     assert drivers.first.replica.votes() == voted
     assert drivers.first.handle_message(vote_of(drivers, 1, event.transfer)).broadcasts == ()
     output = drivers.first.handle_message(vote_of(drivers, 2, event.transfer))
     assert output.broadcasts
+    assert drivers.first.replica.state.nonce(PAYER) == 0
+    drivers.first.handle_message(vote_of(drivers, 3, event.transfer))
     assert drivers.first.replica.state.nonce(PAYER) == 1
 
 
@@ -122,7 +135,8 @@ def test_an_event_that_ran_is_not_asked_for_after_a_restart(drivers):
     event = transfer(0)
     drivers.first.submit(event)
 
-    for index in (1, 2):
+    # All four votes: a decision of round 0, which runs.
+    for index in (1, 2, 3):
         drivers.first.handle_message(vote_of(drivers, index, event.transfer))
 
     assert restart(drivers).gathering_count == 0
@@ -150,14 +164,19 @@ def test_a_certificate_waiting_for_an_earlier_nonce_keeps_its_event_on_disk(driv
     assert requested(drivers.at(FIRST)) == [1]
 
 
-def test_a_certificate_from_elsewhere_waiting_for_an_earlier_nonce_keeps_its_event_too(drivers):
+def test_a_decision_waiting_for_an_earlier_nonce_survives_a_restart(drivers):
+    # Before schema 8 it was in memory only: the node asked votes again after a restart, and could not
+    # see a conflict with it. Now it is on disk, so nothing needs asking and it still runs later.
     event = transfer(1)
     drivers.first.submit(event)
     drivers.first.handle_message(encode_certificate(drivers.four.certificate(event.transfer)))
     assert drivers.first.replica.state.nonce(PAYER) == 0
     assert drivers.at(FIRST) == []
-    restart(drivers)
-    assert requested(drivers.at(FIRST)) == [1]
+    restarted = restart(drivers)
+    assert drivers.at(FIRST) == []
+    assert restarted._known[(PAYER, 1)].event == event.transfer
+    restarted.handle_message(encode_certificate(drivers.four.certificate(transfer(0).transfer)))
+    assert restarted.replica.state.nonce(PAYER) == 2
 
 
 def test_another_version_certified_ends_it_on_disk_too(drivers):
@@ -256,7 +275,7 @@ def test_a_file_of_schema_5_opens_with_nothing_gathering(tmp_path):
     assert store.gathering() == []
     assert store.votes() == [event]
     version = store._connection.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    assert version == ("7",)
+    assert version == ("8",)
     store.close()
 
 
@@ -281,7 +300,7 @@ def test_a_certificate_takes_an_event_out_of_the_numbers(drivers):
     event = transfer(0)
     drivers.first.submit(event)
 
-    for index in (1, 2):
+    for index in (1, 2, 3):
         drivers.first.handle_message(vote_of(drivers, index, event.transfer))
 
     drivers.clock.now = 100.0 + 5.0

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import quorum_source
+from tests.mutation_support import quorum_source, source_argument
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = quorum_source()
@@ -169,7 +169,7 @@ MUTATIONS = {
 def run_with_source(source: str, tests: list[str]) -> subprocess.CompletedProcess:
     """Run `tests` with `source` in place of network/quorum/."""
     return subprocess.run(
-        [sys.executable, "-c", RUNNER, source, *tests],
+        [sys.executable, "-c", RUNNER, source_argument(source), *tests],
         cwd=ROOT,
         capture_output=True,
         text=True,

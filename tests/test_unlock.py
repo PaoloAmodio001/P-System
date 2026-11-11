@@ -30,6 +30,16 @@ from network.peer import Peer
 from network.quorum import QuorumConfig, QuorumDriver, QuorumReplica, SqliteVoteStore
 from sdk.client import ChainVerifier
 
+from network.quorum import QuorumDriver as _Driver
+
+
+@pytest.fixture(autouse=True)
+def _close_at_once(monkeypatch):
+    # Closures here form at once, with what is open locked: the limit that remains when the wait
+    # for decisions runs out (`QuorumDriver.CLOSING_GRACE_SECONDS`).
+    monkeypatch.setattr(_Driver, "CLOSING_GRACE_SECONDS", 0.0)
+
+
 SENDER = Identity.create()
 ALICE = SENDER.identity_id
 GENESIS = State({ALICE: 100})

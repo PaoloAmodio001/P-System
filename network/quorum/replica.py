@@ -12,6 +12,8 @@ from core.attestation import (
     EpochClosure,
     EpochReport,
     QuorumCertificate,
+    RoundProposal,
+    RoundReport,
     Snapshot,
     SnapshotAttestation,
     Vote,
@@ -28,6 +30,8 @@ from network.quorum.common import (
     VoteStoreError,
     is_executable_event,
 )
+from network.message import decode_certificate, encode_certificate
+from network.quorum import lean_core
 from network.quorum.store import SqliteVoteStore
 
 
@@ -343,10 +347,128 @@ class QuorumReplica:
         # Lean spec (formal/lean/PSystem/Quorum.lean, voteRequest): vote is admitted
         # by `auth && voteAllowed`, independent of static/state executability.
         # Executability is enforced at certificate execution (executableBool/r17Ready).
-        if not self._store.record_vote(event, signed, gathering):
+        #
+        # With rounds, the vote of round 0 is also the input `request` of `Rounds.step`, and the two
+        # are written together: a validator that has left round 0 for this key casts no vote of round
+        # 0, since its reports say it has none (`report_vote0'`).
+        round_state = None
+        if self.has_rounds:
+            before = self._store.round_state(event.sender, event.nonce)
+            model_before = None if before is None else {
+                k: v for k, v in before.items() if not k.startswith("_")
+            }
+            round_state = lean_core.step(
+                self.committee.n,
+                self.committee.f,
+                model_before,
+                {"kind": "request", "value": event.event_id()},
+            )
+            if round_state["vote0"] != event.event_id():
+                return None
+            if before is not None and "_best" in before:
+                round_state["_best"] = before["_best"]
+
+        if not self._store.record_vote(event, signed, gathering, round_state):
             return None
 
         return self._signed_vote(event)
+
+    @property
+    def has_rounds(self) -> bool:
+        """Rounds run with `n = 3f+1`. With the optional `5f+1` a split waits for the end of the epoch."""
+        return not self.committee.unlock
+
+    def round_state(self, sender: str, nonce: int) -> dict | None:
+        return self._store.round_state(sender, nonce)
+
+    def round_states(self) -> list[tuple[str, int, dict]]:
+        return self._store.round_states()
+
+    def round_step(
+        self,
+        sender: str,
+        nonce: int,
+        entry: dict,
+        certificate: QuorumCertificate | None = None,
+    ) -> tuple[dict | None, dict] | None:
+        """
+        One input of `Rounds.step` for a key, run by the compiled model, and written before
+        anything it allows is signed. The states before and after, or None if this node signs
+        nothing more in this epoch (halted or closed).
+
+        With the state goes the certificate of its highest prepare (`certificate`, for the input
+        `prepared`): a report must show it, also after a restart (`precommit_report`).
+        """
+        before = self._store.round_state(sender, nonce)
+        model_before = None if before is None else {k: v for k, v in before.items() if not k.startswith("_")}
+        after = lean_core.step(self.committee.n, self.committee.f, model_before, entry)
+
+        if before is not None and "_best" in before:
+            after["_best"] = before["_best"]
+        if certificate is not None and after["best"] != (None if model_before is None else model_before["best"]):
+            after["_best"] = encode_certificate(certificate)
+
+        if after != before and not self._store.record_round_state(sender, nonce, after):
+            return None
+
+        return before, after
+
+    @staticmethod
+    def best_certificate(state: dict | None) -> QuorumCertificate | None:
+        """The certificate of the highest prepare of a state written by `round_step`."""
+        if state is None or "_best" not in state:
+            return None
+        return decode_certificate(state["_best"])
+
+    def own_vote0(self, sender: str, nonce: int) -> SignedTransfer | None:
+        """This validator's vote of round 0 for a key, with its sender's signature."""
+        return self._store.signed_vote(sender, nonce)
+
+    def sign_phase(self, event: Transfer, phase: str, round_: int) -> Vote | None:
+        """A vote of a later round or a precommit that `round_step` allowed. None without a signer."""
+        try:
+            return Vote.create_phase(self.committee, self._identity, event, phase, round_)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def sign_report(
+        self,
+        sender: str,
+        nonce: int,
+        round_: int,
+        vote0: SignedTransfer | None,
+        best: QuorumCertificate | None,
+        best_value: SignedTransfer | None = None,
+    ) -> RoundReport | None:
+        try:
+            return RoundReport.create(
+                self.committee, self._identity, sender, nonce, round_, vote0, best, best_value
+            )
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def sign_proposal(
+        self,
+        round_: int,
+        value: SignedTransfer,
+        reports: tuple[RoundReport, ...],
+    ) -> RoundProposal | None:
+        try:
+            return RoundProposal.create(self.committee, self._identity, round_, value, reports)
+        except SignerUnavailable as error:
+            LOG.error("signer gave no signature", extra={"reason": str(error)})
+            return None
+
+    def hold_decided(self, certificate: QuorumCertificate) -> None:
+        self._store.hold_decided(certificate)
+
+    def record_round_evidence(self, signed: SignedTransfer) -> None:
+        self._store.record_round_evidence(signed)
+
+    def decided_held(self) -> list[QuorumCertificate]:
+        return self._store.decided_held()
 
     def gathering(self) -> list[SignedTransfer]:
         return self._store.gathering()
@@ -485,8 +607,13 @@ class QuorumReplica:
 
     def _can_execute(self, certificate: QuorumCertificate) -> bool:
         # Signatures last: they are the only expensive check, and the result does
-        # not depend on the order because the checks have no side effects.
-        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)
+        # not depend on the order because the checks have no side effects. Only a decision runs: a
+        # prepare certificate alone could lose a later round (`Rounds.decisions_agree`).
+        return (
+            self._can_run_now(certificate.event)
+            and certificate.decides(self._store.committee_of(certificate))
+            and self.certificate_is_valid(certificate)
+        )
 
     def _can_replay(self, certificate: QuorumCertificate) -> bool:
         return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)

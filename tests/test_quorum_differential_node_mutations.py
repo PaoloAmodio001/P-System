@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import quorum_source
+from tests.mutation_support import quorum_source, source_argument
 
 ROOT = Path(__file__).resolve().parent.parent
 QUORUM = quorum_source()
@@ -268,7 +268,7 @@ IN_NODE = {
 
 def _run(quorum: str, node: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", RUNNER, quorum, node, *TESTS],
+        [sys.executable, "-c", RUNNER, source_argument(quorum), node, *TESTS],
         cwd=ROOT,
         capture_output=True,
         text=True,

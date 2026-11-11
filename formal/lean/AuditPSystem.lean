@@ -484,6 +484,8 @@ import PSystem
 
 #print axioms PSystem.Rounds.decided_in_closure
 
+#print axioms PSystem.Rounds.voted_in_closure
+
 #print axioms PSystem.Rounds.locked_epoch_decides_the_lock
 
 #print axioms PSystem.Rounds.no_double_spend_next_epoch

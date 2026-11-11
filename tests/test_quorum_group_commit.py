@@ -41,7 +41,7 @@ def spend(nonce: int, receiver: str = "bob") -> SignedTransfer:
     return SignedTransfer.create(SENDER, Transfer(ALICE, receiver, 1, nonce))
 
 
-def certificate(event: Transfer, signers=(0, 1, 2)) -> QuorumCertificate:
+def certificate(event: Transfer, signers=(0, 1, 2, 3)) -> QuorumCertificate:
     return QuorumCertificate(
         event,
         tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in signers),

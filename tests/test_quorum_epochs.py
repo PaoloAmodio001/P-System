@@ -7,6 +7,8 @@ through JSON. The real network is in tests/test_quorum_differential_epochs.py.
 
 import json
 
+from collections import deque
+
 import pytest
 
 from core.attestation import (
@@ -94,18 +96,45 @@ class Cluster:
         for store in self.stores:
             store.close()
 
+    def pump(self, origin, output, keep=lambda source, target, message: True):
+        """Every message to every member, replies to whoever asked, until none is left."""
+        queue = deque()
+
+        def push(source, out, asker=None):
+            for message in out.broadcasts:
+                for target in range(len(self.drivers)):
+                    if target != source and keep(source, target, message):
+                        queue.append((source, target, message))
+            for message in out.replies:
+                if asker is not None:
+                    queue.append((source, asker, message))
+
+        push(origin, output)
+        while queue:
+            source, target, message = queue.popleft()
+            push(target, self.drivers[target].handle_message(wire(message)), source)
+
     def certify(self, signed, voters, proposer=0):
-        """Votes of `voters` reach `proposer`, which broadcasts the certificate."""
-        proposer_driver = self.drivers[proposer]
-        output = proposer_driver.submit(signed)
-        for voter in voters:
-            if voter == proposer:
-                continue
-            for reply in self.drivers[voter].handle_message(
-                wire(encode_vote_request(signed))
-            ).replies:
-                output = proposer_driver.handle_message(wire(reply))
+        """
+        The request reaches `voters` and their votes `proposer`. With `2f+1` of them it prepares,
+        and the precommits of every member decide.
+        """
+        output = self.drivers[proposer].submit(signed)
+        self.pump(
+            proposer,
+            output,
+            keep=lambda source, target, message: message["type"] != "VOTE_REQUEST" or target in voters,
+        )
         return output
+
+    def settle(self, ticks=10):
+        """Timeouts at once, and what follows from them, a few times over."""
+        for driver in self.drivers:
+            driver.rounds.ROUND_FIRST_SECONDS = 0.0
+            driver.EPOCH_RETRY_SECONDS = 0.0
+        for _ in range(ticks):
+            for index, driver in enumerate(self.drivers):
+                self.pump(index, driver.retry())
 
     def close_epoch(self, change, proposer=0, reporters=None):
         """The whole end of an epoch. Returns the closure, or None if it did not form."""
@@ -483,21 +512,67 @@ def test_the_alternative_of_a_certified_event_gets_no_vote_after_the_closure(clu
 
 
 def test_an_unfinished_event_can_finish_in_the_next_epoch(cluster):
-    # One vote in the old epoch, and no certificate. The sender sends it again.
+    # One vote in the old epoch, and no certificate. Its member waits for it a little, then
+    # reports it; the closure forms, and the sender sends it again.
+    for driver in cluster.drivers:
+        driver.CLOSING_GRACE_SECONDS = 0.0
     signed = spend(0)
     cluster.drivers[1].handle_message(wire(encode_vote_request(signed)))
     assert cluster.close_epoch(_same_members_change())
     assert all(driver.replica.executed == [] for driver in cluster.drivers)
 
     cluster.certify(signed, [0, 1, 2])
-    assert all(driver.replica.executed == [] for driver in cluster.drivers[1:])
-    assert cluster.drivers[0].replica.executed == [signed.transfer]
-    certificate = cluster.drivers[0].replica.log[0]
-    assert certificate.epoch == 1
+    assert all(driver.replica.executed == [signed.transfer] for driver in cluster.drivers)
+    assert cluster.drivers[0].replica.log[0].epoch == 1
 
 
-def test_equivocation_at_the_end_of_an_epoch_stays_locked_for_good(cluster):
-    # The price stated in D2: nobody chooses, and split_lock_ambiguous says nobody can.
+def test_an_unfinished_event_is_decided_before_the_closure_when_there_is_time(cluster):
+    # The member that voted waits, rounds decide the key, and only then does it report.
+    signed = spend(0)
+    cluster.drivers[1].handle_message(wire(encode_vote_request(signed)))
+    # The others hear of the key: its member reports it, and they join its rounds.
+    cluster.drivers[1].rounds.ROUND_FIRST_SECONDS = 0.0
+    for message in cluster.drivers[1].retry().broadcasts:
+        for other in (0, 2, 3):
+            cluster.drivers[other].handle_message(wire(message))
+    assert cluster.close_epoch(_same_members_change()) is None
+
+    cluster.settle()
+    assert all(driver.replica.executed == [signed.transfer] for driver in cluster.drivers)
+    assert all(driver.committee.epoch == 1 for driver in cluster.drivers)
+    assert cluster.drivers[0].replica.log[0].epoch == 0
+
+
+def test_equivocation_at_the_end_of_an_epoch_is_decided_when_there_is_time(cluster):
+    # Before rounds this nonce stayed locked for good: nobody could choose (split_lock_ambiguous).
+    # Now the members that voted wait, rounds decide one version, and the closure follows.
+    first, second = spend(0, "first"), spend(0, "second")
+    cluster.drivers[1].handle_message(wire(encode_vote_request(first)))
+    cluster.drivers[2].handle_message(wire(encode_vote_request(second)))
+    for voter in (1, 2):
+        cluster.drivers[voter].rounds.ROUND_FIRST_SECONDS = 0.0
+        for message in cluster.drivers[voter].retry().broadcasts:
+            for other in range(4):
+                if other != voter:
+                    cluster.drivers[other].handle_message(wire(message))
+    assert cluster.close_epoch(_same_members_change()) is None
+
+    cluster.settle()
+    executed = [driver.replica.executed for driver in cluster.drivers]
+    assert executed[0] in ([first.transfer], [second.transfer])
+    assert executed == [executed[0]] * 4
+    assert all(driver.committee.epoch == 1 for driver in cluster.drivers)
+
+    for driver in cluster.drivers:
+        for event in (first, second):
+            assert driver.handle_message(wire(encode_vote_request(event))).replies == ()
+
+
+def test_equivocation_at_the_end_of_an_epoch_with_no_time_stays_locked(cluster):
+    # The limit that remains: a split still open when the wait ends is reported, and both versions
+    # are locks of the next epoch. Nothing is lost, and nothing chooses.
+    for driver in cluster.drivers:
+        driver.CLOSING_GRACE_SECONDS = 0.0
     first, second = spend(0, "first"), spend(0, "second")
     cluster.drivers[1].handle_message(wire(encode_vote_request(first)))
     cluster.drivers[2].handle_message(wire(encode_vote_request(second)))
@@ -600,12 +675,18 @@ def test_old_certificates_stay_valid_after_the_closure(cluster):
     signed = spend(0)
     late = cluster.drivers[3]
     event = signed.transfer
+    # The decision of the old epoch: the precommits of three members, in round 0.
     certificate = QuorumCertificate(
         event,
-        tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in range(3)),
+        tuple(Vote.create_phase(COMMITTEE, MEMBERS[i], event, "precommit", 0) for i in range(3)),
+        0,
+        "precommit",
+        0,
     )
     for index in (0, 1, 2):
         cluster.drivers[index].handle_message(wire(encode_vote_request(signed)))
+    for driver in cluster.drivers:
+        driver.CLOSING_GRACE_SECONDS = 0.0
     assert cluster.close_epoch(_same_members_change())
     late.handle_message(wire(encode_certificate(certificate)))
     assert late.replica.executed == [event]
@@ -669,10 +750,11 @@ def test_new_members_run_the_new_epoch_and_a_joining_node_catches_up(tmp_path):
     signed = spend(1, "dave")
     output = joining[0].submit(signed)
     assert output.broadcasts
-    for index in (1, 2):
+    for index in (1, 2, 3):
         for reply in joining[index].handle_message(wire(encode_vote_request(signed))).replies:
             output = joining[0].handle_message(wire(reply))
 
+    # All four new members voted: a decision of round 0 in epoch 1.
     assert joining[0].replica.executed[-1] == signed.transfer
     certificate = output.broadcasts[0]
     assert certificate["epoch"] == 1

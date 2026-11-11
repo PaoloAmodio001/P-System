@@ -31,8 +31,12 @@ from core.equivocation import EquivocationProof
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from network.message import (
+    decode_new_round,
+    decode_proposal,
+    decode_round_vote,
     certificate_sync_request_epoch,
     decode_certificate,
+    decode_certificate_and_signed,
     decode_certificate_sync,
     decode_certificate_sync_request,
     decode_epoch_change,
@@ -61,6 +65,7 @@ from network.quorum.common import (
     is_executable_event,
 )
 from network.quorum.replica import QuorumReplica
+from network.quorum.rounds import RoundDriver
 
 
 QUORUM_MESSAGE_TYPES = frozenset(
@@ -76,6 +81,9 @@ QUORUM_MESSAGE_TYPES = frozenset(
         "SNAPSHOT_REQUEST",
         "SNAPSHOT_VOTE",
         "SNAPSHOT",
+        "ROUND_VOTE",
+        "NEW_ROUND",
+        "PROPOSAL",
     }
 )
 
@@ -125,6 +133,7 @@ class _Resend:
 
 
 class QuorumDriver:
+    BAD_SIGNATURE_COST = BAD_SIGNATURE_COST
     # How long a closure in progress waits before what it needs is sent again.
     EPOCH_RETRY_SECONDS = 10.0
     # How long a snapshot is asked for before starting another: members behind catch up meanwhile.
@@ -230,9 +239,24 @@ class QuorumDriver:
         self._log_by_sender: dict[str, list[QuorumCertificate]] = {}
         self._indexed = 0
         self.requests_resent = 0
+        # Prepare certificates seen, by key and round: two for different events in one round are a
+        # proof that more than f members are faulty (`prepared_same_round`).
+        self._prepares: dict[tuple[str, int, int], QuorumCertificate] = {}
+        self.rounds = RoundDriver(self)
+        # An order to close this epoch, waiting a little for the keys this node voted on to be decided,
+        # and meanwhile no new vote of round 0. The wait is bounded: a member that waited for good could
+        # keep the closure from forming, and with it every vote. What is still undecided goes in the
+        # report with what was voted for in every round, so that nothing decided is lost
+        # (`voted_in_closure`); such a key stays locked in the next epoch.
+        self._closing: EpochChange | None = None
+        self._closing_since = 0.0
 
         if not self.halted:
             self._resume_gathering()
+            # Decisions this node held without executing them: a restart keeps them.
+            for certificate in self.replica.decided_held():
+                if self.replica.certificate_was_valid(certificate):
+                    self._accept(certificate)
 
     def _resume_gathering(self) -> None:
         # Its own vote comes when an event gets its turn: a signer in another process could
@@ -290,7 +314,10 @@ class QuorumDriver:
             return self._handle_vote(*decode_vote(message))
 
         if message_type == "CERTIFICATE":
-            return self._handle_certificate(decode_certificate(message))
+            certificate, signed = decode_certificate_and_signed(message)
+            if signed is not None:
+                self.rounds.learn(signed)
+            return self._handle_certificate(certificate)
 
         if message_type == "CERTIFICATE_SYNC":
             return self._handle_certificate_sync(decode_certificate_sync(message))
@@ -318,6 +345,28 @@ class QuorumDriver:
 
         if message_type == "SNAPSHOT":
             return self._handle_snapshot(decode_snapshot(message))
+
+        if message_type == "ROUND_VOTE":
+            event, vote, phase, round_, epoch, signed = decode_round_vote(message)
+            if self.halted or epoch != self.committee.epoch:
+                return _NOTHING
+            return DriverOutput(broadcasts=tuple(self.rounds.handle_round_vote(event, vote, phase, round_, signed)))
+
+        if message_type == "NEW_ROUND":
+            report, epoch = decode_new_round(message)
+            if self.halted or epoch != self.committee.epoch:
+                return _NOTHING
+            # A member still in rounds for a key this node has a decision for: the decision is the answer.
+            known = self._known.get((report.sender, report.nonce))
+            if known is not None and known.decides(self.replica.committee_of(known)):
+                return DriverOutput(replies=(encode_certificate(known),))
+            return DriverOutput(broadcasts=tuple(self.rounds.handle_new_round(report)))
+
+        if message_type == "PROPOSAL":
+            proposal, epoch = decode_proposal(message)
+            if self.halted or epoch != self.committee.epoch:
+                return _NOTHING
+            return DriverOutput(broadcasts=tuple(self.rounds.handle_proposal(proposal)))
 
         raise ValueError("NOT A QUORUM MESSAGE")
 
@@ -479,7 +528,7 @@ class QuorumDriver:
         self._change = change
         self._reports = {}
         self._epoch_activity = self._clock()
-        report = self.replica.report_epoch(change)
+        report = self._report(change)
 
         if report is not None:
             self._reports[report.validator] = report
@@ -491,8 +540,20 @@ class QuorumDriver:
         """Call it now and then: what is in progress goes on."""
         epoch = self._retry_epoch()
         snapshot = self._snapshot_tick()
+        rounds = () if self.halted else tuple(self.rounds.tick())
+
+        rounds += tuple(getattr(self, "_pending_reports", ()))
+        self._pending_reports = ()
+
+        # A closure that waited for decisions: the report goes to every member, since whoever
+        # collects it may be any of them.
+        if self._closing is not None and not self.halted:
+            change = self._closing
+            report = self._report(change)
+            if report is not None:
+                rounds += (encode_epoch_report(change.change_id, report),)
         return DriverOutput(
-            broadcasts=(*epoch.broadcasts, *snapshot.broadcasts, *self._resend_requests()),
+            broadcasts=(*epoch.broadcasts, *snapshot.broadcasts, *self._resend_requests(), *rounds),
         )
 
     def resend_soon(self) -> None:
@@ -575,30 +636,28 @@ class QuorumDriver:
         for pending in due:
             pending.wait = min(2 * pending.wait, self.RESEND_LONGEST_SECONDS)
             pending.due = now + pending.wait
-            certificate = self._own_vote_after_a_restart(pending)
-            messages.append(
-                encode_vote_request(pending.signed)
-                if certificate is None
-                else encode_certificate(certificate)
-            )
+            own = self._own_vote_after_a_restart(pending)
+            messages.extend(own or [encode_vote_request(pending.signed)])
 
         self.requests_resent += len(messages)
         return messages
 
-    def _own_vote_after_a_restart(self, pending: _Resend) -> QuorumCertificate | None:
+    def _own_vote_after_a_restart(self, pending: _Resend) -> list[dict]:
         """
         Through the same check as any vote. A store restored from a backup refuses, and stays as it
         was: it signs nothing, it gathers the votes of the others, and that needs one more of them.
         """
         if not pending.needs_own_vote:
-            return None
+            return []
 
         event = pending.signed.transfer
         vote = self.replica.handle_vote_request(event, pending.signed)
 
         if vote is None:
-            return None
+            return []
 
+        self.rounds.learn(pending.signed)
+        self.rounds.voted_round_0(event)
         pending.needs_own_vote = False
         _, votes = self._aggregating[event.canonical()]
         votes[vote.validator] = vote
@@ -623,7 +682,7 @@ class QuorumDriver:
                 return _NOTHING
 
             self._change = reported
-            report = self.replica.report_epoch(reported)
+            report = self._report(reported)
 
             if report is not None:
                 self._reports[report.validator] = report
@@ -811,7 +870,7 @@ class QuorumDriver:
             self._cost += BAD_SIGNATURE_COST
             return _NOTHING
 
-        report = self.replica.report_epoch(change)
+        report = self._report(change)
 
         if report is None:
             return _NOTHING
@@ -877,6 +936,10 @@ class QuorumDriver:
         # Votes collected so far were signed for the committee that has ended.
         self._aggregating.clear()
         self._change = None
+        # So were the rounds: a new committee starts its keys anew, under the locks of the closure.
+        self._closing = None
+        self._prepares.clear()
+        self.rounds = RoundDriver(self)
         self._reports = {}
         self._epoch_activity = self._clock()
         self._snapshot = None
@@ -893,7 +956,7 @@ class QuorumDriver:
         certificate, send that instead. If the vote is refused, nobody is asked,
         because an honest node does not ask for what it would not sign.
         """
-        if self.halted or not self._is_admitted(signed.transfer):
+        if self.halted or self._closing is not None or not self._is_admitted(signed.transfer):
             return _NOTHING
 
         if not self._is_authorized(signed):
@@ -917,12 +980,14 @@ class QuorumDriver:
         if vote is None:
             return _NOTHING
 
+        self.rounds.learn(signed)
+        self.rounds.voted_round_0(event)
         _, votes = self._aggregating.setdefault(event.canonical(), (event, {}))
         votes[vote.validator] = vote
-        certificate = self._complete(event, votes)
+        complete = self._complete(event, votes)
 
-        if certificate is not None:
-            return DriverOutput(broadcasts=(encode_certificate(certificate),))
+        if complete:
+            return DriverOutput(broadcasts=tuple(complete))
 
         self._to_resend.setdefault(
             event.canonical(),
@@ -949,7 +1014,7 @@ class QuorumDriver:
 
     def _handle_vote_request(self, signed: SignedTransfer) -> DriverOutput:
         # The cheap check first: a request this node would refuse anyway costs no signature.
-        if not self._is_admitted(signed.transfer):
+        if self._closing is not None or not self._is_admitted(signed.transfer):
             return _NOTHING
 
         if not self._is_authorized(signed):
@@ -958,11 +1023,13 @@ class QuorumDriver:
 
         # Before the replica, because a vote refused is when the proof appears.
         self._record_signed(signed)
+        self.rounds.learn(signed)
         vote = self.replica.handle_vote_request(signed.transfer, signed)
 
         if vote is None:
             return _NOTHING
 
+        self.rounds.voted_round_0(signed.transfer)
         return DriverOutput(replies=(encode_vote(signed.transfer, vote),))
 
     def _handle_vote(self, event: Transfer, vote: Vote) -> DriverOutput:
@@ -994,41 +1061,118 @@ class QuorumDriver:
 
         # By validator, so that the same one twice counts once (idempotent).
         votes[vote.validator] = vote
-        certificate = self._complete(event, votes)
-
-        if certificate is None:
-            return _NOTHING
-
-        return DriverOutput(broadcasts=(encode_certificate(certificate),))
+        return DriverOutput(broadcasts=tuple(self._complete(event, votes)))
 
     def _complete(
         self,
         event: Transfer,
         votes: dict[int, Vote],
-    ) -> QuorumCertificate | None:
+    ) -> list[dict]:
+        """
+        With `2f+1` votes of round 0, a prepare certificate: sent, and the precommits follow. With all
+        `n`, a decision (the fast path). The votes are gathered until one of the two decides.
+        """
         if len(votes) < self.committee.quorum:
-            return None
+            return []
 
-        del self._aggregating[event.canonical()]
-        self._to_resend.pop(event.canonical(), None)
         certificate = QuorumCertificate(
             event,
             tuple(votes[validator] for validator in sorted(votes)),
             self.committee.epoch,
         )
-        self._accept(certificate)
-        return certificate
+        committee = self.committee
+
+        if certificate.decides(committee):
+            self._aggregating.pop(event.canonical(), None)
+            self._to_resend.pop(event.canonical(), None)
+            return [encode_certificate(certificate), *self._take_decision(certificate)]
+
+        if (event.sender, event.nonce, 0) in self._prepares:
+            return []
+
+        # Asking again cannot help any more: the precommits, and if need be the rounds, decide.
+        self._to_resend.pop(event.canonical(), None)
+        signed = self.rounds.signed.get(event.event_id())
+        return [encode_certificate(certificate, signed), *self._take_prepare(certificate)]
 
     def _handle_certificate(self, certificate: QuorumCertificate) -> DriverOutput:
         if self.halted:
             return _NOTHING
 
-        if self.replica.certificate_is_valid(certificate):
-            self._accept(certificate)
-        else:
+        if not self.replica.certificate_is_valid(certificate):
             self._cost += BAD_SIGNATURE_COST
+            return _NOTHING
 
-        return _NOTHING
+        if certificate.decides(self.replica.committee_of(certificate)):
+            return DriverOutput(broadcasts=tuple(self._take_decision(certificate)))
+
+        if certificate.epoch != self.committee.epoch:
+            return _NOTHING
+
+        return DriverOutput(broadcasts=tuple(self._take_prepare(certificate)))
+
+    def _take_prepare(self, certificate: QuorumCertificate) -> list[dict]:
+        """A valid prepare certificate of this epoch. Halt on another of the same round."""
+        event = certificate.event
+        key = (event.sender, event.nonce, certificate.round)
+        known = self._prepares.get(key)
+
+        if known is not None:
+            if known.event.canonical() != event.canonical():
+                self.replica.record_halt(known, certificate)
+                self._halted_now()
+            return []
+
+        self._prepares[key] = certificate
+        return self.rounds.prepare(certificate)
+
+    def _take_decision(self, certificate: QuorumCertificate) -> list[dict]:
+        """A valid decision: executed when it can run, and the rounds of its key stop."""
+        event = certificate.event
+        self._aggregating.pop(event.canonical(), None)
+        self._to_resend.pop(event.canonical(), None)
+        taken = self._accept(certificate)
+
+        if not taken or self.halted or certificate.epoch != self.committee.epoch:
+            return []
+
+        signed = self.rounds.signed.get(event.event_id()) or self.signed_events.get(event.event_id())
+        if signed is not None and signed.transfer.canonical() == event.canonical():
+            self.replica.record_round_evidence(signed)
+        elif self.rounds.enabled:
+            LOG.warning(
+                "decided without its sender's signature: not in the report of this node",
+                extra={"sender": event.sender, "nonce": event.nonce},
+            )
+
+        return self.rounds.decided(certificate)
+
+    def _undecided_votes(self) -> bool:
+        """A key this node voted on or takes part in the rounds of, with no decision yet."""
+        if not self.rounds.enabled:
+            return False
+        return any(state["decided"] is None for _, _, state in self.replica.round_states())
+
+    # How long a member waits, after an order to close, for the keys it voted on to be decided.
+    CLOSING_GRACE_SECONDS = 8.0
+
+    def _report(self, change: EpochChange) -> EpochReport | None:
+        """The report of this node for `change`, or None while it waits for its keys to be decided."""
+        if self._closing is None or self._closing.change_id != change.change_id:
+            self._closing_since = self._clock()
+            # The keys it voted on that are still open: the others hear of them now, not at a timeout.
+            self._pending_reports = self.rounds.hurry()
+        waited = self._clock() - self._closing_since
+        if self._undecided_votes() and waited < self.CLOSING_GRACE_SECONDS:
+            self._closing = change
+            return None
+        self._closing = None
+        return self.replica.report_epoch(change)
+
+    def _halted_now(self) -> None:
+        self._buffer.clear()
+        self._waiting.clear()
+        self._aggregating.clear()
 
     def _accept(self, certificate: QuorumCertificate) -> bool:
         """
@@ -1052,9 +1196,7 @@ class QuorumDriver:
                 return False
 
             self.replica.record_halt(known, certificate)
-            self._buffer.clear()
-            self._waiting.clear()
-            self._aggregating.clear()
+            self._halted_now()
             return False
 
         if known is None and self.replica.is_covered(event):
@@ -1073,6 +1215,9 @@ class QuorumDriver:
             # requires certValid && executableBool && r17Ready && !executed. A valid
             # certificate for a statically non-executable event is accepted as known
             # (idempotent/conflict-tracked) but never buffered/executed.
+            # Durable before anything else: a restart that lost it could not see a conflict with it.
+            self.replica.hold_decided(certificate)
+
             if not is_executable_event(event):
                 self._known[key] = certificate
                 LOG.info(

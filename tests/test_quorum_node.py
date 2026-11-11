@@ -82,7 +82,7 @@ class Committee4:
             event,
             tuple(
                 Vote.create(self.committee, self.members[index], event)
-                for index in (indexes or (1, 2, 3))
+                for index in (indexes or (0, 1, 2, 3))
             ),
         )
 
@@ -523,13 +523,16 @@ def test_quorum_of_votes_sends_the_certificate_to_every_peer(four):
     first, second = _attach(node, "peer-1"), _attach(node, "peer-2")
     node.submit(signed(A))
 
-    for index in (1, 2):
+    for index in (1, 2, 3):
         node._handle_peer_message(
             encode_vote(A, Vote.create(four.committee, four.members[index], A))
         )
 
+    # The prepare certificate, this node's precommit, then the decision of all four votes.
     for peer in (first, second):
-        assert decode_certificate(peer.sent[-1]).event == A
+        certificates = [decode_certificate(m) for m in peer.sent if m["type"] == "CERTIFICATE"]
+        assert [c.event for c in certificates] == [A, A]
+        assert certificates[-1].decides(four.committee)
     assert node.local_events == [A]
 
 
@@ -569,7 +572,8 @@ def test_no_send_happens_with_the_state_lock_held(four):
             encode_vote(other, Vote.create(four.committee, four.members[index], other))
         )
 
-    assert seen == [True, True, True]
+    # The reply, the request, then the prepare certificate and the precommit.
+    assert seen and all(seen)
 
 
 def test_peer_that_does_not_read_does_not_block_the_node(four):
@@ -965,7 +969,8 @@ def test_lost_certificate_leaves_that_node_behind_without_a_fork(network):
     behind = network.nodes[3]
 
     def deliver(destination, message):
-        return not (destination is behind and '"CERTIFICATE"' in message)
+        # The precommits would let it decide too: they are lost with the certificates.
+        return not (destination is behind and ('"CERTIFICATE"' in message or '"ROUND_VOTE"' in message))
 
     network.nodes[0].submit(signed(A))
     network.run(deliver)

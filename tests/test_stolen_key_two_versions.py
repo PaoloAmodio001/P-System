@@ -9,6 +9,8 @@ not turn the absence of a provable conflict into a halt.
 
 import pytest
 
+from network.quorum import QuorumDriver
+
 from core.attestation import QuorumCertificate, Vote
 from core.event import Transfer
 from core.signed_event import SignedTransfer
@@ -17,7 +19,8 @@ from tests.test_quorum_reports import CHANGE, COMMITTEE, MEMBERS, SENDER, Cluste
 
 
 def forged(event, epoch=0):
-    votes = tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS[:3])
+    # Every old key: stolen keys make a decision of round 0 of the ended committee.
+    votes = tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS)
     return QuorumCertificate(event, votes, epoch)
 
 
@@ -34,6 +37,12 @@ def close(cluster):
     for message in output.broadcasts:
         cluster.deliver(0, message, [1, 2, 3])
     assert cluster.epochs() == [1, 1, 1, 1]
+
+
+@pytest.fixture(autouse=True)
+def _close_at_once(monkeypatch):
+    # The closure does not wait for the split to be decided: what is tested is the lock it leaves.
+    monkeypatch.setattr(QuorumDriver, "CLOSING_GRACE_SECONDS", 0.0)
 
 
 @pytest.fixture

@@ -932,6 +932,22 @@ theorem decided_in_closure (hn : n = 3 * f + 1) (hF : F.length ≤ f) (hU : Unfo
   obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp (hwait k hkR hkF hk)
   exact ⟨k, hkR, hkF, by rw [hx, decisions_agree hn hF hU hkF hu hx hv]⟩
 
+/--
+**A decided value is in every closure that lists what its reporters voted for in any round.**
+No waiting is needed: whichever `2f+1` members report, one of them is honest and precommitted the
+value, or voted it in round 0 when the decision was fast.
+-/
+theorem voted_in_closure (hn : n = 3 * f + 1) (hF : F.length ≤ f) (hU : Unforgeable f auth F inputs)
+    {R : List (Fin n)} (hR : R.Nodup) (hRq : 2 * f + 1 ≤ R.length)
+    {u : Fin n} (hu : u ∉ F) {v : V} (hv : (final f auth inputs u).decided = some v) :
+    ∃ k, k ∈ R ∧ k ∉ F ∧
+      ((∃ r, (r, v) ∈ (final f auth inputs k).precommits) ∨ (0, v) ∈ (final f auth inputs k).prevotes) := by
+  rcases decision_grounds hU hu hv with ⟨r, C, hC, hCq, hCv⟩ | hfv
+  · obtain ⟨k, hkC, hkR, hkF⟩ := quorum_intersection_honest (F := F) hC hR hCq hRq (by omega)
+    exact ⟨k, hkR, hkF, Or.inl ⟨r, hCv k hkC hkF⟩⟩
+  · obtain ⟨k, hkR, hkF⟩ := honest_in hn hF hR hRq
+    exact ⟨k, hkR, hkF, Or.inr (hfv k hkF)⟩
+
 end Safety
 
 /-! ## The next epoch

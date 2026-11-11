@@ -52,7 +52,7 @@ REAL = Transfer(ALICE, BOB, 5, 1)
 
 
 def certificate(event: Transfer) -> QuorumCertificate:
-    return QuorumCertificate(event, tuple(Vote.create(COMMITTEE, m, event) for m in MEMBERS[:3]), 0)
+    return QuorumCertificate(event, tuple(Vote.create(COMMITTEE, m, event) for m in MEMBERS), 0)
 
 
 def open_replica(path, index=0, create=True) -> QuorumReplica:

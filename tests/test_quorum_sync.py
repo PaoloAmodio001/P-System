@@ -33,7 +33,7 @@ def wire(message: dict) -> dict:
     return json.loads(json.dumps(message))
 
 
-def certificate(event: Transfer, signers=(0, 1, 2)) -> QuorumCertificate:
+def certificate(event: Transfer, signers=(0, 1, 2, 3)) -> QuorumCertificate:
     return QuorumCertificate(
         event,
         tuple(Vote.create(COMMITTEE, MEMBERS[index], event) for index in signers),
@@ -213,7 +213,7 @@ def test_answer_respects_a_nonce_that_does_not_start_at_zero(make_driver):
                         event,
                         tuple(
                             Vote.create(committee, MEMBERS[index], event)
-                            for index in (0, 1, 2)
+                            for index in (0, 1, 2, 3)
                         ),
                     )
                 )

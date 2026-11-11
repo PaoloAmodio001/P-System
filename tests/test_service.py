@@ -587,7 +587,7 @@ def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
             encode_certificate(
                 QuorumCertificate(
                     event,
-                    tuple(Vote.create(committee, members[i], event) for i in range(3)),
+                    tuple(Vote.create(committee, members[i], event) for i in range(committee.n)),
                 )
             )
         )
@@ -711,7 +711,7 @@ def test_a_valid_certificate_is_final_whatever_the_node_is():
 
     members, committee, verifier = _verifier()
     event = Transfer("alice", "bob", 1, 0)
-    good = QuorumCertificate(event, tuple(Vote.create(committee, members[i], event) for i in range(3)))
+    good = QuorumCertificate(event, tuple(Vote.create(committee, members[i], event) for i in range(committee.n)))
     client = LyingClient({"/v1/certificates": encode_certificate(good), "/v1/closures": {"closures": []}})
     assert client.verify_final(event, verifier)
 

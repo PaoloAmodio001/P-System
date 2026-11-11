@@ -18,7 +18,7 @@ HANG_SECONDS = 120
 
 # The package network.quorum is mutated as one text: its modules one after the other, each after a
 # line that names it. A mutation is found wherever it is, and must still occur once in all of them.
-QUORUM_PARTS = ("common", "store", "replica", "driver", "runtime")
+QUORUM_PARTS = ("common", "store", "replica", "rounds", "driver", "runtime")
 _PART_LINE = "\n# ==== network/quorum/{}.py ====\n"
 
 
@@ -74,8 +74,31 @@ def _exec_into(name: str, text: str) -> None:
                 namespace[key] = changed[id(value)]
 
 
+_ARGUMENT_FILES: list[str] = []
+
+
+def source_argument(source: str) -> str:
+    """
+    A source for a command line: `@` and a file. The package is larger than what one argument of a
+    command line may hold.
+    """
+    import atexit
+    import tempfile
+
+    handle, path = tempfile.mkstemp(prefix="psystem-mutation-", suffix=".py")
+    with os.fdopen(handle, "w") as file:
+        file.write(source)
+    if not _ARGUMENT_FILES:
+        atexit.register(lambda: [os.path.exists(f) and os.remove(f) for f in _ARGUMENT_FILES])
+    _ARGUMENT_FILES.append(path)
+    return "@" + path
+
+
 def apply_source(module: str, source: str) -> None:
     """Run `source` in place of `module`. For network.quorum, the text of `quorum_source`."""
+    if source.startswith("@"):
+        source = Path(source[1:]).read_text()
+
     if module != "network.quorum":
         _exec_into(module, source)
         return
@@ -131,7 +154,7 @@ def run_tests_on(
         "-c",
         RUNNER,
         module,
-        source,
+        source_argument(source),
         *tests,
         "-q",
         "-x",

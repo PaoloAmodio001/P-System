@@ -280,7 +280,7 @@ def test_a_report_with_a_transfer_across_assets_is_refused():
 
 def test_a_certificate_moves_an_asset_on_a_node(driver):
     event = Transfer(account(ISSUER), account(ALICE), 40, 0)
-    votes = tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS[:3])
+    votes = tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS)
     driver.handle_message(encode_certificate(QuorumCertificate(event, votes)))
     assert driver.replica.state.balance(account(ALICE)) == 40
     assert driver.replica.state.balance(account(ISSUER)) == 960

@@ -55,7 +55,7 @@ def transfer(nonce: int, sender: str = ALICE, receiver: str = "bob", amount: int
 def certificate(event: Transfer) -> QuorumCertificate:
     return QuorumCertificate(
         event,
-        tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS[:3]),
+        tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS),
     )
 
 

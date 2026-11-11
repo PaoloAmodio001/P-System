@@ -152,8 +152,11 @@ def test_no_fork_for_any_vote_any_signature_and_any_delivery(tmp_path, faulty):
         certificates = {
             name: QuorumCertificate(events[name], tuple(votes[name])) for name in "ab"
         }
-        valid = {name for name in "ab" if len(votes[name]) >= QUORUM_OF_FOUR}
-        assert len(valid) <= 1, "two quorums: the counting itself would be wrong"
+        # A certificate of votes of round 0 decides with all four of them; with three it only
+        # prepares, and nothing runs on it alone (formal/lean/PSystem/QuorumRounds.lean).
+        prepared = {name for name in "ab" if len(votes[name]) >= QUORUM_OF_FOUR}
+        assert len(prepared) <= 1, "two quorums: the counting itself would be wrong"
+        valid = {name for name in "ab" if len(votes[name]) >= COMMITTEE.n}
 
         for pattern in itertools.product(DELIVERIES.values(), repeat=3):
             runs += 1
@@ -186,10 +189,14 @@ def test_no_fork_for_any_vote_any_signature_and_any_delivery(tmp_path, faulty):
             _undo_executions(directory)
 
     assert runs == 8 * 125
-    # The cases were not all the same one. By counting: with honest votes 3-0, 2-1, 1-2 and
-    # 0-3, a faulty member signing both always gives one of them three, and one signing
-    # less leaves 1-2 or 2-1 with no quorum on one of the sides.
-    expected_outcomes = {("a",), ("b",)} if faulty == "both" else {("a",), ("b",), ()}
+    # The cases were not all the same one. A decision needs the three honest votes on one side
+    # (3-0 or 0-3) and the faulty member signing that side too.
+    expected_outcomes = {
+        "both": {("a",), ("b",), ()},
+        "only a": {("a",), ()},
+        "only b": {("b",), ()},
+        "nothing": {()},
+    }[faulty]
     assert outcomes == expected_outcomes
 
 
@@ -246,15 +253,25 @@ def _two_faulty_members_certify_both(tmp_path):
     first = open_node(tmp_path / "0.sqlite", 0)
     second = open_node(tmp_path / "1.sqlite", 1)
     faulty = [MEMBERS[2], MEMBERS[3]]
-    certificate_a = QuorumCertificate(
+    prepare_a = QuorumCertificate(
         A,
         (ask_for_vote(first, A), *(Vote.create(COMMITTEE, m, A) for m in faulty)),
     )
-    certificate_b = QuorumCertificate(
+    prepare_b = QuorumCertificate(
         B,
         (ask_for_vote(second, B), *(Vote.create(COMMITTEE, m, B) for m in faulty)),
     )
-    return first, second, certificate_a, certificate_b
+    # Each honest node precommits on the prepare certificate it sees, as it should; with the two
+    # faulty precommits that is a commit certificate for each version.
+    certificates = []
+    for node, prepare in ((first, prepare_a), (second, prepare_b)):
+        deliver(node, prepare)
+        own = node._quorum.replica.sign_phase(prepare.event, "precommit", 0)
+        precommits = (own, *(Vote.create_phase(COMMITTEE, m, prepare.event, "precommit", 0) for m in faulty))
+        certificates.append(
+            QuorumCertificate(prepare.event, tuple(sorted(precommits, key=lambda v: v.validator)), 0, "precommit", 0)
+        )
+    return first, second, *certificates
 
 
 def test_beyond_f_faulty_members_the_fork_comes_back(tmp_path):
@@ -298,7 +315,7 @@ def test_permutations_of_the_same_certificates_give_the_same_node(tmp_path, seed
     certificates = [
         QuorumCertificate(
             event,
-            tuple(Vote.create(committee, MEMBERS[i], event) for i in (1, 2, 3)),
+            tuple(Vote.create(committee, MEMBERS[i], event) for i in (0, 1, 2, 3)),
         )
         for event in events
     ]
@@ -321,7 +338,7 @@ def test_permutations_of_the_same_certificates_give_the_same_node(tmp_path, seed
     assert len(results) == 1
 
 
-def test_certificates_lost_at_a_restart_can_be_delivered_again(tmp_path):
+def test_a_decision_waiting_at_a_restart_survives_it(tmp_path):
     path = tmp_path / "votes.sqlite"
     node = open_node(path, 0)
     child = Transfer(PAYER, "bob", 1, 1, (A.event_id(),))
@@ -329,19 +346,16 @@ def test_certificates_lost_at_a_restart_can_be_delivered_again(tmp_path):
     def certificate(event):
         return QuorumCertificate(
             event,
-            tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in (1, 2, 3)),
+            tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in (0, 1, 2, 3)),
         )
 
     deliver(node, certificate(child))
     assert executed(node) == []
     node.stop()
 
-    # What waited in memory is gone: the parent alone does not bring it back.
+    # The decision of the child is on disk (schema 8): the parent alone brings it back.
     node = open_node(path, 0, create=False)
     deliver(node, certificate(A))
-    assert executed(node) == [A]
-
-    deliver(node, certificate(child))
     assert executed(node) == [A, child]
     node.stop()
 

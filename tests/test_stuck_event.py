@@ -32,6 +32,16 @@ from tests.deployment_helpers import wait_until
 from tests.failure_evidence import ROOT, failures_directory
 from tests.test_quorum_node import GENESIS, PAYER, Committee4, signed
 
+from network.quorum.rounds import RoundDriver
+
+
+@pytest.fixture(autouse=True)
+def _no_round_timeouts(monkeypatch):
+    # These tests are about asking again; the rounds that follow a split have their own tests.
+    monkeypatch.setattr(RoundDriver, "ROUND_FIRST_SECONDS", float("inf"))
+    monkeypatch.setattr(RoundDriver, "ROUND_LONGEST_SECONDS", float("inf"))
+
+
 BURST = 50
 # Longer than a node waits between two tries of a peer that cannot be reached.
 A_CALL_BACK_WOULD_HAVE_COME = 3.0

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import quorum_source
+from tests.mutation_support import quorum_source, source_argument
 
 ROOT = Path(__file__).resolve().parent.parent
 ATTESTATION = (ROOT / "core" / "attestation.py").read_text()
@@ -130,7 +130,7 @@ IN_QUORUM = {
 
 def _run(attestation: str, quorum: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", RUNNER, attestation, quorum, *TESTS],
+        [sys.executable, "-c", RUNNER, attestation, source_argument(quorum), *TESTS],
         cwd=ROOT,
         capture_output=True,
         text=True,

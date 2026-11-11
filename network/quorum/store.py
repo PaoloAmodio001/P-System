@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from core.attestation import (
+    VOTE,
     ClosureHeader,
     Committee,
     EpochChange,
@@ -37,7 +38,8 @@ from network.remote_signer import make_private
 from network.quorum.common import VoteStoreError
 
 
-_SCHEMA_VERSION = "7"
+_SCHEMA_VERSION = "8"
+_SCHEMA_VERSION_7 = "7"
 _SCHEMA_VERSION_6 = "6"
 _SCHEMA_VERSION_5 = "5"
 _SCHEMA_VERSION_4 = "4"
@@ -134,6 +136,42 @@ _SIGNED_LOCK_COLUMNS = (
     "ALTER TABLE locks ADD COLUMN signature TEXT",
 )
 
+# What schema 8 adds: the rounds of each key (formal/lean/PSystem/QuorumRounds.lean), written before
+# any signature they allow, and the decisions held but not executed yet, which a restart must not lose:
+# they are what a conflict after a restart is detected with.
+_ROUND_TABLES = (
+    """
+    CREATE TABLE IF NOT EXISTS rounds (
+        epoch INTEGER NOT NULL,
+        sender TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        state TEXT NOT NULL,
+        PRIMARY KEY (epoch, sender, nonce)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS decided (
+        event_id TEXT PRIMARY KEY,
+        canonical TEXT NOT NULL,
+        signatures TEXT NOT NULL,
+        epoch INTEGER NOT NULL
+    )
+    """,
+    # The values this validator voted for in a later round, precommitted or decided, in each epoch, with
+    # the proof that the sender signed them: its report for the closure holds them as well as its votes
+    # of round 0, so that a decided value is in any closure (`voted_in_closure`).
+    """
+    CREATE TABLE IF NOT EXISTS round_evidence (
+        epoch INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        canonical TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        PRIMARY KEY (epoch, event_id)
+    )
+    """,
+)
+
 # In a file before schema 5. A closure no longer takes votes.
 _OLD_CLOSURE_VOTES = """
     CREATE TABLE closure_votes (
@@ -176,6 +214,7 @@ _SCHEMA = (
     *_EPOCH_TABLES,
     *_SNAPSHOT_TABLES,
     _GATHERING_TABLE,
+    *_ROUND_TABLES,
 )
 
 
@@ -191,8 +230,12 @@ def _event_from_canonical(canonical: str) -> Transfer:
 
 
 def _encode_signatures(certificate: QuorumCertificate) -> str:
+    """Votes of round 0 as a list, as before schema 8; the other phases with their round."""
+    votes = [[vote.validator, vote.signature.hex()] for vote in certificate.votes]
+    if certificate.phase == VOTE:
+        return json.dumps(votes, separators=(",", ":"))
     return json.dumps(
-        [[vote.validator, vote.signature.hex()] for vote in certificate.votes],
+        {"phase": certificate.phase, "round": certificate.round, "votes": votes},
         separators=(",", ":"),
     )
 
@@ -202,13 +245,19 @@ def _certificate_from_row(
     signatures: str,
     epoch: int = 0,
 ) -> QuorumCertificate:
+    data = json.loads(signatures)
+    phase, round_ = VOTE, 0
+    if type(data) is dict:
+        phase, round_, data = data["phase"], data["round"], data["votes"]
     return QuorumCertificate(
         _event_from_canonical(canonical),
         tuple(
             Vote(validator, bytes.fromhex(signature))
-            for validator, signature in json.loads(signatures)
+            for validator, signature in data
         ),
         epoch,
+        phase,
+        round_,
     )
 
 
@@ -255,13 +304,22 @@ def _is_halt_proof(
     `no_double_spend` excludes. `verify` comes first because it never raises, and
     the other checks assume well-formed events.
     """
-    return (
+    if not (
         first.verify(committee_of(first))
         and second.verify(committee_of(second))
         and first.event.sender == second.event.sender
         and first.event.nonce == second.event.nonce
         and first.event.canonical() != second.event.canonical()
-    )
+    ):
+        return False
+
+    # Two decisions, or two prepare certificates of one round: `decisions_agree` and
+    # `prepared_same_round` exclude both. A prepare certificate and a later decision for another
+    # value are not a proof: a value prepared and never decided can lose a later round.
+    if first.decides(committee_of(first)) and second.decides(committee_of(second)):
+        return True
+
+    return first.prepares() and second.prepares() and first.round == second.round
 
 
 class SqliteVoteStore:
@@ -404,18 +462,23 @@ class SqliteVoteStore:
             elif version == _SCHEMA_VERSION_3:
                 # A closure voted under schema 3 has only its digest.
                 self._connection.execute("ALTER TABLE closure_votes ADD COLUMN closure TEXT")
-            elif version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4):
+            elif version not in (
+                _SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4
+            ):
                 raise VoteStoreError("UNSUPPORTED VERSION OF THE VOTE STORE")
 
-            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5):
+            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5):
                 for statement in _SNAPSHOT_TABLES:
                     self._connection.execute(statement)
 
                 self._drop_closure_votes()
 
             if version != _SCHEMA_VERSION:
-                if version != _SCHEMA_VERSION_6:
+                if version not in (_SCHEMA_VERSION_7, _SCHEMA_VERSION_6):
                     self._connection.execute(_GATHERING_TABLE)
+
+                for statement in _ROUND_TABLES:
+                    self._connection.execute(statement)
 
                 columns = {row[1] for row in self._connection.execute("PRAGMA table_info(locks)")}
 
@@ -657,6 +720,7 @@ class SqliteVoteStore:
         event: Transfer,
         signed: SignedTransfer | None = None,
         gathering: bool = False,
+        round_state: dict | None = None,
     ) -> bool:
         """
         Apply the vote lock, `voteAllowed` and `lockAllows` in the model. False means that a
@@ -666,7 +730,8 @@ class SqliteVoteStore:
         possibly by an earlier call.
 
         `signed` is the proof to report at the end of the epoch. `gathering`: this node took the event
-        and asks votes for it, and that is written with the vote: see `gathering`.
+        and asks votes for it, and that is written with the vote: see `gathering`. `round_state`: the
+        rounds of the key with this vote as the vote of round 0, written in the same transaction.
 
         Raises instead of returning when nothing can be said about the write;
         no signature may follow an exception.
@@ -736,6 +801,9 @@ class SqliteVoteStore:
                 if gathering:
                     self._record_gathering(epoch, event_id)
 
+                if round_state is not None:
+                    self._write_round_state(epoch, event.sender, event.nonce, round_state)
+
                 self._commit()
                 return True
             except sqlite3.Error as error:
@@ -798,6 +866,158 @@ class SqliteVoteStore:
             finally:
                 self._rollback_if_open()
 
+    # Rounds: formal/lean/PSystem/QuorumRounds.lean.
+
+    def _write_round_state(self, epoch: int, sender: str, nonce: int, state: dict) -> None:
+        self._connection.execute(
+            "INSERT OR REPLACE INTO rounds (epoch, sender, nonce, state) VALUES (?, ?, ?, ?)",
+            (epoch, sender, str(nonce), json.dumps(state, sort_keys=True, separators=(",", ":"))),
+        )
+
+    def round_state(self, sender: str, nonce: int) -> dict | None:
+        """The rounds of a key in this epoch, as `Rounds.RState` encodes them, or None."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                row = self._connection.execute(
+                    "SELECT state FROM rounds WHERE epoch = ? AND sender = ? AND nonce = ?",
+                    (self.committee.epoch, sender, str(nonce)),
+                ).fetchone()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ ROUNDS: {error}") from error
+
+        return None if row is None else json.loads(row[0])
+
+    def round_states(self) -> list[tuple[str, int, dict]]:
+        """Every key with rounds in this epoch."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                rows = self._connection.execute(
+                    "SELECT sender, nonce, state FROM rounds WHERE epoch = ? ORDER BY rowid",
+                    (self.committee.epoch,),
+                ).fetchall()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ ROUNDS: {error}") from error
+
+        return [(sender, int(nonce), json.loads(state)) for sender, nonce, state in rows]
+
+    def record_round_state(self, sender: str, nonce: int, state: dict) -> bool:
+        """
+        Write the rounds of a key. True means it is durable and the signatures it allows may
+        follow; False that this node has halted or closed the epoch, and signs nothing more.
+        Raises when nothing can be said about the write.
+        """
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+
+                if self._is_halted() or self._is_closed(self.committee.epoch):
+                    return False
+
+                self._write_round_state(self.committee.epoch, sender, nonce, state)
+                self._commit()
+                return True
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"ROUNDS NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def hold_decided(self, certificate: QuorumCertificate) -> None:
+        """A decision that cannot run yet. Kept until it runs, so that a restart still knows it."""
+        event = certificate.event
+
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.execute(
+                    """
+                    INSERT OR IGNORE INTO decided (event_id, canonical, signatures, epoch)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        event.event_id(),
+                        event.canonical().decode(),
+                        _encode_signatures(certificate),
+                        certificate.epoch,
+                    ),
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"DECISION NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def record_round_evidence(self, signed: SignedTransfer) -> None:
+        """A value voted for in rounds or decided in this epoch, signed by its sender, for the closure."""
+        event = signed.transfer
+
+        with self._lock:
+            self._require_open()
+
+            try:
+                self._begin()
+                self._connection.execute(
+                    """
+                    INSERT OR IGNORE INTO round_evidence (epoch, event_id, canonical, public_key, signature)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self.committee.epoch,
+                        event.event_id(),
+                        event.canonical().decode(),
+                        signed.public_key.hex(),
+                        signed.signature.hex(),
+                    ),
+                )
+                self._commit()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"DECISION NOT RECORDED: {error}") from error
+            finally:
+                self._rollback_if_open()
+
+    def decided_held(self) -> list[QuorumCertificate]:
+        """The decisions held and not executed, oldest first. Not verified: the caller checks them."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                rows = self._connection.execute(
+                    "SELECT canonical, signatures, epoch FROM decided ORDER BY rowid"
+                ).fetchall()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ DECISIONS: {error}") from error
+
+        return [_certificate_from_row(*row) for row in rows]
+
+    def signed_vote(self, sender: str, nonce: int) -> SignedTransfer | None:
+        """This validator's vote for a key in this epoch, with the proof its sender signed it."""
+        with self._lock:
+            self._require_open()
+
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT votes.canonical, vote_evidence.public_key, vote_evidence.signature
+                    FROM votes JOIN vote_evidence
+                    ON vote_evidence.epoch = votes.epoch AND vote_evidence.event_id = votes.event_id
+                    WHERE votes.epoch = ? AND votes.sender = ? AND votes.nonce = ?
+                    """,
+                    (self.committee.epoch, sender, str(nonce)),
+                ).fetchone()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ VOTES: {error}") from error
+
+        if row is None:
+            return None
+        return SignedTransfer(_event_from_canonical(row[0]), bytes.fromhex(row[1]), bytes.fromhex(row[2]))
+
     def votes(self) -> list[Transfer]:
         with self._lock:
             self._require_open()
@@ -843,6 +1063,10 @@ class SqliteVoteStore:
                 )
                 self._connection.execute(
                     "DELETE FROM gathering WHERE event_id = ?",
+                    (event.event_id(),),
+                )
+                self._connection.execute(
+                    "DELETE FROM decided WHERE event_id = ?",
                     (event.event_id(),),
                 )
                 self._commit()
@@ -1202,6 +1426,17 @@ class SqliteVoteStore:
                 # A report without one of its votes could lose a certified event.
                 if any(row[1] is None for row in rows):
                     raise VoteStoreError("A VOTE HAS NO PROOF OF ITS SENDER: CANNOT REPORT")
+
+                # And the values it voted for in later rounds or decided, which may not be among its votes.
+                voted = {row[0] for row in rows}
+                rows += [
+                    row
+                    for row in self._connection.execute(
+                        "SELECT canonical, public_key, signature FROM round_evidence WHERE epoch = ? ORDER BY rowid",
+                        (epoch,),
+                    ).fetchall()
+                    if row[0] not in voted
+                ]
 
                 self._connection.execute(
                     "INSERT OR IGNORE INTO closed_epochs (epoch) VALUES (?)",

@@ -51,6 +51,13 @@ def make_private(path: Path, create: bool = False) -> None:
 # change of the format must make the signer refuse, not sign something it no longer understands.
 VOTE_DOMAIN = b"P-SYSTEM/QUORUM-VOTE/v1\0"
 EPOCH_REPORT_DOMAIN = b"P-SYSTEM/EPOCH-REPORT/v1\0"
+# Rounds: one signature of each kind for each key and round, the first or the same again.
+ROUND_DOMAINS = {
+    b"P-SYSTEM/QUORUM-PREVOTE/v1\0": "prevote",
+    b"P-SYSTEM/QUORUM-PRECOMMIT\0": "precommit",
+    b"P-SYSTEM/QUORUM-PROPOSAL/v1\0": "proposal",
+}
+ROUND_REPORT_DOMAIN = b"P-SYSTEM/QUORUM-REPORT/v1\0\0"
 SNAPSHOT_DOMAIN = b"P-SYSTEM/SNAPSHOT/v1\0"
 ID_SIZE = 32
 SIGNATURE_SIZE = 64
@@ -86,6 +93,19 @@ class SignerGuard:
         )
         self._connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS round_signatures (
+                committee TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                round TEXT NOT NULL,
+                body BLOB NOT NULL,
+                PRIMARY KEY (committee, kind, sender, nonce, round)
+            )
+            """
+        )
+        self._connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS report_locks (
                 committee TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
@@ -106,6 +126,13 @@ class SignerGuard:
 
         if payload.startswith(EPOCH_REPORT_DOMAIN):
             return self._permit_report(payload[len(EPOCH_REPORT_DOMAIN):])
+
+        for domain, kind in ROUND_DOMAINS.items():
+            if payload.startswith(domain):
+                return self._permit_round_event(kind, payload[len(domain):])
+
+        if payload.startswith(ROUND_REPORT_DOMAIN):
+            return self._permit_round_report(payload[len(ROUND_REPORT_DOMAIN):])
 
         # A snapshot is a claim about a state, with no lock to break: two can both be true. The signer
         # cannot recompute it, so a node taken over can make it sign a false one, as any faulty
@@ -136,6 +163,57 @@ class SignerGuard:
             (committee.hex(), sender, str(nonce)),
             canonical,
         )
+
+    def _permit_round(self, kind: str, committee: bytes, sender: str, nonce: int, round_: int, body: bytes) -> bool:
+        return self._first_or_same(
+            """
+            INSERT OR IGNORE INTO round_signatures (committee, kind, sender, nonce, round, body)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            """
+            SELECT body FROM round_signatures
+            WHERE committee = ? AND kind = ? AND sender = ? AND nonce = ? AND round = ?
+            """,
+            (committee.hex(), kind, sender, str(nonce), str(round_)),
+            body,
+        )
+
+    def _permit_round_event(self, kind: str, body: bytes) -> bool:
+        """A prevote, a precommit or a proposal: the committee, the round, then the event."""
+        committee, round_, canonical = body[:ID_SIZE], body[ID_SIZE:ID_SIZE + 8], body[ID_SIZE + 8:]
+
+        try:
+            event = json.loads(canonical)
+            sender, nonce = event["sender"], event["nonce"]
+        except (ValueError, KeyError, TypeError):
+            return False
+
+        if len(committee) != ID_SIZE or len(round_) != 8 or type(sender) is not str or type(nonce) is not int:
+            return False
+
+        return self._permit_round(kind, committee, sender, nonce, int.from_bytes(round_, "big"), canonical)
+
+    def _permit_round_report(self, body: bytes) -> bool:
+        """The committee, the key as a length, the sender and the nonce, the round, then the report."""
+        committee = body[:ID_SIZE]
+        rest = body[ID_SIZE:]
+
+        if len(committee) != ID_SIZE or len(rest) < 4:
+            return False
+
+        length = int.from_bytes(rest[:4], "big")
+
+        if len(rest) < 4 + length + 16:
+            return False
+
+        try:
+            sender = rest[4:4 + length].decode()
+        except UnicodeDecodeError:
+            return False
+
+        nonce = int.from_bytes(rest[4 + length:12 + length], "big")
+        round_ = int.from_bytes(rest[12 + length:20 + length], "big")
+        return self._permit_round("report", committee, sender, nonce, round_, rest[20 + length:])
 
     def _permit_report(self, body: bytes) -> bool:
         if len(body) != 3 * ID_SIZE:

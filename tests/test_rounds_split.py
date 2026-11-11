@@ -1,0 +1,208 @@
+"""The stall of a split vote, and the rounds that end it (formal/lean/PSystem/QuorumRounds.lean).
+
+Four validators, `f = 1`. A sender signs two versions of nonce 0, and two validators see one first
+and two the other: round 0 gives two votes to each, no version reaches the `2f+1 = 3` of a
+certificate. Before rounds the nonce stayed locked for ever (`test_split_stays_open_without_rounds`
+shows that this is still what round 0 does). With rounds, after a timeout every validator decides the
+same version and executes it.
+
+The drivers run in one process and exchange messages through `Network`, which can lose them or hold
+them back: what the model allows. The clock is the test's.
+"""
+
+from collections import deque
+
+import pytest
+
+from core.attestation import Committee
+from core.event import Transfer
+from core.signed_event import SignedTransfer
+from core.state import State
+from crypto.identity import Identity
+from network.message import encode_vote_request
+from network.quorum import QuorumConfig, QuorumRuntime
+
+SENDER = Identity.create()
+PAYER = SENDER.identity_id
+GENESIS = State({PAYER: 10})
+A = Transfer(PAYER, "bob", 8, 0)
+B = Transfer(PAYER, "carol", 8, 0)
+
+
+def signed(event: Transfer) -> SignedTransfer:
+    return SignedTransfer.create(SENDER, event)
+
+
+class Network:
+    """Four runtimes and the messages between them, delivered in order unless dropped."""
+
+    def __init__(self, directory, f: int = 1) -> None:
+        self.now = 0.0
+        members = sorted((Identity.create() for _ in range(3 * f + 1)), key=lambda i: i.public_key)
+        self.committee = Committee.create([m.public_key for m in members], f, GENESIS)
+        self.runtimes = [
+            QuorumRuntime(QuorumConfig(self.committee, member, directory / f"v{i}.sqlite", create=True), GENESIS)
+            for i, member in enumerate(members)
+        ]
+        for runtime in self.runtimes:
+            runtime.driver._clock = lambda: self.now
+            runtime.driver.rounds.started = {}
+        self.queue: deque = deque()
+        self.cut: set[tuple[int, int]] = set()
+
+    @property
+    def drivers(self):
+        return [runtime.driver for runtime in self.runtimes]
+
+    def send(self, origin: int, output) -> None:
+        for message in output.broadcasts:
+            for target in range(len(self.runtimes)):
+                if target != origin:
+                    self.queue.append((origin, target, message))
+        for message in output.replies:
+            self.queue.append((None, origin, message, "reply-from"))
+
+    def deliver_to(self, target: int, message: dict, origin: int) -> None:
+        output = self.drivers[target].handle_message(message)
+        self.send(target, output)
+        for reply in output.replies:
+            # A reply goes back to whoever asked.
+            self.queue.append((target, origin, reply))
+        # Replies were queued as broadcasts by `send` above when origin is None; nothing else here.
+
+    def run(self, limit: int = 100_000) -> None:
+        steps = 0
+        while self.queue and steps < limit:
+            item = self.queue.popleft()
+            steps += 1
+            if len(item) == 4:
+                continue
+            origin, target, message = item
+            if (origin, target) in self.cut:
+                continue
+            output = self.drivers[target].handle_message(message)
+            for reply in output.replies:
+                self.queue.append((target, origin, reply))
+            for broadcast in output.broadcasts:
+                for other in range(len(self.runtimes)):
+                    if other != target:
+                        self.queue.append((target, other, broadcast))
+        assert not self.queue, "messages did not settle"
+
+    def submit(self, index: int, event: SignedTransfer) -> None:
+        output = self.drivers[index].submit(event)
+        for broadcast in output.broadcasts:
+            for other in range(len(self.runtimes)):
+                if other != index:
+                    self.queue.append((index, other, broadcast))
+
+    def tick(self, seconds: float) -> None:
+        self.now += seconds
+        for index, driver in enumerate(self.drivers):
+            output = driver.retry()
+            for broadcast in output.broadcasts:
+                for other in range(len(self.runtimes)):
+                    if other != index:
+                        self.queue.append((index, other, broadcast))
+
+    def executed(self):
+        return [[c.event for c in runtime.replica.log] for runtime in self.runtimes]
+
+    def close(self) -> None:
+        for runtime in self.runtimes:
+            runtime.close()
+
+
+@pytest.fixture
+def network(tmp_path):
+    made = Network(tmp_path)
+    yield made
+    made.close()
+
+
+def split(network: Network) -> None:
+    """Validators 0 and 1 vote A, 2 and 3 vote B; each version's requests reach only its side."""
+    network.cut = {(0, 2), (0, 3), (1, 2), (1, 3), (2, 0), (2, 1), (3, 0), (3, 1)}
+    network.submit(0, signed(A))
+    network.submit(2, signed(B))
+    network.run()
+    network.cut = set()
+
+
+def test_split_stays_open_without_rounds(network):
+    split(network)
+    # Round 0 alone: two votes for each version, no certificate, nothing executed.
+    assert network.executed() == [[], [], [], []]
+    for driver in network.drivers:
+        state = driver.replica.round_state(PAYER, 0)
+        assert state["decided"] is None and state["round"] == 0
+
+    # However often the requests are sent again: each validator keeps its first vote.
+    for _ in range(5):
+        network.tick(0.3)
+        network.run()
+    assert network.executed() == [[], [], [], []]
+
+
+def test_rounds_end_the_split(network):
+    split(network)
+    network.tick(network.drivers[0].rounds.ROUND_FIRST_SECONDS + 0.1)
+    network.run()
+
+    executed = network.executed()
+    assert executed[0] in ([A], [B])
+    assert executed == [executed[0]] * 4
+    for driver in network.drivers:
+        state = driver.replica.round_state(PAYER, 0)
+        assert state["decided"] == executed[0][0].event_id()
+        assert state["round"] >= 1
+
+
+def test_a_faulty_leader_costs_a_round(network):
+    split(network)
+    first_leader = network.drivers[0].rounds.leader(PAYER, 0, 1)
+    # The leader of round 1 hears nothing and says nothing.
+    network.cut = {(i, first_leader) for i in range(4)} | {(first_leader, i) for i in range(4)}
+    network.tick(network.drivers[0].rounds.ROUND_FIRST_SECONDS + 0.1)
+    network.run()
+    assert all(not log for i, log in enumerate(network.executed()) if i != first_leader)
+
+    # Round 2 has another leader: the three others decide.
+    network.tick(network.drivers[0].rounds.timeout_of(1) + 0.1)
+    network.run()
+    others = [log for i, log in enumerate(network.executed()) if i != first_leader]
+    assert others[0] in ([A], [B]) and others == [others[0]] * 3
+
+    # The leader that was cut off catches up when it hears again.
+    network.cut = set()
+    network.tick(network.drivers[0].rounds.timeout_of(2) + 0.1)
+    network.run()
+    assert network.executed() == [others[0]] * 4
+
+
+def test_without_a_split_round_0_decides_in_one_step(network):
+    network.submit(0, signed(A))
+    network.run()
+    # All four voted A: the fast path, no precommit and no timeout.
+    assert network.executed() == [[A]] * 4
+    for driver in network.drivers:
+        assert driver.replica.round_state(PAYER, 0)["round"] == 0
+
+
+def test_a_proposal_not_from_the_leader_is_ignored(network):
+    from core.attestation import RoundProposal, RoundReport
+
+    split(network)
+    leader = network.drivers[0].rounds.leader(PAYER, 0, 1)
+    other = (leader + 1) % 4
+    impostor = network.runtimes[other].replica
+    reports = tuple(
+        RoundReport.create(network.committee, runtime.replica._identity, PAYER, 0, 1, None, None)
+        for runtime in network.runtimes[:3]
+    )
+    proposal = RoundProposal.create(network.committee, impostor._identity, 1, signed(B), reports)
+
+    for driver in network.drivers:
+        assert driver.rounds.handle_proposal(proposal) == []
+        state = driver.replica.round_state(PAYER, 0)
+        assert all(round_ == 0 for round_, _ in state["prevotes"])
