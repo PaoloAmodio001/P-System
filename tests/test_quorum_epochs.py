@@ -485,6 +485,41 @@ def test_a_halted_node_takes_no_part(cluster):
     assert driver.propose_epoch_change(change).broadcasts == ()
 
 
+def test_a_proposer_that_voted_closes_the_epoch_after_the_rounds_decide(cluster):
+    # The proposer of an order waits, before reporting, for the keys it voted on: the retries
+    # that run after the rounds decided them are the ones that take its report into the closure.
+    first, second = spend(0, "first"), spend(0, "second")
+    cluster.drivers[1].handle_message(wire(encode_vote_request(first)))
+    cluster.drivers[2].handle_message(wire(encode_vote_request(second)))
+    for voter in (1, 2):
+        cluster.drivers[voter].rounds.ROUND_FIRST_SECONDS = 0.0
+        for message in cluster.drivers[voter].retry().broadcasts:
+            for other in range(4):
+                if other != voter:
+                    cluster.drivers[other].handle_message(wire(message))
+
+    for driver in cluster.drivers:
+        driver.CLOSING_GRACE_SECONDS = 8.0
+        driver.EPOCH_RETRY_SECONDS = 0.0
+
+    change = _same_members_change()
+    proposer = cluster.drivers[1]
+    proposer.propose_epoch_change(change)
+    assert proposer._closing is not None
+
+    cluster.settle()
+
+    # The key the proposer voted on is decided now, so the retries that run afterwards are the
+    # ones that take its report into the closure, and the order it proposed gets closed.
+    assert all(driver.committee.epoch == 1 for driver in cluster.drivers)
+
+    closures = cluster.drivers[0].replica._store.closures()
+    assert closures
+    # The closure of the epoch the proposer closed includes the report of the proposer itself:
+    # the order it proposed is closed by the report it took from its own decision.
+    assert 1 in [report.validator for report in closures[-1].reports]
+
+
 # --- Locks ------------------------------------------------------------------------------
 
 

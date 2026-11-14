@@ -146,8 +146,8 @@ QUORUM = {
         "        for _once in [0]:\n            progress = False\n",
     ),
     "a parent not checked when deriving": (
-        "            event.event_id() not in ids\n            and set(event.parents) <= ids\n",
-        "            event.event_id() not in ids\n",
+        "        known = [x for x in (event.event_id(), *event.parents) if x in ids]\n",
+        "        known = [x for x in (event.event_id(),) if x in ids]\n",
     ),
     # What a node takes.
     "a snapshot of an ended committee is taken": (

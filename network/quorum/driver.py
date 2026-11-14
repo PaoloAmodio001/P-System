@@ -551,16 +551,26 @@ class QuorumDriver:
         rounds += tuple(getattr(self, "_pending_reports", ()))
         self._pending_reports = ()
 
+        broadcasts = (*epoch.broadcasts, *snapshot.broadcasts, *self._resend_requests(), *rounds)
+
         # A closure that waited for decisions: the report goes to every member, since whoever
-        # collects it may be any of them.
+        # collects it may be any of them. The one that waited for its own keys to be decided is
+        # here, and it is the one that has to take the report into the set it collects: without
+        # that, the quorum it completes is never checked, and the order it reported for is never
+        # closed by it.
         if self._closing is not None and not self.halted:
             change = self._closing
             report = self._report(change)
             if report is not None:
-                rounds += (encode_epoch_report(change.change_id, report),)
-        return DriverOutput(
-            broadcasts=(*epoch.broadcasts, *snapshot.broadcasts, *self._resend_requests(), *rounds),
-        )
+                self._reports[report.validator] = report
+                closed = self._closure_if_reported()
+                broadcasts = (
+                    *broadcasts,
+                    encode_epoch_report(change.change_id, report),
+                    *closed.broadcasts,
+                )
+
+        return DriverOutput(broadcasts=broadcasts)
 
     def resend_soon(self) -> None:
         """A new connection: what was lost on the old one need not wait for its turn."""
@@ -692,6 +702,12 @@ class QuorumDriver:
 
             if report is not None:
                 self._reports[report.validator] = report
+
+        if self._closing is not None:
+            # Waiting for the keys this node voted on to be decided: its own report is still
+            # owed, and it is the retries that carry it in, so there is no closure to take yet.
+            self._epoch_activity = self._clock()
+            return _NOTHING
 
         self._epoch_activity = self._clock()
         closed = self._closure_if_reported()

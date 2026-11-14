@@ -55,8 +55,9 @@ MUTATIONS = {
             "            pass\n",
         ),
         "nothing sent again within a round": (
-            "                self.resent_at[key] = now\n                out.extend(self.sent[key][1])\n",
-            "                self.resent_at[key] = now\n",
+            "                    kept = self.sent.get(key, (state[\"round\"], []))[1]\n"
+            "                    out.extend(message for message in kept if message not in retry)\n",
+            "                    kept = self.sent.get(key, (state[\"round\"], []))[1]\n",
         ),
         "a proposal is taken from anyone": (
             "        if not proposal.verify_leader(self.committee, self.leader(sender, nonce, proposal.round)):\n",

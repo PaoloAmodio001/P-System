@@ -987,6 +987,32 @@ class SqliteVoteStore:
             finally:
                 self._rollback_if_open()
 
+    def round_evidence(self) -> list[SignedTransfer]:
+        """Sender proofs for values voted for in later rounds in this epoch."""
+        with self._lock:
+            self._require_open()
+            try:
+                rows = self._connection.execute(
+                    """
+                    SELECT canonical, public_key, signature
+                    FROM round_evidence
+                    WHERE epoch = ?
+                    ORDER BY rowid
+                    """,
+                    (self.committee.epoch,),
+                ).fetchall()
+            except sqlite3.Error as error:
+                raise VoteStoreError(f"CANNOT READ ROUND EVIDENCE: {error}") from error
+
+        return [
+            SignedTransfer(
+                _event_from_canonical(canonical),
+                bytes.fromhex(public_key),
+                bytes.fromhex(signature),
+            )
+            for canonical, public_key, signature in rows
+        ]
+
     def decided_held(self) -> list[QuorumCertificate]:
         """The decisions held and not executed, oldest first. Not verified: the caller checks them."""
         with self._lock:

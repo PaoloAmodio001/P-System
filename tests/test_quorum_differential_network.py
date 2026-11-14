@@ -556,6 +556,27 @@ def test_with_no_intervals_the_node_connected_to_asks_at_once(make_nodes):
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_node_asks_again_at_intervals(make_nodes, monkeypatch):
+    # The interval is the policy of asking what one lacks: a node that is linked and running asks
+    # again at intervals, not only when a connection is new, and not only while it waits for
+    # something. Nothing else happens in the loop, so the asks are only the ones of the clock.
+    nodes = make_nodes()
+    link(nodes)
+    assert wait_until(lambda: all(len(n.peer_connections) == 2 for n in nodes))
+
+    asked = []
+    real = Node._request_certificates
+
+    def spy(self, connection):
+        asked.append(self.node_id)
+        real(self, connection)
+
+    monkeypatch.setattr(Node, "_request_certificates", spy)
+    before = len(asked)
+    assert wait_until(lambda: len(asked) > before + 2, seconds=10)
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_a_restarted_node_recovers_what_it_missed(make_nodes, tmp_path):
     nodes = make_nodes()
     link(nodes)

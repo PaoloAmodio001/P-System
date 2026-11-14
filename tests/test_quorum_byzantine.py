@@ -232,6 +232,23 @@ def test_forged_signatures_of_honest_members_make_no_quorum(tmp_path):
     node.stop()
 
 
+def test_a_certificate_whose_signers_repeat_is_not_taken(tmp_path):
+    # The quorum is of distinct validators, and a certificate that does not hold is not even held
+    # as a decision: what a repeated signer would have signed is not a decision anybody can run on.
+    node = open_node(tmp_path / "0.sqlite", 0)
+    assert ask_for_vote(node, B) is not None
+    real = Vote.create(COMMITTEE, MEMBERS[3], B)
+    repeated = tuple(Vote(real.validator, real.signature) for _ in range(3))
+
+    deliver(node, QuorumCertificate(B, (real, *repeated)))
+
+    assert executed(node) == []
+    assert not node.conflicted
+    # Nothing was taken: no decision of what the repeated signer signed was held, and nothing ran.
+    assert not node._quorum.driver._known
+    node.stop()
+
+
 def test_a_node_that_voted_the_other_version_follows_a_commit(tmp_path):
     # After a split, the rounds can decide the version a node did not vote for in round 0: its vote
     # of round 0 must not stop it from executing the decision (`decisions_agree`).

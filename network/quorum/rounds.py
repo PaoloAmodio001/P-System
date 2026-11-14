@@ -67,12 +67,30 @@ class RoundDriver:
         # to a partition is sent again, and does not wait for the next timeout, up to a minute.
         self.sent: dict[tuple[str, int], tuple[int, list[dict]]] = {}
         self.resent_at: dict[tuple[str, int], float] = {}
+        # Only votes whose signature is still missing, with their last attempt time.
+        self.pending_signatures: dict[tuple, float] = {}
 
         if self.enabled:
+            for signed in self.replica.round_evidence():
+                self.learn(signed)
+
             now = self.clock()
             for sender, nonce, state in self.replica.round_states():
                 if state["decided"] is None:
                     self.started[(sender, nonce)] = now
+
+                    for round_, value in state["prevotes"]:
+                        if round_ >= 1:
+                            pending = (sender, nonce, PREVOTE, round_, value)
+                            self.pending_signatures[pending] = now
+
+                    for round_, value in state["precommits"]:
+                        pending = (sender, nonce, PRECOMMIT, round_, value)
+                        self.pending_signatures[pending] = now
+
+                    own = self.replica.own_vote0(sender, nonce)
+                    if own is not None:
+                        self.learn(own)
 
     @property
     def replica(self):
@@ -127,20 +145,32 @@ class RoundDriver:
 
         if after["decided"] is not None:
             self.started.pop(key, None)
+            for pending in list(self.pending_signatures):
+                if pending[:2] == key:
+                    self.pending_signatures.pop(pending, None)
         elif after["round"] != old["round"]:
             self.started[key] = self.clock()
+            self.resent_at[key] = self.clock()
 
         for round_, value in after["prevotes"]:
+            pending = (sender, nonce, PREVOTE, round_, value)
             if round_ >= 1 and [round_, value] not in old["prevotes"]:
                 vote, event = self._sign(value, PREVOTE, round_)
-                if vote is not None:
+                if vote is None:
+                    self.pending_signatures[pending] = self.clock()
+                else:
+                    self.pending_signatures.pop(pending, None)
                     out.append(self._round_vote_message(event, vote, PREVOTE, round_, epoch))
                     out.extend(self._count(event, vote, PREVOTE, round_))
 
         for round_, value in after["precommits"]:
+            pending = (sender, nonce, PRECOMMIT, round_, value)
             if [round_, value] not in old["precommits"]:
                 vote, event = self._sign(value, PRECOMMIT, round_)
-                if vote is not None:
+                if vote is None:
+                    self.pending_signatures[pending] = self.clock()
+                else:
+                    self.pending_signatures.pop(pending, None)
                     out.append(self._round_vote_message(event, vote, PRECOMMIT, round_, epoch))
                     out.extend(self._count(event, vote, PRECOMMIT, round_))
 
@@ -425,6 +455,54 @@ class RoundDriver:
 
     # --- Time ----------------------------------------------------------------------------------
 
+    def _retry_pending(self, key: tuple[str, int], state: dict, now: float) -> list[dict]:
+        sender, nonce = key
+        epoch = self.committee.epoch
+
+        authorized = {
+            (PREVOTE, round_, value)
+            for round_, value in state["prevotes"]
+            if round_ >= 1
+        }
+        authorized.update(
+            (PRECOMMIT, round_, value)
+            for round_, value in state["precommits"]
+        )
+
+        out: list[dict] = []
+
+        for pending, attempted_at in list(self.pending_signatures.items()):
+            p_sender, p_nonce, phase, round_, value = pending
+
+            if (p_sender, p_nonce) != key:
+                continue
+            if now - attempted_at < self.ROUND_FIRST_SECONDS:
+                continue
+            if (phase, round_, value) not in authorized:
+                self.pending_signatures.pop(pending, None)
+                continue
+
+            signed = self.signed.get(value)
+            self.pending_signatures[pending] = now
+
+            if signed is None:
+                continue
+
+            self.replica.record_round_evidence(signed)
+            vote = self.replica.sign_phase(signed.transfer, phase, round_)
+
+            if vote is None:
+                continue
+
+            self.pending_signatures.pop(pending, None)
+            out.append(self._round_vote_message(signed.transfer, vote, phase, round_, epoch))
+            out.extend(self._count(signed.transfer, vote, phase, round_))
+
+        if out:
+            self._remember(key, state, out)
+
+        return out
+
     def timeout_of(self, round_: int) -> float:
         return min(self.ROUND_FIRST_SECONDS * 2**round_, self.ROUND_LONGEST_SECONDS)
 
@@ -454,10 +532,19 @@ class RoundDriver:
                 continue
             if now - since >= self.timeout_of(state["round"]):
                 out.extend(self._step(*key, {"kind": "timeout"}))
-            elif key in self.sent and now - self.resent_at.get(key, now) >= self.ROUND_FIRST_SECONDS:
-                # Within the round: what may have been lost goes again (`good_round_decides` needs
-                # the messages of the round to arrive, not to arrive the first time).
-                self.resent_at[key] = now
-                out.extend(self.sent[key][1])
+            else:
+                pending_due = any(
+                    (pending[0], pending[1]) == key
+                    and now - attempted_at >= self.ROUND_FIRST_SECONDS
+                    for pending, attempted_at in self.pending_signatures.items()
+                )
+                resend_due = now - self.resent_at.get(key, now) >= self.ROUND_FIRST_SECONDS
+
+                if pending_due or resend_due:
+                    self.resent_at[key] = now
+                    retry = self._retry_pending(key, state, now)
+                    out.extend(retry)
+                    kept = self.sent.get(key, (state["round"], []))[1]
+                    out.extend(message for message in kept if message not in retry)
 
         return out

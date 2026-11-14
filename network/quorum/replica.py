@@ -476,6 +476,9 @@ class QuorumReplica:
     def record_round_evidence(self, signed: SignedTransfer) -> None:
         self._store.record_round_evidence(signed)
 
+    def round_evidence(self) -> list[SignedTransfer]:
+        return self._store.round_evidence()
+
     def decided_held(self) -> list[QuorumCertificate]:
         return self._store.decided_held()
 
@@ -641,13 +644,12 @@ class QuorumReplica:
         signers = [vote.validator for vote in certificate.votes]
         if not all(committee.has_validator(signer) for signer in signers):
             return None
-        if len(set(signers)) != len(signers) or len(signers) < quorum:
+        if len(signers) < quorum or not certificate.verify(committee):
+            # No quorum, no distinct signers, no valid signature: no vote of this certificate runs.
+            # The per-signer answer of the core is no for all of them, so that no partial count can
+            # decide on what does not hold.
             return [[signer, False] for signer in signers]
-        try:
-            payload = phase_payload(committee, certificate.phase, certificate.round, certificate.event)
-        except (ValueError, TypeError, AttributeError):
-            return None
-        return [[vote.validator, vote._verify_payload(committee, payload)] for vote in certificate.votes]
+        return [[vote.validator, True] for vote in certificate.votes]
 
     def _execution(self, certificate: QuorumCertificate, old_keys: bool) -> list | None:
         """The rows of the two accounts after the certificate if it executes now, else None."""

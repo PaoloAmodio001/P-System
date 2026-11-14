@@ -276,3 +276,214 @@ def test_after_a_long_partition_the_split_is_decided_soon_after_the_heal(network
     executed = network.executed()
     assert executed[0] in ([A], [B]) and executed == [executed[0]] * 4
     assert waited <= network.drivers[0].rounds.ROUND_FIRST_SECONDS + 1
+
+
+def test_round_vote_is_retried_after_signer_recovers(network):
+    split(network)
+
+    replica = network.runtimes[0].replica
+    rounds = network.drivers[0].rounds
+    original_sign_phase = replica.sign_phase
+    attempts = 0
+
+    def temporarily_unavailable(event, phase, round_):
+        nonlocal attempts
+        if phase == "prevote":
+            attempts += 1
+            if attempts == 1:
+                return None
+        return original_sign_phase(event, phase, round_)
+
+    replica.sign_phase = temporarily_unavailable
+
+    # Advance the network, then deliver messages only until node 0 attempts
+    # its authorized prevote. Stop before peer messages can decide the key.
+    network.tick(rounds.ROUND_FIRST_SECONDS + 0.1)
+
+    steps = 0
+    while network.queue and attempts == 0:
+        item = network.queue.popleft()
+        if len(item) == 4:
+            continue
+
+        origin, target, message = item
+        if (origin, target) in network.cut:
+            continue
+
+        output = network.drivers[target].handle_message(message)
+
+        for reply in output.replies:
+            network.queue.append((target, origin, reply))
+
+        for broadcast in output.broadcasts:
+            for other in range(len(network.runtimes)):
+                if other != target:
+                    network.queue.append((target, other, broadcast))
+
+        steps += 1
+        assert steps < 100_000, "messages did not reach the first signing attempt"
+
+    assert attempts == 1
+    state = replica.round_state(PAYER, 0)
+    assert state["decided"] is None
+    assert rounds.pending_signatures
+
+    # Discard queued peer messages: the key must remain undecided while the
+    # local retry is exercised.
+    network.queue.clear()
+
+    network.tick(rounds.ROUND_FIRST_SECONDS + 0.1)
+
+    assert attempts >= 2
+
+def test_precommit_vote_is_retried_after_signer_recovers(network):
+    from core.attestation import PRECOMMIT, PREVOTE, QuorumCertificate, Vote
+
+    split(network)
+    network.tick(2.1)
+
+    runtime = network.runtimes[0]
+    replica = runtime.replica
+    rounds = runtime.driver.rounds
+
+    assert replica.round_state(PAYER, 0)["round"] == 1
+
+    original_sign_phase = replica.sign_phase
+    attempts = 0
+
+    def temporarily_unavailable(event, phase, round_):
+        nonlocal attempts
+        if phase == PRECOMMIT:
+            attempts += 1
+            if attempts == 1:
+                return None
+        return original_sign_phase(event, phase, round_)
+
+    replica.sign_phase = temporarily_unavailable
+
+    votes = tuple(
+        Vote.create_phase(
+            network.committee,
+            network.runtimes[i]._identity,
+            A,
+            PREVOTE,
+            1,
+        )
+        for i in (1, 2, 3)
+    )
+    certificate = QuorumCertificate(
+        A, votes, network.committee.epoch, PREVOTE, 1
+    )
+
+    runtime.driver._handle_certificate(certificate)
+
+    assert attempts == 1
+    state = replica.round_state(PAYER, 0)
+    assert state["decided"] is None
+    assert [1, A.event_id()] in state["precommits"]
+
+    pending = (PAYER, 0, PRECOMMIT, 1, A.event_id())
+    assert pending in rounds.pending_signatures
+
+    # Round 1 lasts four seconds: retry is due before its timeout.
+    network.now += 2.1
+    output = runtime.driver.retry()
+
+    assert attempts >= 2
+    assert pending not in rounds.pending_signatures
+    assert any(
+        message.get("type") == "ROUND_VOTE"
+        and message.get("phase") == PRECOMMIT
+        for message in output.broadcasts
+    )
+
+
+def test_pending_round_vote_is_restored_after_restart(network):
+    split(network)
+
+    runtime = network.runtimes[0]
+    replica = runtime.replica
+    rounds = runtime.driver.rounds
+    original_sign_phase = replica.sign_phase
+    attempts = 0
+
+    def temporarily_unavailable(event, phase, round_):
+        nonlocal attempts
+        if phase == "prevote":
+            attempts += 1
+            if attempts == 1:
+                return None
+        return original_sign_phase(event, phase, round_)
+
+    replica.sign_phase = temporarily_unavailable
+
+    network.tick(rounds.ROUND_FIRST_SECONDS + 0.1)
+
+    # Deliver only until this validator attempts its prevote.
+    steps = 0
+    while network.queue and attempts == 0:
+        item = network.queue.popleft()
+        if len(item) == 4:
+            continue
+
+        origin, target, message = item
+        if (origin, target) in network.cut:
+            continue
+
+        output = network.drivers[target].handle_message(message)
+
+        for reply in output.replies:
+            network.queue.append((target, origin, reply))
+
+        for broadcast in output.broadcasts:
+            for other in range(len(network.runtimes)):
+                if other != target:
+                    network.queue.append((target, other, broadcast))
+
+        steps += 1
+        assert steps < 100_000, "messages did not reach the first signing attempt"
+
+    assert attempts == 1
+    assert replica.round_state(PAYER, 0)["decided"] is None
+    assert rounds.pending_signatures
+    assert A.event_id() in rounds.signed
+
+    network.queue.clear()
+
+    # Close and reopen the same SQLite store with the same validator identity.
+    identity = runtime._identity
+    store_path = runtime._config.store_path
+    runtime.close()
+
+    from network.quorum import QuorumConfig, QuorumRuntime
+    restored = QuorumRuntime(
+        QuorumConfig(network.committee, identity, store_path, create=False),
+        GENESIS,
+    )
+    network.runtimes[0] = restored
+
+    restored.driver._clock = lambda: network.now
+    restored_rounds = restored.driver.rounds
+    restored_rounds.started = {(PAYER, 0): network.now}
+
+    assert A.event_id() in restored_rounds.signed
+    assert any(
+        item[:2] == (PAYER, 0)
+        and item[2] == "prevote"
+        for item in restored_rounds.pending_signatures
+    )
+
+    # Give the restored pending signature a fresh retry interval.
+    for pending in restored_rounds.pending_signatures:
+        restored_rounds.pending_signatures[pending] = network.now
+
+    network.now += 2.1
+    output = restored.driver.retry()
+
+    assert not restored_rounds.pending_signatures
+    assert any(
+        message.get("type") == "ROUND_VOTE"
+        and message.get("phase") == "prevote"
+        for message in output.broadcasts
+    )
+
