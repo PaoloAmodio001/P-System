@@ -23,10 +23,10 @@ automatically prove that the Python implementation satisfies it.
 | Claim | Formal evidence | Empirical evidence | Status |
 |---|---|---|---|
 | Nodes with the same knowledge derive the same state, or both reject | `derive_knowledge_invariant` (`Agreement.lean`), from `executable_runs_same_state`, `derive_sound`, `derive_complete` | `tests/test_lean_differential.py` (Python vs Lean model, 3000 histories) | FORMAL (model); EMPIRICAL (Python) |
-| State derivation is independent of arrival order | `derive_perm_invariant` | `tests/test_transitive_relevance.py`, `tests/test_sync_order_independence.py`, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
+| State derivation is independent of arrival order | `derive_perm_invariant` | `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
 | Derivation rejects exactly the histories with no valid execution | `derive_eq_none_iff` | `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
 | Causal ordering is preserved | Every event runs after its declared parents in every valid execution, and so in the order computed by `derive` (`ValidSequence`, `derive_sound`) | `tests/test_derive.py`, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
-| Conflicting events are not jointly executable | In the derivation model two events of one sender with the same nonce cannot both run; covered by `derive_eq_none_iff` | `tests/test_conflict_closure.py`, `tests/test_lean_differential.py` and resolver tests | FORMAL for the derivation (model); EMPIRICAL (Python) |
+| Conflicting events are not jointly executable | In the derivation model two events of one sender with the same nonce cannot both run; covered by `derive_eq_none_iff` | `tests/test_lean_differential.py` and resolver tests | FORMAL for the derivation (model); EMPIRICAL (Python) |
 | Deterministic selection of the next event | `selectNext_spec` (smallest ready and executable id, the current Python rule) | Deterministic ordering tests, `tests/test_lean_differential.py` | FORMAL (model); EMPIRICAL (Python) |
 | A certificate of an ended committee counts only for an event in the locks. Two events accepted that way do not conflict if the locks hold one version of each spend | `old_certificate_outside_locks_refused`, `accepted_complete`, `old_keys_no_double_spend` | `tests/test_quorum_old_keys.py`, `tests/test_stolen_key_two_versions.py` | CONDITIONAL (model): `SingleVersion` is the whole case of two old certificates. EMPIRICAL (Python) |
 | A closure survives the death of its proposer, and two proposers at once | No theorem says so. `no_double_spend_any_closures` is about safety, and `one_order_never_blocks` only says that a member can still report for the one order | `tests/test_quorum_reports.py` | EMPIRICAL (Python). `one_order_never_blocks` is TRIVIAL (model) |
@@ -37,9 +37,6 @@ automatically prove that the Python implementation satisfies it.
 | With `n = 5f+1`, unlocking a split nonce loses no certified event | `certified_passes_threshold`, `no_double_spend_with_unlock` | `tests/test_unlock.py`, `tests/test_unlock_differential.py` | FORMAL (model), EMPIRICAL (Python) |
 | One validator across epochs follows the model | None | `tests/test_epoch_differential.py` | EMPIRICAL |
 | Safety under network faults between real processes | None | `tests/chaos.py`, `scripts/soak.py` | EMPIRICAL, on one machine |
-| Conflicting alternatives are preserved | None | `tests/test_conflict_rebuild_semantics.py` and reconciliation tests | EMPIRICAL |
-| Duplicate ingress is not fresh execution | None (precondition of the derivation theorems: distinct ids) | `tests/test_sync_idempotence.py`, canonical identity and lifecycle tests | EMPIRICAL |
-| Reconciliation preserves event knowledge | None | Network reconciliation and canonical-view tests | EMPIRICAL |
 | Retry delays are bounded, positive and unbounded in time | `backoff_bounded`, `backoff_positive`, `retryTime_ge_index`, `retry_hits_stable_availability` (`Backoff.lean`), properties of the formula | Reconnect and retry tests | FORMAL (formula only); not liveness |
 | Network security and authorization | None; no cryptography is modelled | Signature, authorization and TLS tests | EMPIRICAL |
 | Security-relevant service events are recorded in a local append-only hash chain, and an edit is detected | None | `tests/test_audit.py`, `tests/test_service.py` | EMPIRICAL; the file is local and its deletion is not detected |
@@ -48,7 +45,6 @@ automatically prove that the Python implementation satisfies it.
 | A node's state is what `derive` computes from the events it executed (quorum mode) | `state_is_derive` (`QuorumDerive.lean`) | Differentials A and B, driver and node tests | FORMAL (model); EMPIRICAL (Python) |
 | Two honest nodes that exchange logs reach the same state (quorum mode) | `convergence_after_exchange`, `exchange_executes_union` (`QuorumConvergence.lean`); delivery is in the statement | `tests/test_quorum_byzantine.py` (permutations of the same certificates), `tests/test_quorum_sync.py`, differential C | FORMAL (model); EMPIRICAL (Python); not liveness |
 | An executed event was accepted by the check of an honest validator (quorum mode) | `executed_authorized` (`QuorumSafety.lean`), with `auth` abstract | `tests/test_quorum_driver.py`, `tests/test_quorum_node.py`; signature and sender are checked in Python, `auth` is abstract in the model | FORMAL (model); EMPIRICAL (Python) |
-| The historical mode (`quorum=None`) prevents forks between honest nodes | None | `tests/test_p15_byzantine_safety.py` asserts the opposite: the nodes detect the conflict and keep different states | Not claimed; false for that mode |
 | Across a chain of committees, two conflicting events never both get a certificate. Execution across epochs is not in the model | `no_double_spend_across_epochs`, `closure_preserves_certified` (`QuorumEpochs.lean`) | `tests/test_quorum_epochs.py`, `tests/test_quorum_differential_epochs.py`, `tests/test_quorum_differential_processes.py` | FORMAL (model), for certification; EMPIRICAL (Python) for execution, and differential D covers one validator only |
 | Two certificates in conflict name the guilty members | `conflict_identifies_faulty` (`QuorumThresholds.lean`) | `guilty_members` in `tests/test_quorum_epochs.py`, `tests/test_service.py` | FORMAL (model); EMPIRICAL (Python) |
 | If `q` honest validators receive one version, see no conflict and each has a valid signature on it, each votes and those signatures make a valid certificate | `honest_sender_certifies` (`QuorumLiveness.lean`), with delivery as a hypothesis, and nobody gathering them modelled | `tests/test_quorum_differential_processes.py`, `tests/test_signature_collection.py` | CONDITIONAL (model); not liveness. Signature collection hardened/observable in Python (idempotent, outside-committee rejection, collection timeout); that a sender really gets a certificate is EMPIRICAL |
@@ -64,7 +60,7 @@ automatically prove that the Python implementation satisfies it.
 
 Theorems cited by earlier versions of this table (P01–P16, `R1_*`,
 `r17_*`, `apply_event_deterministic`) were removed from the Lean model;
-they are kept under the tag `pre-lean-cleanup`. The review that led to
+they are kept under commit `e10f4a4`. The review that led to
 the removal is summarised in `docs/PROOF-OBLIGATIONS.md`.
 
 The test paths and theorem names above are candidate evidence references
@@ -88,7 +84,7 @@ Do not claim superiority from the existence of benchmark scripts alone.
 
 1. Reproduce Python tests and the Lean build from a documented environment.
 2. Inspect each cited theorem statement and its assumptions.
-3. Map Python event, state, conflict, and reconciliation behavior to the formal model.
+3. Map Python event, state, conflict and synchronization behavior to the formal model.
 4. Run benchmarks and report comparative measurements.
 5. Curate tracked source files and exclude accidental files and local backups.
 6. Review the complete repository for secrets, licensing issues, and unsupported claims.

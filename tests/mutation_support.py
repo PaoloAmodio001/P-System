@@ -6,6 +6,7 @@ and 2 a test file that cannot be collected. Those two detect nothing, and treati
 as detections would hide a mutation that broke the wrong thing.
 """
 
+import importlib
 import os
 import signal
 import subprocess
@@ -15,14 +16,117 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 HANG_SECONDS = 120
 
+# The package network.quorum is mutated as one text: its modules one after the other, each after a
+# line that names it. A mutation is found wherever it is, and must still occur once in all of them.
+QUORUM_PARTS = ("common", "store", "replica", "rounds", "driver", "runtime")
+_PART_LINE = "\n# ==== network/quorum/{}.py ====\n"
+
+
+def _part_text(part: str) -> str:
+    return (ROOT / "network" / "quorum" / f"{part}.py").read_text()
+
+
+def quorum_source() -> str:
+    """The modules of network.quorum as one text, for `str.replace` and `apply_source`."""
+    return "".join(_PART_LINE.format(part) + _part_text(part) for part in QUORUM_PARTS)
+
+
+def source_of_module(module: str) -> str:
+    if module == "network.quorum":
+        return quorum_source()
+    return Path(importlib.import_module(module).__file__).read_text()
+
+
+def _exec_into(name: str, text: str) -> None:
+    module = importlib.import_module(name)
+    before = dict(module.__dict__)
+
+    if name.startswith("network.quorum."):
+        # A mutation can use a name that another module of the package defines or imports, as
+        # it could when they were one module.
+        for part in QUORUM_PARTS:
+            other = importlib.import_module(f"network.quorum.{part}")
+            if other is module:
+                continue
+            for key, value in other.__dict__.items():
+                if not key.startswith("__"):
+                    module.__dict__.setdefault(key, value)
+
+    exec(compile(text, module.__file__, "exec"), module.__dict__)
+
+    if not name.startswith("network.quorum"):
+        return
+
+    # The other modules of the package took these names when they were imported: they must see
+    # the mutated ones, as they did when quorum mode was a single module.
+    changed = {
+        id(old): module.__dict__[key]
+        for key, old in before.items()
+        if key in module.__dict__ and module.__dict__[key] is not old and not key.startswith("__")
+    }
+
+    for other in list(sys.modules.values()):
+        namespace = getattr(other, "__dict__", None)
+        if other is module or namespace is None:
+            continue
+        for key, value in list(namespace.items()):
+            if id(value) in changed:
+                namespace[key] = changed[id(value)]
+
+
+_ARGUMENT_FILES: list[str] = []
+
+
+def source_argument(source: str) -> str:
+    """
+    A source for a command line: `@` and a file. The package is larger than what one argument of a
+    command line may hold.
+    """
+    import atexit
+    import tempfile
+
+    handle, path = tempfile.mkstemp(prefix="psystem-mutation-", suffix=".py")
+    with os.fdopen(handle, "w") as file:
+        file.write(source)
+    if not _ARGUMENT_FILES:
+        atexit.register(lambda: [os.path.exists(f) and os.remove(f) for f in _ARGUMENT_FILES])
+    _ARGUMENT_FILES.append(path)
+    return "@" + path
+
+
+def apply_source(module: str, source: str) -> None:
+    """Run `source` in place of `module`. For network.quorum, the text of `quorum_source`."""
+    if source.startswith("@"):
+        source = Path(source[1:]).read_text()
+
+    if module != "network.quorum":
+        _exec_into(module, source)
+        return
+
+    pieces = source.split("\n# ==== network/quorum/")
+    if pieces[0] != "" or len(pieces) != len(QUORUM_PARTS) + 1:
+        raise ValueError("NOT A TEXT OF network.quorum")
+
+    texts = {}
+    for piece in pieces[1:]:
+        header, _, text = piece.partition(".py ====\n")
+        texts[header] = text
+
+    if set(texts) != set(QUORUM_PARTS):
+        raise ValueError("NOT A TEXT OF network.quorum")
+
+    for part in QUORUM_PARTS:
+        if texts[part] != _part_text(part):
+            _exec_into(f"network.quorum.{part}", texts[part])
+
+
 RUNNER = """
-import importlib
 import sys
 
-module = importlib.import_module(sys.argv[1])
+from tests.mutation_support import apply_source
 
 try:
-    exec(compile(sys.argv[2], module.__file__, "exec"), module.__dict__)
+    apply_source(sys.argv[1], sys.argv[2])
 except Exception:
     sys.exit(3)
 
@@ -50,7 +154,7 @@ def run_tests_on(
         "-c",
         RUNNER,
         module,
-        source,
+        source_argument(source),
         *tests,
         "-q",
         "-x",

@@ -96,7 +96,7 @@ class Cluster:
         )
 
     def certificate_message(self, event: Transfer, *indexes: int) -> dict:
-        return encode_certificate(self.certificate(event, *(indexes or (1, 2, 3))))
+        return encode_certificate(self.certificate(event, *(indexes or (0, 1, 2, 3))))
 
     def executed(self) -> list[bytes]:
         return [event.canonical() for event in self.driver.replica.executed]
@@ -208,7 +208,9 @@ def test_submit_again_after_a_restart_can_complete_the_certificate(cluster):
     assert driver.submit(signed(A)).broadcasts
 
     output = driver.handle_message(cluster.vote_message(A, 1))
-    assert [decode_certificate(m).event for m in output.broadcasts] == [A]
+    certificates = [decode_certificate(m) for m in output.broadcasts if m["type"] == "CERTIFICATE"]
+    assert [c.event for c in certificates] == [A]
+    assert not certificates[0].decides(cluster.committee)
 
 
 def test_submit_of_an_executed_event_sends_its_certificate(cluster):
@@ -329,9 +331,19 @@ def test_quorum_of_votes_makes_a_certificate_that_is_sent_and_executed(cluster):
     assert nothing(cluster.driver.handle_message(cluster.vote_message(A, 1)))
     output = cluster.driver.handle_message(cluster.vote_message(A, 2))
 
+    # 2f+1 votes prepare: the certificate goes out with this node's precommit, and nothing runs yet.
     certificate = decode_certificate(output.broadcasts[0])
     assert certificate.event == A
     assert certificate.verify(cluster.committee)
+    assert not certificate.decides(cluster.committee)
+    assert [m["type"] for m in output.broadcasts[1:]] == ["ROUND_VOTE"]
+    assert output.broadcasts[1]["phase"] == "precommit"
+    assert cluster.executed() == []
+
+    # All n votes decide (the fast path), and it runs.
+    output = cluster.driver.handle_message(cluster.vote_message(A, 3))
+    decision = decode_certificate(output.broadcasts[0])
+    assert decision.decides(cluster.committee)
     assert cluster.executed() == [A.canonical()]
 
 
@@ -346,10 +358,11 @@ def test_signers_of_a_new_certificate_are_in_order(cluster):
 
 def test_certificate_is_made_only_once(cluster):
     cluster.driver.submit(signed(A))
-    cluster.driver.handle_message(cluster.vote_message(A, 1))
-    cluster.driver.handle_message(cluster.vote_message(A, 2))
+    for index in (1, 2, 3):
+        cluster.driver.handle_message(cluster.vote_message(A, index))
 
     assert nothing(cluster.driver.handle_message(cluster.vote_message(A, 3)))
+    assert nothing(cluster.driver.handle_message(cluster.vote_message(A, 2)))
     assert cluster.executed() == [A.canonical()]
 
 
@@ -437,6 +450,7 @@ def test_same_certificate_twice_runs_once(cluster):
 def test_same_event_with_other_signers_is_not_a_conflict(cluster):
     cluster.driver.handle_message(cluster.certificate_message(A, 1, 2, 3))
     cluster.driver.handle_message(cluster.certificate_message(A, 0, 1, 2))
+    cluster.driver.handle_message(cluster.certificate_message(A, 0, 1, 2, 3))
 
     assert cluster.executed() == [A.canonical()]
     assert not cluster.driver.halted
@@ -512,6 +526,24 @@ def test_certificate_stays_waiting_after_a_failed_write(cluster):
     cluster.driver.handle_message(cluster.certificate_message(A))
 
     assert cluster.executed() == [A.canonical(), NEXT.canonical()]
+
+
+def test_certificate_held_stays_waiting_when_its_execution_fails(cluster, monkeypatch):
+    # The decision is on disk before it waits (store schema 8), so this write is the one that runs
+    # it. The same certificate again tries the buffer again.
+    real = cluster.store.append_certificate
+
+    def failing(certificate):
+        raise VoteStoreError("disk full")
+
+    monkeypatch.setattr(cluster.store, "append_certificate", failing)
+    with pytest.raises(VoteStoreError):
+        cluster.driver.handle_message(cluster.certificate_message(A))
+    assert cluster.executed() == []
+
+    monkeypatch.setattr(cluster.store, "append_certificate", real)
+    cluster.driver.handle_message(cluster.certificate_message(A))
+    assert cluster.executed() == [A.canonical()]
 
 
 def test_certificate_without_funds_waits_for_the_funds(cluster):

@@ -418,3 +418,146 @@ import PSystem
 #print axioms PSystem.Quorum.certified_can_have_one_report
 
 #print axioms PSystem.Quorum.threshold_rule_loses_a_certificate_3f1
+
+-- QuorumRounds.lean
+#print axioms PSystem.Rounds.inv_init
+
+#print axioms PSystem.Rounds.inv_step
+
+#print axioms PSystem.Rounds.inv_foldl
+
+#print axioms PSystem.Rounds.inv_runNode
+
+#print axioms PSystem.Rounds.maxBest_cons_ne_none
+
+#print axioms PSystem.Rounds.maxBest_spec
+
+#print axioms PSystem.Rounds.maxBest_isSome
+
+#print axioms PSystem.Rounds.mem_bestsOf
+
+#print axioms PSystem.Rounds.mem_votesOf
+
+#print axioms PSystem.Rounds.justified_best
+
+#print axioms PSystem.Rounds.justified_reporters
+
+#print axioms PSystem.Rounds.honest_in
+
+#print axioms PSystem.Rounds.inv_final
+
+#print axioms PSystem.Rounds.certOk_spec
+
+#print axioms PSystem.Rounds.prepared_same_round
+
+#print axioms PSystem.Rounds.prepared_of_input
+
+#print axioms PSystem.Rounds.prepared_of_precommit
+
+#print axioms PSystem.Rounds.prepared_of_committed
+
+#print axioms PSystem.Rounds.committed_shows_in_reports
+
+#print axioms PSystem.Rounds.best_prepared
+
+#print axioms PSystem.Rounds.committed_locks
+
+#print axioms PSystem.Rounds.count_filterMap
+
+#print axioms PSystem.Rounds.faulty_entries
+
+#print axioms PSystem.Rounds.find_unique
+
+#print axioms PSystem.Rounds.filter_length_le_of_imp
+
+#print axioms PSystem.Rounds.fast_locks
+
+#print axioms PSystem.Rounds.mem_of_all
+
+#print axioms PSystem.Rounds.decision_grounds
+
+#print axioms PSystem.Rounds.decisions_agree
+
+#print axioms PSystem.Rounds.grounds_agree
+
+#print axioms PSystem.Rounds.grounds_of_committed_input
+
+#print axioms PSystem.Rounds.decided_in_closure
+
+#print axioms PSystem.Rounds.voted_in_closure
+
+#print axioms PSystem.Rounds.locked_epoch_decides_the_lock
+
+#print axioms PSystem.Rounds.no_double_spend_next_epoch
+
+#print axioms PSystem.Rounds.foldl_timeouts
+
+#print axioms PSystem.Rounds.honest_nodup
+
+#print axioms PSystem.Rounds.honest_length
+
+#print axioms PSystem.Rounds.mem_goodReports
+
+#print axioms PSystem.Rounds.goodProposal_auth
+
+#print axioms PSystem.Rounds.goodProposal_justified
+
+#print axioms PSystem.Rounds.good_round_decides
+
+#print axioms PSystem.Rounds.honest_leader_within_n_rounds
+
+#print axioms PSystem.Rounds.split_votes_no_quorum
+
+#print axioms PSystem.Rounds.split_then_good_round_decides
+
+-- CoreExec.lean and Core.lean: what the Python node calls
+
+#print axioms PSystem.Core.certValid_checked
+
+#print axioms PSystem.Core.step_certificate
+
+#print axioms PSystem.Core.stateOf_sender
+
+#print axioms PSystem.Core.stateOf_receiver
+
+#print axioms PSystem.Core.executableBool_local
+
+#print axioms PSystem.Core.contains_idsOf
+
+#print axioms PSystem.Core.r17Ready_local
+
+#print axioms PSystem.Core.executes_local
+
+#print axioms PSystem.Core.apply_local
+
+#print axioms PSystem.Core.apply_elsewhere
+
+#print axioms PSystem.Core.voteAllowed_local
+
+#print axioms PSystem.Core.getNat_toJson
+
+#print axioms PSystem.Core.getStr_toJson
+
+#print axioms PSystem.Core.getBool_toJson
+
+#print axioms PSystem.Core.mapM_getNat
+
+#print axioms PSystem.Core.natList_json
+
+#print axioms PSystem.Core.event_json
+
+#print axioms PSystem.Core.row_json
+
+#print axioms PSystem.Core.member_json
+
+#print axioms PSystem.Core.signer_json
+
+#print axioms PSystem.Core.mapM_of_inverse
+
+#print axioms PSystem.Core.execRequest_json
+
+#print axioms PSystem.Core.voteRequest_json
+
+#print axioms PSystem.Core.execValue_json
+
+#print axioms PSystem.Core.voteValue_json

@@ -55,6 +55,18 @@ class Attestation:
 # formal/lean/PSystem/Quorum.lean; the link between the two is empirical.
 
 VOTE_DOMAIN = b"P-SYSTEM/QUORUM-VOTE/v1\0"
+# Votes of a round after the first, precommits and reports of a round. The tags differ within
+# their first 18 bytes, so that no signature of one kind is valid as another.
+PREVOTE_DOMAIN = b"P-SYSTEM/QUORUM-PREVOTE/v1\0"
+PRECOMMIT_DOMAIN = b"P-SYSTEM/QUORUM-PRECOMMIT\0"
+REPORT_DOMAIN = b"P-SYSTEM/QUORUM-REPORT/v1\0\0"
+
+# The phases of a certificate: votes of round 0 (the first version a validator saw), votes of
+# a later round (for the proposal of its leader), and precommits.
+VOTE = "vote"
+PREVOTE = "prevote"
+PRECOMMIT = "precommit"
+PHASES = (VOTE, PREVOTE, PRECOMMIT)
 ED25519_PUBLIC_KEY_SIZE = 32
 MAX_EVENT_INTEGER = 2**256 - 1
 _ROOT_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -232,6 +244,31 @@ class Committee:
         return type(validator) is int and 0 <= validator < self.n
 
 
+def phase_payload(committee: Committee, phase: str, round_: int, event: Transfer) -> bytes:
+    """
+    The bytes a validator signs for `event` in `phase` and `round_`. A vote of round 0 is the
+    vote of `vote_payload`, unchanged. The others carry the round, as eight bytes.
+    """
+    if phase == VOTE:
+        if round_ != 0:
+            raise ValueError("A VOTE IS OF ROUND 0")
+        return vote_payload(committee, event)
+
+    if phase == PREVOTE and round_ < 1:
+        raise ValueError("A PREVOTE IS OF A ROUND AFTER 0")
+
+    if phase not in PHASES or type(round_) is not int or not 0 <= round_ < 2**63:
+        raise ValueError("INVALID PHASE OR ROUND")
+
+    domain = PREVOTE_DOMAIN if phase == PREVOTE else PRECOMMIT_DOMAIN
+    return (
+        domain
+        + bytes.fromhex(committee.committee_id)
+        + round_.to_bytes(8, "big")
+        + event.canonical()
+    )
+
+
 def vote_payload(committee: Committee, event: Transfer) -> bytes:
     """
     The bytes a validator signs to vote for `event`.
@@ -279,15 +316,41 @@ class Vote:
             signature=identity.sign(vote_payload(committee, event)),
         )
 
+    @classmethod
+    def create_phase(
+        cls,
+        committee: Committee,
+        identity: Identity,
+        event: Transfer,
+        phase: str,
+        round_: int,
+    ) -> "Vote":
+        """A vote of a later round or a precommit. The rounds of the replica decide when."""
+        if not is_well_formed_event(event):
+            raise ValueError("MALFORMED EVENT")
+
+        validator = committee.index_of(identity.public_key)
+
+        if validator is None:
+            raise ValueError("IDENTITY IS NOT A COMMITTEE MEMBER")
+
+        return cls(
+            validator=validator,
+            signature=identity.sign(phase_payload(committee, phase, round_, event)),
+        )
+
     def verify(
         self,
         committee: Committee,
         event: Transfer,
+        phase: str = VOTE,
+        round_: int = 0,
     ) -> bool:
-        return is_well_formed_event(event) and self._verify_payload(
-            committee,
-            vote_payload(committee, event),
-        )
+        try:
+            payload = phase_payload(committee, phase, round_, event)
+        except (ValueError, TypeError, AttributeError):
+            return False
+        return is_well_formed_event(event) and self._verify_payload(committee, payload)
 
     def _verify_payload(
         self,
@@ -304,31 +367,46 @@ class Vote:
 @dataclass(frozen=True)
 class QuorumCertificate:
     """
-    An event with votes. Nothing about a value of this type is valid until
-    `verify` checks it.
+    An event with signatures of one phase and round. Nothing about a value of this type is
+    valid until `verify` checks it.
+
+    - `vote`, round 0: the votes of round 0. With `2f+1` of them it prepares the event; with all
+      `n` it decides it (the fast path).
+    - `prevote`, round `r >= 1`: votes for the proposal of the leader of round `r`. With `2f+1`
+      it prepares the event.
+    - `precommit`, round `r`: precommits on a prepare certificate of round `r`. With `2f+1` it
+      decides the event.
+
+    A prepare certificate alone does not decide: formal/lean/PSystem/QuorumRounds.lean.
     """
 
     event: Transfer
     votes: tuple[Vote, ...]
     epoch: int = 0
+    phase: str = VOTE
+    round: int = 0
 
     def verify(self, committee: Committee) -> bool:
         """
-        The rule of `certValid` in the model: pairwise distinct signers, at
-        least a quorum of them, and every signature valid. One bad signature
-        invalidates the certificate, even above the quorum.
+        The rule of `certValid` in the model: pairwise distinct signers, at least a quorum of
+        them, and every signature valid, for the phase and round of the certificate. One bad
+        signature invalidates the certificate, even above the quorum.
 
-        Signatures are checked last. After the checks on the signers there are
-        at most `n` of them, so a large certificate costs no verification.
+        Signatures are checked last. After the checks on the signers there are at most `n` of
+        them, so a large certificate costs no verification.
 
-        The checks on the types have no counterpart in the model, where these
-        values do not exist. Whatever the fields hold, the answer is False and not
-        an exception.
+        The checks on the types have no counterpart in the model, where these values do not
+        exist. Whatever the fields hold, the answer is False and not an exception.
         """
         if type(self.epoch) is not int or self.epoch != committee.epoch:
             return False
 
         if not is_well_formed_event(self.event):
+            return False
+
+        try:
+            payload = phase_payload(committee, self.phase, self.round, self.event)
+        except (ValueError, TypeError, AttributeError):
             return False
 
         if type(self.votes) is not tuple or not all(
@@ -347,11 +425,217 @@ class QuorumCertificate:
         if len(signers) < committee.quorum:
             return False
 
-        payload = vote_payload(committee, self.event)
-
         return all(
             vote._verify_payload(committee, payload)
             for vote in self.votes
+        )
+
+    def prepares(self) -> bool:
+        """With `verify`: a prepare certificate of `round`."""
+        return self.phase in (VOTE, PREVOTE)
+
+    def decides(self, committee: Committee) -> bool:
+        """
+        With `verify`: a decision, which the node executes. With the optional `n = 5f+1` there are
+        no rounds, and a quorum of votes of round 0 decides, as `no_double_spend_with_unlock` is
+        about; a split there waits for the end of the epoch.
+        """
+        if committee.unlock:
+            return self.phase == VOTE
+        if self.phase == PRECOMMIT:
+            return True
+        return self.phase == VOTE and len(self.votes) >= committee.n
+
+    @property
+    def key(self) -> tuple[str, int]:
+        return (self.event.sender, self.event.nonce)
+
+
+PROPOSAL_DOMAIN = b"P-SYSTEM/QUORUM-PROPOSAL/v1\0"
+
+
+def round_offset(sender: str, nonce: int) -> int:
+    """Where the leaders of a key start: rounds of different keys have different leaders."""
+    digest = sha256(sender.encode() + b"\0" + nonce.to_bytes(8, "big")).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def _key_bytes(sender: str, nonce: int) -> bytes:
+    encoded = sender.encode()
+    return len(encoded).to_bytes(4, "big") + encoded + nonce.to_bytes(8, "big")
+
+
+def _optional(data: bytes | None) -> bytes:
+    if data is None:
+        return b"\0"
+    return b"\1" + len(data).to_bytes(4, "big") + data
+
+
+@dataclass(frozen=True)
+class RoundReport:
+    """
+    What a member says when it enters `round` for a key: its vote of round 0, as the version
+    signed by the sender, and its highest prepare certificate. Signed by the member: the leader
+    shows these reports to justify its proposal (`Rounds.justified`).
+    """
+
+    sender: str
+    nonce: int
+    round: int
+    validator: int
+    vote0: SignedTransfer | None
+    best: QuorumCertificate | None
+    signature: bytes
+    # The event of `best` with its sender's signature, so that a leader can propose it. It
+    # proves itself, and is outside what the member signs.
+    best_value: SignedTransfer | None = None
+
+    @staticmethod
+    def payload(
+        committee: Committee,
+        sender: str,
+        nonce: int,
+        round_: int,
+        vote0: SignedTransfer | None,
+        best: QuorumCertificate | None,
+    ) -> bytes:
+        best_part = None
+        if best is not None:
+            best_part = (
+                best.round.to_bytes(8, "big") + best.phase.encode() + b"\0" + best.event.canonical()
+            )
+        return (
+            REPORT_DOMAIN
+            + bytes.fromhex(committee.committee_id)
+            + _key_bytes(sender, nonce)
+            + round_.to_bytes(8, "big")
+            + _optional(None if vote0 is None else vote0.transfer.canonical())
+            + _optional(best_part)
+        )
+
+    @classmethod
+    def create(
+        cls,
+        committee: Committee,
+        identity: Identity,
+        sender: str,
+        nonce: int,
+        round_: int,
+        vote0: SignedTransfer | None,
+        best: QuorumCertificate | None,
+        best_value: SignedTransfer | None = None,
+    ) -> "RoundReport":
+        validator = committee.index_of(identity.public_key)
+        if validator is None:
+            raise ValueError("IDENTITY IS NOT A COMMITTEE MEMBER")
+        payload = cls.payload(committee, sender, nonce, round_, vote0, best)
+        return cls(sender, nonce, round_, validator, vote0, best, identity.sign(payload), best_value)
+
+    def verify(self, committee: Committee) -> bool:
+        """
+        Signed by its member, about one key; its vote is a version of that key signed by the
+        sender; its prepare certificate is valid, of that key and of an earlier round.
+        """
+        if (
+            type(self.sender) is not str
+            or type(self.nonce) is not int
+            or type(self.round) is not int
+            or not 1 <= self.round < 2**63
+            or not 0 <= self.nonce < 2**63
+            or type(self.validator) is not int
+            or not committee.has_validator(self.validator)
+            or type(self.signature) is not bytes
+        ):
+            return False
+
+        if self.vote0 is not None:
+            if type(self.vote0) is not SignedTransfer or not is_authorized_transfer(self.vote0):
+                return False
+            if (self.vote0.transfer.sender, self.vote0.transfer.nonce) != (self.sender, self.nonce):
+                return False
+
+        if self.best is not None:
+            if type(self.best) is not QuorumCertificate:
+                return False
+            if self.best.key != (self.sender, self.nonce) or not self.best.prepares():
+                return False
+            if self.best.round >= self.round or not self.best.verify(committee):
+                return False
+
+        if self.best_value is not None:
+            if (
+                type(self.best_value) is not SignedTransfer
+                or self.best is None
+                or self.best_value.transfer.canonical() != self.best.event.canonical()
+                or not is_authorized_transfer(self.best_value)
+            ):
+                return False
+
+        try:
+            payload = self.payload(committee, self.sender, self.nonce, self.round, self.vote0, self.best)
+        except (ValueError, TypeError, AttributeError, OverflowError):
+            return False
+
+        return verify_signature(committee.members[self.validator], self.signature, payload)
+
+
+@dataclass(frozen=True)
+class RoundProposal:
+    """The value the leader of `round` proposes for a key, with the reports that justify it."""
+
+    round: int
+    value: SignedTransfer
+    reports: tuple[RoundReport, ...]
+    validator: int
+    signature: bytes
+
+    @property
+    def key(self) -> tuple[str, int]:
+        return (self.value.transfer.sender, self.value.transfer.nonce)
+
+    @staticmethod
+    def payload(committee: Committee, round_: int, value: Transfer) -> bytes:
+        return (
+            PROPOSAL_DOMAIN
+            + bytes.fromhex(committee.committee_id)
+            + round_.to_bytes(8, "big")
+            + value.canonical()
+        )
+
+    @classmethod
+    def create(
+        cls,
+        committee: Committee,
+        identity: Identity,
+        round_: int,
+        value: SignedTransfer,
+        reports: tuple[RoundReport, ...],
+    ) -> "RoundProposal":
+        validator = committee.index_of(identity.public_key)
+        if validator is None:
+            raise ValueError("IDENTITY IS NOT A COMMITTEE MEMBER")
+        signature = identity.sign(cls.payload(committee, round_, value.transfer))
+        return cls(round_, value, tuple(reports), validator, signature)
+
+    def verify_leader(self, committee: Committee, leader: int) -> bool:
+        """Signed by `leader`, for a version signed by its sender. The reports are checked one by one."""
+        if (
+            type(self.round) is not int
+            or not 1 <= self.round < 2**63
+            or type(self.validator) is not int
+            or self.validator != leader
+            or not committee.has_validator(self.validator)
+            or type(self.value) is not SignedTransfer
+            or not is_authorized_transfer(self.value)
+            or type(self.reports) is not tuple
+            or type(self.signature) is not bytes
+        ):
+            return False
+
+        return verify_signature(
+            committee.members[self.validator],
+            self.signature,
+            self.payload(committee, self.round, self.value.transfer),
         )
 
 

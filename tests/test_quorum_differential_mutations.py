@@ -5,18 +5,18 @@ must notice. A rule that can be removed without a difference is a rule the
 comparison does not test. The cases are those of the differential test, and each
 mutation stops at the first difference, so this is fast unless a mutation survives.
 
-Only VoteStoreError counts as noticed besides a different output: the unique
-constraint of the store is a second defense behind the check on ids. Any other
-exception fails the test, so a mutation written wrongly cannot pass as detected.
+Besides a different output, three failures count as noticed: VoteStoreError (the unique
+constraint of the store is a second defense behind the check on ids), the Lean core
+refusing an argument the model cannot hold, and the harness unable to install a snapshot.
+Any other exception fails the test, so a mutation written wrongly cannot pass as detected.
 """
 
 import pytest
 
 import core.attestation
 import tests.test_quorum_differential as differential
-from core.attestation import Committee, QuorumCertificate
-from core.derive import StateDeriver
-from network.quorum import QuorumReplica, SqliteVoteStore, VoteStoreError
+from core.attestation import Committee
+from network.quorum import QuorumReplica, SqliteVoteStore, VoteStoreError, lean_core
 from tests.test_quorum_check_driver import quorum_check  # noqa: F401
 from tests.test_quorum_differential import SEEDS, generate, python_run
 
@@ -33,6 +33,13 @@ def _first_difference(corpus, directory) -> int | None:
             python = python_run(case, directory)
         except VoteStoreError as error:
             print(f"[case {index}: store refused: {error}]")
+            return index
+        except lean_core.LeanCoreError as error:
+            print(f"[case {index}: the core refused an argument: {error}]")
+            return index
+        except AssertionError as error:
+            # The harness itself could not go on: a snapshot signed by a quorum did not install.
+            print(f"[case {index}: harness stopped: {error!r}]")
             return index
         if python != lean:
             print(f"[case {index}: output differs]")
@@ -57,8 +64,9 @@ class MemoryLockStore(SqliteVoteStore):
     def conflicts(self, old, new) -> bool:
         raise NotImplementedError
 
-    def record_vote(self, event, signed=None, gathering=False):
-        # `gathering` says only who asks for votes: no lock rule depends on it.
+    def record_vote(self, event, signed=None, gathering=False, round_state=None):
+        # `gathering` says only who asks for votes, and `round_state` is what the rounds keep: no
+        # lock rule depends on either.
         votes = self.votes_by_path[self._key]
         same = [v for v in votes if v.canonical() == event.canonical()]
         if any(self.conflicts(v, event) for v in votes if v not in same):
@@ -114,10 +122,10 @@ def test_refusing_a_repeated_vote_makes_no_difference_here(corpus, tmp_path, mon
     # Refusing or accepting a repeated vote gives no difference in the output, because
     # the event is already among the votes. Signing it again is tested elsewhere
     # (test_voting_again_gives_the_same_signature). This test records that limit.
-    def refuse_repeat(self, event, signed=None, gathering=False):
+    def refuse_repeat(self, event, signed=None, gathering=False, round_state=None):
         if any(v.canonical() == event.canonical() for v in original_votes(self)):
             return False
-        return original(self, event, signed, gathering)
+        return original(self, event, signed, gathering, round_state)
 
     original = SqliteVoteStore.record_vote
     original_votes = SqliteVoteStore.votes
@@ -160,95 +168,79 @@ def test_log_replayed_in_reverse_is_noticed(corpus, tmp_path, monkeypatch):
     assert _first_difference(corpus, tmp_path) is not None
 
 
-# --- Execution rules ------------------------------------------------------
+# --- Execution: what Python hands to the Lean core, and what it does with the answer ------------
+#
+# The rules of execution are `executes` and `ApplyEvent` of formal/lean/PSystem/CoreExec.lean, and
+# the replica calls them (`QuorumReplica._execution`). Mutating a rule means mutating the Lean code,
+# where it is proved. What can still go wrong is the Python around the call: the rows it reads, the
+# ids it passes, the checks of the signatures, the quorum, and how it writes the answer back.
+
+
+def _core_execute_with(rows_of=None, known_of=None):
+    def core_execute(n, quorum, state, ids, event, checks):
+        rows = (rows_of or (lambda s, e: [[a, s.balance(a), s.nonce(a)] for a in (e.sender, e.receiver)]))(
+            state, event
+        )
+        known = (known_of or (lambda i, e: [x for x in (e.event_id(), *e.parents) if x in i]))(ids, event)
+        return lean_core.execute(n, quorum, rows, known, event, checks)
+
+    return staticmethod(core_execute)
 
 
 @pytest.mark.parametrize(
-    "name",
-    ["_is_fresh", "_is_ready", "_is_executable"],
-)
-def test_removed_execution_check_is_noticed(corpus, tmp_path, monkeypatch, name):
-    monkeypatch.setattr(QuorumReplica, name, lambda self, event: True)
-    assert _first_difference(corpus, tmp_path) is not None
-
-
-def _failure(state, event):
-    return StateDeriver._execution_failure(state, event)
-
-
-@pytest.mark.parametrize(
-    "executable",
+    "rows_of,known_of",
     [
         pytest.param(
-            lambda r, e: e.sender != e.receiver and _failure(r.state, e) is None,
-            id="amount zero allowed",
+            lambda s, e: [[e.sender, s.balance(e.sender), s.nonce(e.sender)],
+                          [e.receiver, s.balance(e.sender), s.nonce(e.sender)]],
+            None,
+            id="receiver read as the sender",
         ),
         pytest.param(
-            lambda r, e: e.amount > 0 and _failure(r.state, e) is None,
-            id="self transfer allowed",
+            lambda s, e: [[e.sender, s.balance(e.receiver), s.nonce(e.sender)],
+                          [e.receiver, s.balance(e.receiver), s.nonce(e.receiver)]],
+            None,
+            id="balance of the sender read from the receiver",
         ),
-        pytest.param(
-            lambda r, e: e.amount > 0
-            and e.sender != e.receiver
-            and r.state.balance(e.sender) >= e.amount,
-            id="nonce not checked",
-        ),
-        pytest.param(
-            lambda r, e: e.amount > 0
-            and e.sender != e.receiver
-            and r.state.nonce(e.sender) == e.nonce,
-            id="balance not checked",
-        ),
-        pytest.param(
-            lambda r, e: e.amount > 0
-            and e.sender != e.receiver
-            and r.state.nonce(e.sender) == e.nonce
-            and r.state.balance(e.sender) > e.amount,
-            id="balance strictly greater",
-        ),
+        pytest.param(None, lambda i, e: [x for x in (e.event_id(),) if x in i], id="parents not passed"),
+        pytest.param(None, lambda i, e: [x for x in e.parents if x in i], id="own id not passed"),
+        pytest.param(None, lambda i, e: [*(x for x in (e.event_id(),) if x in i), *e.parents],
+                     id="every parent passed as executed"),
     ],
 )
-def test_wrong_executability_is_noticed(corpus, tmp_path, monkeypatch, executable):
-    monkeypatch.setattr(QuorumReplica, "_is_executable", executable)
+def test_wrong_arguments_to_the_core_are_noticed(corpus, tmp_path, monkeypatch, rows_of, known_of):
+    monkeypatch.setattr(QuorumReplica, "_core_execute", _core_execute_with(rows_of, known_of))
     assert _first_difference(corpus, tmp_path) is not None
 
 
-def test_parents_counted_by_any_executed_event_are_noticed(corpus, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        QuorumReplica,
-        "_is_ready",
-        lambda self, event: not event.parents or bool(self._executed_ids),
-    )
-    assert _first_difference(corpus, tmp_path) is not None
+def _rows_without_nonce(state, rows):
+    for account, balance, _ in rows:
+        state.balances[account] = balance
 
 
-def _apply_without_credit(state, event):
-    state.balances[event.sender] -= event.amount
-    state.nonces[event.sender] = state.nonce(event.sender) + 1
+def _rows_only_the_sender(state, rows):
+    account, balance, nonce = rows[0]
+    state.balances[account] = balance
+    state.nonces[account] = nonce
 
 
-def _apply_without_nonce(state, event):
-    state.balances[event.sender] -= event.amount
-    state.balances[event.receiver] = state.balance(event.receiver) + event.amount
-
-
-def _apply_without_debit(state, event):
-    state.balances[event.receiver] = state.balance(event.receiver) + event.amount
-    state.nonces[event.sender] = state.nonce(event.sender) + 1
+def _rows_only_balances_of_the_receiver(state, rows):
+    account, balance, _ = rows[1]
+    state.balances[account] = balance
 
 
 @pytest.mark.parametrize(
-    "apply_one",
-    [_apply_without_credit, _apply_without_nonce, _apply_without_debit],
+    "apply_rows",
+    [_rows_without_nonce, _rows_only_the_sender, _rows_only_balances_of_the_receiver],
 )
-def test_wrong_state_update_is_noticed(corpus, tmp_path, monkeypatch, apply_one):
-    monkeypatch.setattr(StateDeriver, "_apply_one", staticmethod(apply_one))
+def test_answer_of_the_core_written_back_wrong_is_noticed(corpus, tmp_path, monkeypatch, apply_rows):
+    monkeypatch.setattr(QuorumReplica, "_apply_rows", staticmethod(apply_rows))
     assert _first_difference(corpus, tmp_path) is not None
 
 
 def test_log_kept_in_reverse_is_noticed(corpus, tmp_path, monkeypatch):
-    def execute(self, certificate):
-        StateDeriver._apply_one(self.state, certificate.event)
+    def execute(self, certificate, rows):
+        self._apply_rows(self.state, rows)
         self.log.insert(0, certificate)
         self._executed_ids.add(certificate.event.event_id())
 
@@ -272,9 +264,9 @@ def test_auth_ignored_is_noticed(corpus, tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "quorum",
     [
-        pytest.param(lambda self: 2 * self.f, id="quorum 2f"),
+        # A lower quorum makes prepare certificates of fewer votes, which the replica does not
+        # execute: tests/test_rounds_mutations.py has those mutations.
         pytest.param(lambda self: 2 * self.f + 2, id="quorum 2f+2"),
-        pytest.param(lambda self: self.f + 1, id="quorum f+1"),
     ],
 )
 def test_wrong_quorum_is_noticed(corpus, tmp_path, monkeypatch, quorum):
@@ -282,56 +274,38 @@ def test_wrong_quorum_is_noticed(corpus, tmp_path, monkeypatch, quorum):
     assert _first_difference(corpus, tmp_path) is not None
 
 
-def _valid_signers(certificate, committee):
-    payload = core.attestation.vote_payload(committee, certificate.event)
-    return [
-        vote
-        for vote in certificate.votes
-        if vote._verify_payload(committee, payload)
-    ]
-
-
-def _verify_without_repeat_check(self, committee):
-    return len(self.votes) >= committee.quorum and len(
-        _valid_signers(self, committee)
-    ) == len(self.votes)
-
-
-def _verify_counting_only_valid(self, committee):
-    return (
-        len({vote.validator for vote in _valid_signers(self, committee)})
-        >= committee.quorum
-    )
-
-
-def _verify_without_signatures(self, committee):
-    signers = [vote.validator for vote in self.votes]
-    return (
-        all(committee.has_validator(signer) for signer in signers)
-        and len(set(signers)) == len(signers)
-        and len(signers) >= committee.quorum
-    )
-
-
 @pytest.mark.parametrize(
-    "verify",
+    "quorum",
     [
-        pytest.param(_verify_without_repeat_check, id="repeated signers allowed"),
-        pytest.param(_verify_counting_only_valid, id="only valid signatures counted"),
-        pytest.param(_verify_without_signatures, id="signatures not checked"),
+        pytest.param(lambda self, committee, phase: committee.quorum, id="a prepare decides"),
+        pytest.param(lambda self, committee, phase: committee.n - 1, id="n-1 votes decide"),
     ],
 )
-def test_wrong_certificate_rule_is_noticed(corpus, tmp_path, monkeypatch, verify):
-    monkeypatch.setattr(QuorumCertificate, "verify", verify)
+def test_wrong_decision_quorum_is_noticed(corpus, tmp_path, monkeypatch, quorum):
+    monkeypatch.setattr(QuorumReplica, "_decision_quorum", quorum)
     assert _first_difference(corpus, tmp_path) is not None
 
 
-def test_negative_signer_index_is_noticed(corpus, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        Committee,
-        "has_validator",
-        lambda self, validator: type(validator) is int and validator < self.n,
-    )
+def test_signatures_not_checked_are_noticed(corpus, tmp_path, monkeypatch):
+    def checks(self, certificate, quorum, committee):
+        return [[vote.validator, True] for vote in certificate.votes]
+
+    monkeypatch.setattr(QuorumReplica, "_checks", checks)
+    assert _first_difference(corpus, tmp_path) is not None
+
+
+def test_signers_outside_the_committee_reaching_the_core_are_noticed(corpus, tmp_path, monkeypatch):
+    # The model has no such signer: the core refuses the argument, and the node would stop on a
+    # certificate anyone can send. The check before the call is what prevents it.
+    real = QuorumReplica._checks
+
+    def checks(self, certificate, quorum, committee):
+        found = real(self, certificate, quorum, committee)
+        if found is None and type(certificate.votes) is tuple:
+            return [[vote.validator, False] for vote in certificate.votes]
+        return found
+
+    monkeypatch.setattr(QuorumReplica, "_checks", checks)
     assert _first_difference(corpus, tmp_path) is not None
 
 

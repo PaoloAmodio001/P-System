@@ -261,9 +261,11 @@ class ChainVerifier:
         has: a node can hold back the later ones, so ask more than one.
         """
         committee = self.committees.get(certificate.epoch)
+        # Only a decision is final: a prepare certificate can lose a later round.
         return (
             committee is not None
             and certificate.verify(committee)
+            and certificate.decides(committee)
             and (
                 certificate.epoch >= self.current.epoch
                 or certificate.event.canonical() in self._locks

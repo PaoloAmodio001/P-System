@@ -1,3 +1,4 @@
+import pytest
 """Observability for permanently locked nonces (priority 2)."""
 
 import json
@@ -11,6 +12,16 @@ from crypto.identity import Identity
 from network.message import encode_epoch_change, encode_vote_request
 from network.quorum import QuorumDriver, QuorumReplica, SqliteVoteStore
 from core.attestation import Committee
+
+from network.quorum import QuorumDriver as _Driver
+
+
+@pytest.fixture(autouse=True)
+def _close_at_once(monkeypatch):
+    # Closures here form at once, with what is open locked: the limit that remains when the wait
+    # for decisions runs out (`QuorumDriver.CLOSING_GRACE_SECONDS`).
+    monkeypatch.setattr(_Driver, "CLOSING_GRACE_SECONDS", 0.0)
+
 
 SENDER = Identity.create()
 ALICE = SENDER.identity_id

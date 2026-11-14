@@ -7,7 +7,7 @@ restart, and the checks made when a replica starts.
 
 import pytest
 
-import network.quorum
+import network.quorum.replica
 from core.attestation import Committee, QuorumCertificate, Vote, vote_payload
 from core.derive import StateDeriver
 from core.event import Transfer
@@ -75,7 +75,7 @@ def test_replica_does_not_share_the_initial_state(path, members, committee):
     initial = GENESIS.copy()
     store = SqliteVoteStore(path, committee, members[0].public_key, create=True)
     replica = QuorumReplica(members[0], initial, store, accept)
-    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
+    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
     assert initial.balance("alice") == 10
 
 
@@ -110,7 +110,7 @@ def test_refused_vote_gives_no_signature(path, members, committee, monkeypatch):
     def fail(*_):
         raise AssertionError("signed a refused vote")
 
-    monkeypatch.setattr(network.quorum.Vote, "create", fail)
+    monkeypatch.setattr(network.quorum.replica.Vote, "create", fail)
     assert replica.handle_vote_request(B) is None
 
 
@@ -127,10 +127,10 @@ def test_failed_write_gives_no_signature(path, members, committee, monkeypatch):
     replica = open_replica(path, members, committee)
     signed = []
     monkeypatch.setattr(
-        network.quorum.Vote, "create", lambda *args: signed.append(args)
+        network.quorum.replica.Vote, "create", lambda *args: signed.append(args)
     )
 
-    def fail(_event, _signed=None, _gathering=False):
+    def fail(_event, _signed=None, _gathering=False, _round_state=None):
         raise VoteStoreError("disk full")
 
     monkeypatch.setattr(replica._store, "record_vote", fail)
@@ -150,7 +150,7 @@ def test_vote_is_on_disk_when_it_is_signed(path, members, committee, monkeypatch
         seen.append([event.canonical() for event in other.votes()])
         return original(*args)
 
-    monkeypatch.setattr(network.quorum.Vote, "create", checking)
+    monkeypatch.setattr(network.quorum.replica.Vote, "create", checking)
     replica.handle_vote_request(A)
     other.close()
     assert seen == [[A.canonical()]]
@@ -167,7 +167,7 @@ def test_failed_write_leaves_the_state_unchanged(path, members, committee, monke
 
     monkeypatch.setattr(replica._store, "append_certificate", fail)
     with pytest.raises(VoteStoreError):
-        replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
+        replica.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
     assert replica.executed == []
     assert replica.state.balance("alice") == 10
     assert replica.state.nonce("alice") == 0
@@ -188,8 +188,8 @@ def test_signatures_are_not_checked_for_what_cannot_run(path, members, committee
 def test_state_is_what_the_deriver_computes(path, members, committee):
     # state_is_derive in the model, here for the real StateDeriver.
     replica = open_replica(path, members, committee)
-    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
-    assert replica.handle_certificate(certificate(committee, members, NEXT, 1, 2, 3))
+    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
+    assert replica.handle_certificate(certificate(committee, members, NEXT, 0, 1, 2, 3))
     derived = StateDeriver.apply_events(GENESIS, replica.executed)
     assert derived.root() == replica.state.root()
 
@@ -201,8 +201,8 @@ def test_restart_restores_state_log_and_votes(path, members, committee):
     first = open_replica(path, members, committee)
     assert first.handle_vote_request(B) is not None
     # A valid certificate overrides this validator's own vote.
-    assert first.handle_certificate(certificate(committee, members, A, 1, 2, 3))
-    assert first.handle_certificate(certificate(committee, members, NEXT, 1, 2, 3))
+    assert first.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
+    assert first.handle_certificate(certificate(committee, members, NEXT, 0, 1, 2, 3))
     root = first.state.root()
     log = list(first.log)
     first._store.close()
@@ -218,19 +218,19 @@ def test_restart_with_lost_log_keeps_the_lock(path, members, committee):
     # In the model votes and log are independent: this is a valid shorter run.
     first = open_replica(path, members, committee)
     assert first.handle_vote_request(A) is not None
-    assert first.handle_certificate(certificate(committee, members, A, 1, 2, 3))
+    assert first.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
     first._store._connection.execute("DELETE FROM certificates")
     first._store.close()
 
     second = open_replica(path, members, committee, create=False)
     assert second.executed == []
     assert second.handle_vote_request(B) is None
-    assert second.handle_certificate(certificate(committee, members, A, 1, 2, 3))
+    assert second.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
 
 
 def test_tampered_log_does_not_start(path, members, committee):
     first = open_replica(path, members, committee)
-    assert first.handle_certificate(certificate(committee, members, A, 1, 2, 3))
+    assert first.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
     first._store._connection.execute(
         "UPDATE certificates SET signatures = '[]'"
     )
@@ -329,8 +329,8 @@ def test_certificate_with_a_bool_amount_and_real_signatures_is_not_executed(
 
 def _halt_replica(replica, committee, members):
     replica._store.record_halt(
-        certificate(committee, members, A, 0, 1, 2),
-        certificate(committee, members, B, 1, 2, 3),
+        certificate(committee, members, A, 0, 1, 2, 3),
+        certificate(committee, members, B, 0, 1, 2, 3),
     )
 
 
@@ -349,7 +349,7 @@ def test_halted_replica_executes_nothing_and_keeps_its_state(path, members, comm
     before = replica.state.root()
     _halt_replica(replica, committee, members)
 
-    assert not replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
+    assert not replica.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
 
     assert replica.state.root() == before
     assert replica.log == []
@@ -357,7 +357,7 @@ def test_halted_replica_executes_nothing_and_keeps_its_state(path, members, comm
 
 def test_halt_survives_a_restart_with_the_log_replayed(path, members, committee):
     replica = open_replica(path, members, committee)
-    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2))
+    assert replica.handle_certificate(certificate(committee, members, A, 0, 1, 2, 3))
     root = replica.state.root()
     _halt_replica(replica, committee, members)
     replica._store.close()
@@ -367,5 +367,5 @@ def test_halt_survives_a_restart_with_the_log_replayed(path, members, committee)
     assert again.state.root() == root
     assert [event.canonical() for event in again.executed] == [A.canonical()]
     assert again.handle_vote_request(NEXT) is None
-    assert not again.handle_certificate(certificate(committee, members, NEXT, 0, 1, 2))
+    assert not again.handle_certificate(certificate(committee, members, NEXT, 0, 1, 2, 3))
     assert again.state.root() == root

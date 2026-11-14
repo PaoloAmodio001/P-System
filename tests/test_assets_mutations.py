@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_assets.py"), "-k", "not custody"]
 
@@ -98,7 +98,7 @@ CHANGES = {
             "",
         ),
     },
-    ("network.quorum", "network/quorum.py"): {
+    ("network.quorum", "network/quorum/"): {
         "a validator asks no owner": (
             "        return is_authorized_transfer(signed)\n",
             "        return signed.verify()\n",
@@ -146,7 +146,7 @@ CASES = [
 @pytest.mark.parametrize("case", CASES, ids=[case[2] for case in CASES])
 def test_mutation_is_detected(case):
     module, file, _, (old, new) = case
-    source = (ROOT / file).read_text()
+    source = quorum_source() if file == "network/quorum/" else (ROOT / file).read_text()
     assert source.count(old) == 1
     result = run_tests_on(module, source.replace(old, new), TESTS)
     assert result.returncode == 1, result.stdout + result.stderr

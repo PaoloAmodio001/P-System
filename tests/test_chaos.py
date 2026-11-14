@@ -91,7 +91,7 @@ def certificate_for(event, members, tmp_path):
     from network.message import encode_certificate
 
     committee = read_genesis(tmp_path / "genesis.json").committee
-    votes = tuple(Vote.create(committee, member, event) for member in members[:3])
+    votes = tuple(Vote.create(committee, member, event) for member in members[: committee.n])
     return encode_certificate(QuorumCertificate(event, votes))
 
 

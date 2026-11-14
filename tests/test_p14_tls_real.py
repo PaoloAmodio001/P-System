@@ -215,7 +215,7 @@ def test_untrusted_client_is_rejected():
 
     thread.join(timeout=3)
 
-    assert errors, 'Il server non ha segnalato il rifiuto TLS'
+    assert errors, 'The server did not report refusing TLS'
     assert isinstance(errors[0], ssl.SSLError)
 
     right.close()

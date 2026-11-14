@@ -19,7 +19,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
 from core.attestation import EpochChange
-from core.decision_status import DecisionStatus
 from core.derive import check_supply_conservation
 from core.exceptions import SupplyViolation
 from core.signed_event import SignedTransfer
@@ -347,7 +346,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "executed": replica.executed_count,
                 "state_root": replica.state.root(),
                 "halted": node._quorum.driver.halted,
-                "conflicted": node.status() == DecisionStatus.CONFLICTED,
+                "conflicted": node.conflicted,
                 "is_member": replica.is_member,
                 "peers": sorted(node.peer_connections),
                 "guilty_members": [key.hex() for key in node.guilty_members()],

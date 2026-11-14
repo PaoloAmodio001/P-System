@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, run_tests_on, source_of_module
 
 TESTS = [str(Path("tests") / "test_certificate_lookup.py")]
 
@@ -39,7 +39,7 @@ CASES = [(module, name) for module, table in MUTATIONS.items() for name in table
 
 
 def source_of(module: str) -> str:
-    return (ROOT / (module.replace(".", "/") + ".py")).read_text()
+    return source_of_module(module)
 
 
 @pytest.mark.parametrize("module", MUTATIONS)

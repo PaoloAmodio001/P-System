@@ -40,9 +40,9 @@ TESTS = [
 
 MUTATIONS = {
     "state not restored at a restart": (
-        "            self._sync_interval = quorum.sync_interval\n"
-        "            self._publish_quorum_state()\n",
-        "            self._sync_interval = quorum.sync_interval\n",
+        "        self._sync_interval = quorum.sync_interval\n"
+        "        self._publish_quorum_state()\n",
+        "        self._sync_interval = quorum.sync_interval\n",
     ),
     "public state not a copy": (
         "        self.state = replica.state.copy()\n",
@@ -61,47 +61,22 @@ MUTATIONS = {
         "",
     ),
     "stop does not free the store": (
-        "            with self._state_lock:\n"
-        "                self._quorum.close()\n",
-        "            pass\n",
+        "        with self._state_lock:\n"
+        "            self._quorum.close()\n",
+        "        pass\n",
     ),
     "stop does not wait for a message": (
-        "            with self._state_lock:\n"
-        "                self._quorum.close()\n",
+        "        with self._state_lock:\n"
         "            self._quorum.close()\n",
+        "        self._quorum.close()\n",
     ),
     "stopped node starts again": (
         '            raise RuntimeError("QUORUM NODE IS CLOSED: CREATE A NEW NODE")\n',
         "            pass\n",
     ),
-    "receive open": (
-        '            raise RuntimeError("NOT AVAILABLE IN QUORUM MODE")\n',
-        "            pass\n",
-    ),
-    "merge_events open when empty": (
-        "        # Here too, and not only in receive: with no events, reconcile() would pass\n"
-        "        # in silence on a node where it can never work.\n"
-        "        self._refuse_in_quorum_mode()\n",
-        "",
-    ),
-    "lifecycle open": (
-        '        """Return the explicit authorization/execution lifecycle state."""\n'
-        "        self._refuse_in_quorum_mode()\n",
-        '        """Return the explicit authorization/execution lifecycle state."""\n',
-    ),
-    "receive_signed goes the old way": (
-        "            if self._quorum is not None:\n"
-        "                # Evidence only:",
-        "            if False:\n"
-        "                # Evidence only:",
-    ),
     "evidence dropped": (
-        "                self._quorum.driver.record_evidence(event)\n",
+        "            self._quorum.driver.record_evidence(event)\n",
         "",
-    ),
-    "submit works without quorum mode": (
-        '            raise RuntimeError("NOT AVAILABLE WITHOUT QUORUM MODE")\n',
-        "            return False\n",
     ),
     "submit without the lock": (
         "        with self._state_lock:\n"
@@ -124,8 +99,10 @@ MUTATIONS = {
         "            # In finally:",
     ),
     "quorum messages not dispatched": (
-        "        if self._quorum is not None and message_type in QUORUM_MESSAGE_TYPES:\n",
-        "        if False:\n",
+        "        if message.get(\"type\") in QUORUM_MESSAGE_TYPES:\n"
+        "            self._handle_quorum_message(message, connection)\n",
+        "        if False:\n"
+        "            self._handle_quorum_message(message, connection)\n",
     ),
     "message handled after stop": (
         "            if self._quorum.closed:\n"
@@ -204,8 +181,8 @@ MUTATIONS = {
         "            pass\n",
     ),
     "halt does not reach the status": (
-        "        known = list(self.events) + self._quorum_halt_events\n",
-        "        known = list(self.events)\n",
+        "            return bool(self._quorum_halt_events)\n",
+        "            return False\n",
     ),
     "halt not read": (
         "            proof = replica.halt_proof()\n",

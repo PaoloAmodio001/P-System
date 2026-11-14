@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_quorum_group_commit.py")]
 SOURCES = {
-    "network.quorum": (ROOT / "network" / "quorum.py").read_text(),
+    "network.quorum": quorum_source(),
     "network.peer_connection": (ROOT / "network" / "peer_connection.py").read_text(),
     "network.secure_transport": (ROOT / "network" / "secure_transport.py").read_text(),
     "network.node": (ROOT / "network" / "node.py").read_text(),

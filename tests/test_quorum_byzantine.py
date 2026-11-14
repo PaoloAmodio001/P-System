@@ -1,6 +1,6 @@
 """Quorum mode against a sender that lies and a member of the committee that lies.
 
-tests/test_p15_byzantine_safety.py requires a fork in the old mode, and stays as it is.
+The historical mode without a committee forked under this dissemination, and it has been removed.
 Here the same dissemination gives none, for every way it can go: all the ways the honest
 nodes can vote, all that the faulty member can sign, all that can reach each node. The
 hypothesis is tested too: with more than f faulty members the fork comes back.
@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 
 from core.attestation import Committee, QuorumCertificate, Vote
-from core.decision_status import DecisionStatus
 from core.event import Transfer
 from core.signed_event import SignedTransfer
 from core.state import State
@@ -37,7 +36,6 @@ from network.peer import Peer
 from network.quorum import QuorumConfig
 from tests import quorum_store_worker as worker
 from tests.die_with_parent import command
-from tests.signed_helpers import authorize, identity_with_claim, signed_transfer
 from tests.test_quorum_driver import GENESIS as DRIVER_GENESIS
 from tests.test_quorum_driver import _spends
 
@@ -154,8 +152,11 @@ def test_no_fork_for_any_vote_any_signature_and_any_delivery(tmp_path, faulty):
         certificates = {
             name: QuorumCertificate(events[name], tuple(votes[name])) for name in "ab"
         }
-        valid = {name for name in "ab" if len(votes[name]) >= QUORUM_OF_FOUR}
-        assert len(valid) <= 1, "two quorums: the counting itself would be wrong"
+        # A certificate of votes of round 0 decides with all four of them; with three it only
+        # prepares, and nothing runs on it alone (formal/lean/PSystem/QuorumRounds.lean).
+        prepared = {name for name in "ab" if len(votes[name]) >= QUORUM_OF_FOUR}
+        assert len(prepared) <= 1, "two quorums: the counting itself would be wrong"
+        valid = {name for name in "ab" if len(votes[name]) >= COMMITTEE.n}
 
         for pattern in itertools.product(DELIVERIES.values(), repeat=3):
             runs += 1
@@ -177,7 +178,7 @@ def test_no_fork_for_any_vote_any_signature_and_any_delivery(tmp_path, faulty):
                     )
                     assert result == expected, (first_seen, faulty, pattern)
                     # One certificate is not valid, so nothing here is a conflict.
-                    assert node.status() != DecisionStatus.CONFLICTED
+                    assert not node.conflicted
 
                 # The fork: two honest nodes, two alternatives.
                 assert len({r for r in results if r}) <= 1
@@ -188,10 +189,14 @@ def test_no_fork_for_any_vote_any_signature_and_any_delivery(tmp_path, faulty):
             _undo_executions(directory)
 
     assert runs == 8 * 125
-    # The cases were not all the same one. By counting: with honest votes 3-0, 2-1, 1-2 and
-    # 0-3, a faulty member signing both always gives one of them three, and one signing
-    # less leaves 1-2 or 2-1 with no quorum on one of the sides.
-    expected_outcomes = {("a",), ("b",)} if faulty == "both" else {("a",), ("b",), ()}
+    # The cases were not all the same one. A decision needs the three honest votes on one side
+    # (3-0 or 0-3) and the faulty member signing that side too.
+    expected_outcomes = {
+        "both": {("a",), ("b",), ()},
+        "only a": {("a",), ()},
+        "only b": {("b",), ()},
+        "nothing": {()},
+    }[faulty]
     assert outcomes == expected_outcomes
 
 
@@ -201,28 +206,61 @@ def _undo_executions(directory: Path) -> None:
     for path in directory.glob("*.sqlite"):
         connection = sqlite3.connect(path)
         connection.execute("DELETE FROM certificates")
+        connection.execute("DELETE FROM decided")
         connection.execute("DELETE FROM halt")
         connection.commit()
         connection.close()
 
 
 def test_forged_signatures_of_honest_members_make_no_quorum(tmp_path):
-    # The faulty member signs for real, and has to invent the other two. Honest member 0
-    # voted a, and the attacker wants b.
+    # The faulty member signs for real, and has to invent the other three: a decision of round 0
+    # takes all four. Honest member 0 voted a, and the attacker wants b.
     node = open_node(tmp_path / "0.sqlite", 0)
     assert ask_for_vote(node, A) is not None
     real = Vote.create(COMMITTEE, MEMBERS[3], B)
-    honest_on_other_event = [Vote.create(COMMITTEE, MEMBERS[i], A) for i in (1, 2)]
+    honest_on_other_event = [Vote.create(COMMITTEE, MEMBERS[i], A) for i in (0, 1, 2)]
     reused = [
         Vote(vote.validator, vote.signature) for vote in honest_on_other_event
     ]
-    invented = [Vote(1, bytes(64)), Vote(2, bytes((7,)) * 64)]
+    invented = [Vote(0, bytes((5,)) * 64), Vote(1, bytes(64)), Vote(2, bytes((7,)) * 64)]
 
-    for votes in (reused, invented, [real, real]):
+    for votes in (reused, invented, [real, real, real]):
         deliver(node, QuorumCertificate(B, (real, *votes)))
 
     assert executed(node) == []
-    assert node.status() != DecisionStatus.CONFLICTED
+    assert not node.conflicted
+    node.stop()
+
+
+def test_a_certificate_whose_signers_repeat_is_not_taken(tmp_path):
+    # The quorum is of distinct validators, and a certificate that does not hold is not even held
+    # as a decision: what a repeated signer would have signed is not a decision anybody can run on.
+    node = open_node(tmp_path / "0.sqlite", 0)
+    assert ask_for_vote(node, B) is not None
+    real = Vote.create(COMMITTEE, MEMBERS[3], B)
+    repeated = tuple(Vote(real.validator, real.signature) for _ in range(3))
+
+    deliver(node, QuorumCertificate(B, (real, *repeated)))
+
+    assert executed(node) == []
+    assert not node.conflicted
+    # Nothing was taken: no decision of what the repeated signer signed was held, and nothing ran.
+    assert not node._quorum.driver._known
+    node.stop()
+
+
+def test_a_node_that_voted_the_other_version_follows_a_commit(tmp_path):
+    # After a split, the rounds can decide the version a node did not vote for in round 0: its vote
+    # of round 0 must not stop it from executing the decision (`decisions_agree`).
+    from core.attestation import PRECOMMIT
+
+    node = open_node(tmp_path / "0.sqlite", 0)
+    assert ask_for_vote(node, B) is not None
+    precommits = tuple(Vote.create_phase(COMMITTEE, MEMBERS[i], A, PRECOMMIT, 1) for i in (1, 2, 3))
+    deliver(node, QuorumCertificate(A, precommits, phase=PRECOMMIT, round=1))
+
+    assert executed(node) == [A]
+    assert not node.conflicted
     node.stop()
 
 
@@ -243,39 +281,30 @@ def test_votes_split_with_a_faulty_member_silent_give_no_certificate(tmp_path):
         node.stop()
 
 
-def test_old_mode_still_forks_on_the_same_dissemination():
-    # The contrast, and the reason for all this: same sender, same two versions.
-    identity, claim = identity_with_claim("alice")
-    first = Node("byz-old-a", State({"alice": 10}))
-    second = Node("byz-old-b", State({"alice": 10}))
-    for node in (first, second):
-        authorize(node, claim)
-
-    _, signed_a = signed_transfer(identity, "alice", "bob", 8, 0)
-    _, signed_b = signed_transfer(identity, "alice", "carol", 8, 0)
-    assert first.receive_signed(signed_a, broadcast=False)
-    assert second.receive_signed(signed_b, broadcast=False)
-
-    assert first.state.balance("bob") == 8
-    assert second.state.balance("carol") == 8
-    first.stop()
-    second.stop()
-
-
 def _two_faulty_members_certify_both(tmp_path):
     """More faulty members than f = 1: members 2 and 3 sign both versions."""
     first = open_node(tmp_path / "0.sqlite", 0)
     second = open_node(tmp_path / "1.sqlite", 1)
     faulty = [MEMBERS[2], MEMBERS[3]]
-    certificate_a = QuorumCertificate(
+    prepare_a = QuorumCertificate(
         A,
         (ask_for_vote(first, A), *(Vote.create(COMMITTEE, m, A) for m in faulty)),
     )
-    certificate_b = QuorumCertificate(
+    prepare_b = QuorumCertificate(
         B,
         (ask_for_vote(second, B), *(Vote.create(COMMITTEE, m, B) for m in faulty)),
     )
-    return first, second, certificate_a, certificate_b
+    # Each honest node precommits on the prepare certificate it sees, as it should; with the two
+    # faulty precommits that is a commit certificate for each version.
+    certificates = []
+    for node, prepare in ((first, prepare_a), (second, prepare_b)):
+        deliver(node, prepare)
+        own = node._quorum.replica.sign_phase(prepare.event, "precommit", 0)
+        precommits = (own, *(Vote.create_phase(COMMITTEE, m, prepare.event, "precommit", 0) for m in faulty))
+        certificates.append(
+            QuorumCertificate(prepare.event, tuple(sorted(precommits, key=lambda v: v.validator)), 0, "precommit", 0)
+        )
+    return first, second, *certificates
 
 
 def test_beyond_f_faulty_members_the_fork_comes_back(tmp_path):
@@ -301,7 +330,7 @@ def test_beyond_f_a_node_that_sees_both_halts_and_chooses_nothing(tmp_path):
     root = first.state.root()
     deliver(first, certificate_b)
 
-    assert first.status() == DecisionStatus.CONFLICTED
+    assert first.conflicted
     assert executed(first) == [A]
     assert first.state.root() == root
     first.stop()
@@ -319,7 +348,7 @@ def test_permutations_of_the_same_certificates_give_the_same_node(tmp_path, seed
     certificates = [
         QuorumCertificate(
             event,
-            tuple(Vote.create(committee, MEMBERS[i], event) for i in (1, 2, 3)),
+            tuple(Vote.create(committee, MEMBERS[i], event) for i in (0, 1, 2, 3)),
         )
         for event in events
     ]
@@ -336,13 +365,13 @@ def test_permutations_of_the_same_certificates_give_the_same_node(tmp_path, seed
         results.add(
             (node.state.root(), frozenset(e.canonical() for e in node.local_events))
         )
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
         node.stop()
 
     assert len(results) == 1
 
 
-def test_certificates_lost_at_a_restart_can_be_delivered_again(tmp_path):
+def test_a_decision_waiting_at_a_restart_survives_it(tmp_path):
     path = tmp_path / "votes.sqlite"
     node = open_node(path, 0)
     child = Transfer(PAYER, "bob", 1, 1, (A.event_id(),))
@@ -350,19 +379,16 @@ def test_certificates_lost_at_a_restart_can_be_delivered_again(tmp_path):
     def certificate(event):
         return QuorumCertificate(
             event,
-            tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in (1, 2, 3)),
+            tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in (0, 1, 2, 3)),
         )
 
     deliver(node, certificate(child))
     assert executed(node) == []
     node.stop()
 
-    # What waited in memory is gone: the parent alone does not bring it back.
+    # The decision of the child is on disk (schema 8): the parent alone brings it back.
     node = open_node(path, 0, create=False)
     deliver(node, certificate(A))
-    assert executed(node) == [A]
-
-    deliver(node, certificate(child))
     assert executed(node) == [A, child]
     node.stop()
 
@@ -403,7 +429,7 @@ def test_halt_survives_the_death_of_the_process(tmp_path):
 
     node = _worker_node(path)
 
-    assert node.status() == DecisionStatus.CONFLICTED
+    assert node.conflicted
     assert not node.submit(
         SignedTransfer.create(worker.VOTE_SENDER, worker.VOTED_EVENT)
     )
@@ -479,9 +505,10 @@ def tls_nodes(tmp_path):
 def test_event_runs_on_four_nodes_over_real_tls(tls_nodes):
     assert tls_nodes[0].submit(SignedTransfer.create(SENDER, A))
 
-    assert _wait_until(lambda: all(n.local_events == [A] for n in tls_nodes))
-    for node in tls_nodes:
-        assert node.state.balance("bob") == 8
+    # The node publishes its events and then its state: wait for both.
+    assert _wait_until(
+        lambda: all(n.local_events == [A] and n.state.balance("bob") == 8 for n in tls_nodes)
+    )
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
@@ -499,4 +526,4 @@ def test_node_that_voted_the_alternative_follows_over_real_tls(tls_nodes):
     assert voted_b._quorum.replica.votes() == [B]
     assert voted_b.state.balance("carol") == 0
     for node in tls_nodes:
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted

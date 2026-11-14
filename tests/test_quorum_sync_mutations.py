@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 SYNC_TESTS = [str(Path("tests") / "test_quorum_sync.py")]
 NETWORK = str(Path("tests") / "test_quorum_differential_network.py")
 
 SOURCES = {
-    "network.quorum": (ROOT / "network" / "quorum.py").read_text(),
+    "network.quorum": quorum_source(),
     "network.message": (ROOT / "network" / "message.py").read_text(),
     "network.node": (ROOT / "network" / "node.py").read_text(),
 }
@@ -171,11 +171,11 @@ NODE = {
     ),
     "no request when a peer connects to this node": (
         "    def _request_certificates(self, connection) -> None:\n"
-        "        \"\"\"Ask a peer for what this node lacks. In quorum mode only.\"\"\"\n"
-        "        if self._quorum is None:\n",
+        "        \"\"\"Ask a peer for what this node lacks.\"\"\"\n",
         "    def _request_certificates(self, connection) -> None:\n"
-        "        \"\"\"Ask a peer for what this node lacks. In quorum mode only.\"\"\"\n"
-        "        if self._quorum is None or not connection.initiated_locally:\n",
+        "        \"\"\"Ask a peer for what this node lacks.\"\"\"\n"
+        "        if not connection.initiated_locally:\n"
+        "            return\n",
     ),
     "no request at intervals": (
         "            for connection in targets:\n"

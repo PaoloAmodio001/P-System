@@ -1,6 +1,6 @@
 """An attacker that exhausts memory or CPU today, and does not after these defenses.
 
-archive/docs/proposte/passo-4.md has what each attack cost before them. Each limit here must leave the result
+Each limit here must leave the result
 of an honest sender alone: a test below delivers in every order, with a buffer that holds almost nothing.
 """
 
@@ -55,7 +55,7 @@ def transfer(nonce: int, sender: str = ALICE, receiver: str = "bob", amount: int
 def certificate(event: Transfer) -> QuorumCertificate:
     return QuorumCertificate(
         event,
-        tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS[:3]),
+        tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS),
     )
 
 
@@ -208,7 +208,8 @@ def bad_request() -> dict:
 def test_each_kind_of_bad_signature_costs_the_peer(tmp_path):
     driver = driver_at(tmp_path / "a.sqlite")
     event = transfer(0)
-    forged = QuorumCertificate(event, tuple(Vote(index, b"\1" * 64) for index in range(3)))
+    # All four, the size of a decision: the signatures are what is wrong.
+    forged = QuorumCertificate(event, tuple(Vote(index, b"\1" * 64) for index in range(4)))
     assert driver.handle_message(wire(bad_request())).cost == BAD_SIGNATURE_COST
     assert driver.handle_message(wire(encode_certificate(forged))).cost == BAD_SIGNATURE_COST
     assert driver.handle_message(wire(encode_certificate_sync([forged]))).cost == BAD_SIGNATURE_COST
@@ -601,7 +602,7 @@ def test_a_proof_of_equivocation_is_published_once(tmp_path):
 
         assert node._quorum.driver.equivocations
         assert node._quorum.driver.new_equivocations() == []
-        assert node.status() is not None
+        assert not node.conflicted
     finally:
         node.stop()
 

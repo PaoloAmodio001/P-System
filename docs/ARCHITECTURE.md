@@ -10,17 +10,16 @@ why no consensus is needed, and also why shared state cannot be expressed: see "
 |---|---|---|
 | Events and state | `core/event.py`, `core/state.py`, `core/derive.py` | Canonical form, SHA-256 identity, deterministic state |
 | Certificates and epochs | `core/attestation.py` | `Committee`, `Vote`, `QuorumCertificate`, `Governance`, `EpochChange`, `EpochReport`, `EpochClosure`, `Snapshot` |
-| Durable state of a validator | `network/quorum.py`, `SqliteVoteStore` | Votes, locks, log, closures, snapshot and what pruning removed, one order per epoch for each member, proof of a halt |
-| Protocol of an honest node | `network/quorum.py`, `QuorumReplica`, `QuorumDriver` | Turns messages into messages. No network, no threads |
+| Durable state of a validator | `network/quorum/store.py`, `SqliteVoteStore` | Votes, locks, log, closures, snapshot and what pruning removed, one order per epoch for each member, proof of a halt |
+| Protocol of an honest node | `network/quorum/replica.py`, `QuorumReplica`; `network/quorum/driver.py`, `QuorumDriver` | Turns messages into messages. No network, no threads |
 | Node | `network/node.py`, `network/node_server.py` | Connections, reconnection, synchronization, serialization of calls |
 | Transport | `network/secure_transport.py`, `network/peer_connection.py` | Mutual TLS 1.3, framing, send deadlines, full-duplex |
 | Service | `network/service.py`, `network/deployment.py`, `network/cli.py` | HTTP API, metrics, logs, configuration, the `psystem` command |
 | Client | `sdk/client.py` | Wallet that cannot equivocate by accident, API client, light client |
 | Model and proofs | `formal/lean/` | The protocol in Lean 4 and the theorems about it |
 
-`core/` also holds the modules of the historical mode (`quorum=None`). That mode has no Byzantine
-guarantee and allows forks between honest nodes. It stays for its tests and for research, and a
-deployment made with `psystem` never uses it.
+Every node runs with a committee. The historical mode without one (`quorum=None`) has been removed,
+with the modules of `core/` that only it used.
 
 ## The path of an event
 
@@ -29,13 +28,19 @@ deployment made with `psystem` never uses it.
 3. The node checks the signature, votes durably, and asks the others (`VOTE_REQUEST`).
 4. Each honest validator votes for the first alternative of that `(sender, nonce)`: durably, then
    signs (`VOTE`). A vote is a lock, not an execution.
-5. With `2f+1` valid votes the aggregator broadcasts a `CERTIFICATE`.
-6. Each node executes it when it is causally ready and valid on its state. The state is a function of
-   the set of certified events. Order of arrival does not matter.
-7. A node left behind asks with `CERTIFICATE_SYNC_REQUEST`, on connecting and at intervals.
+5. With all `n` valid votes the aggregator broadcasts a `CERTIFICATE`: a decision, the fast path. With
+   `2f+1` it broadcasts a prepare certificate, and each validator that receives one sends it on once
+   with its precommit (`ROUND_VOTE`); `2f+1` precommits are a decision.
+6. Each node executes a decision when it is causally ready and valid on its state. The state is a
+   function of the set of decided events. Order of arrival does not matter.
+7. A node left behind asks with `CERTIFICATE_SYNC_REQUEST`, on connecting and at intervals. A sync
+   carries decisions only.
 
-Nothing guarantees step 5: with votes split between two versions of a spend, no certificate exists,
-and nobody chooses.
+When the votes split between two versions of a spend and no value gets `2f+1`, each validator moves to
+round 1 at a timeout and reports to all (`NEW_ROUND`); the leader of the round proposes a value the
+reports justify (`PROPOSAL`), and the round goes on as above (`docs/PROTOCOL.md`, Rounds). The rules of
+a round are not written in Python: the node calls the definitions of `formal/lean/PSystem/QuorumRounds.lean`,
+compiled to a shared library (`network/quorum/lean_core.py`).
 
 ## Threads and locks
 

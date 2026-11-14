@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_snapshots.py"), "-k", "not real_nodes"]
 
@@ -146,8 +146,8 @@ QUORUM = {
         "        for _once in [0]:\n            progress = False\n",
     ),
     "a parent not checked when deriving": (
-        "            event.event_id() not in ids\n            and set(event.parents) <= ids\n",
-        "            event.event_id() not in ids\n",
+        "        known = [x for x in (event.event_id(), *event.parents) if x in ids]\n",
+        "        known = [x for x in (event.event_id(),) if x in ids]\n",
     ),
     # What a node takes.
     "a snapshot of an ended committee is taken": (
@@ -175,12 +175,12 @@ QUORUM = {
         "                continue\n",
     ),
     "a log that does not run believed": (
-        "            if not self._runs_on(state, ids, event):\n                LOG.critical(\n                    \"the log of this node does not run after a snapshot\",\n",
-        "            if False:\n                LOG.critical(\n                    \"the log of this node does not run after a snapshot\",\n",
+        '            rows = self._runs_on(state, ids, event)\n            if rows is None:\n                LOG.critical(\n                    "the log of this node does not run after a snapshot",\n',
+        '            rows = self._runs_on(state, ids, event) or []\n            if False:\n                LOG.critical(\n                    "the log of this node does not run after a snapshot",\n',
     ),
     "the log is not run after the snapshot": (
-        "            StateDeriver._apply_one(state, event)\n            ids.add(event.event_id())\n\n        self._store.record_snapshot(snapshot)\n",
-        "        self._store.record_snapshot(snapshot)\n",
+        '            self._apply_rows(state, rows)\n            ids.add(event.event_id())\n\n        self._store.record_snapshot(snapshot)\n',
+        '        self._store.record_snapshot(snapshot)\n',
     ),
     "not on disk": (
         "        self._store.record_snapshot(snapshot)\n        self.base = snapshot\n",
@@ -378,7 +378,7 @@ QUORUM = {
 
 SOURCES = {
     "core.attestation": (ROOT / "core" / "attestation.py").read_text(),
-    "network.quorum": (ROOT / "network" / "quorum.py").read_text(),
+    "network.quorum": quorum_source(),
 }
 
 

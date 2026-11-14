@@ -9,22 +9,22 @@ class EquivocationProof:
     second: SignedTransfer
 
     def verify(self) -> bool:
-        # Entrambe le firme devono essere valide.
+        # Both signatures must be valid.
         if not self.first.verify():
             return False
 
         if not self.second.verify():
             return False
 
-        # Deve essere la stessa identità.
+        # It must be the same identity.
         if self.first.public_key != self.second.public_key:
             return False
 
         first_tx = self.first.transfer
         second_tx = self.second.transfer
 
-        # Le transazioni devono riferirsi allo stesso
-        # sender e allo stesso nonce.
+        # The transfers must be for the same
+        # sender and the same nonce.
         if first_tx.sender != second_tx.sender:
             return False
 

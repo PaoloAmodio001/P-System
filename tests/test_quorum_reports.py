@@ -24,6 +24,15 @@ from network.quorum import QuorumConfig, QuorumDriver, QuorumReplica, SqliteVote
 from network.remote_signer import SignerGuard
 from sdk.client import ChainVerifier
 
+from network.quorum import QuorumDriver as _Driver
+
+
+@pytest.fixture(autouse=True)
+def _close_at_once(monkeypatch):
+    # These tests are about the reports and closures themselves, made at once.
+    monkeypatch.setattr(_Driver, "CLOSING_GRACE_SECONDS", 0.0)
+
+
 SENDER = Identity.create()
 GENESIS = State({SENDER.identity_id: 100})
 SIGNERS = [Identity.create() for _ in range(3)]
