@@ -43,3 +43,12 @@ def test_the_check_sees_a_difference(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
     assert len(set(versions().values())) == 2
+
+
+def test_the_sbom_names_the_version_of_the_project(capsys):
+    # It once said 0.2.0 while the project was 1.0.0.
+    import runpy
+
+    runpy.run_path(str(ROOT / "scripts" / "make_sbom.py"), run_name="__main__")
+    sbom = json.loads(capsys.readouterr().out)
+    assert sbom["metadata"]["component"]["version"] == versions()["pyproject.toml"]
