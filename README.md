@@ -51,7 +51,7 @@ Checks: `pytest -q -m "not slow"` (minutes), `pytest -q` (mutations and differen
 ## What is proved in Lean
 
 About the model in `formal/lean/`, with at most `f` faulty validators per committee and unforgeable signatures. Only the
-three standard axioms of Lean are used, for all 269 theorems; `scripts/check_axioms.py` checks it.
+three standard axioms of Lean are used, for all 276 theorems; `scripts/check_axioms.py` checks it.
 
 | Theorem | Statement | Status |
 |---|---|---|
@@ -91,6 +91,8 @@ The full list with the exact hypotheses is in `docs/PROOF-OBLIGATIONS.md`.
 
 | | |
 |---|---|
+| `docs/MISSION-RECORDS.md` | Events with structured data, mission records, `GET /v1/records`, and the Lean results about them |
+| `docs/SATCOM-DIGITAL-THREAD.md` | A possible application: a certified digital thread for satcom AIT and supply chain, run on one machine (`examples/satcom_digital_thread.py`) |
 | `docs/AUDIT-PACKAGE.md` | Start here for a review: scope, assumptions, how to reproduce, questions |
 | `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/FORMAL-SPECIFICATION.md` | Components, wire protocol, specification |
 | `docs/PROOF-OBLIGATIONS.md`, `docs/PROOF-SCOPE.md`, `docs/CLAIM-TRACEABILITY.md` | What is proved, tested or open, and the evidence for each claim |

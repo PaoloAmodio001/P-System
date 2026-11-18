@@ -3,6 +3,14 @@
 The only release is 1.0.0. The earlier tags and releases (0.1.0, 0.1.1, 1.0.0-rc1) were removed, so that no other
 version can be taken by mistake.
 
+## Unreleased
+
+- **Events with data.** An optional canonical JSON field `data`, bound into the id and the signature;
+  empty data leaves every existing id unchanged. Mission records (`sdk/mission.py`), `GET /v1/records`,
+  and `formal/lean/PSystem/QuorumPayload.lean` (7 theorems). See `docs/MISSION-RECORDS.md`.
+- **A satcom digital-thread example.** `examples/satcom_digital_thread.py`: suppliers, prime and test
+  facility certify records on four nodes, an auditor rebuilds the chain. See `docs/SATCOM-DIGITAL-THREAD.md`.
+
 ## 1.0.0
 
 - **Rounds end a split vote.** With all `n` votes of round 0 a version is decided at once; otherwise `2f+1` votes prepare it,
