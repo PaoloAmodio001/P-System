@@ -23,5 +23,6 @@ import PSystem.QuorumSnapshot
 import PSystem.QuorumReports
 import PSystem.QuorumUnlock
 import PSystem.QuorumRounds
+import PSystem.QuorumPayload
 import PSystem.CoreExec
 import PSystem.Core

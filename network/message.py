@@ -32,6 +32,7 @@ def encode_signed_transfer(
             "amount": event.transfer.amount,
             "nonce": event.transfer.nonce,
             "parents": list(event.transfer.parents),
+            **({"data": event.transfer.data} if event.transfer.data else {}),
         },
         "public_key": event.public_key.hex(),
         "signature": event.signature.hex(),
@@ -53,6 +54,7 @@ def decode_signed_transfer(
         amount=data["amount"],
         nonce=data["nonce"],
         parents=tuple(data.get("parents", [])),
+        data=data.get("data", ""),
     )
 
     return SignedTransfer(
@@ -102,8 +104,11 @@ def _hex_bytes(value, pattern: re.Pattern) -> bytes:
     return bytes.fromhex(value)
 
 
+_EVENT_FIELDS = ("sender", "receiver", "amount", "nonce", "parents")
+
+
 def _encode_quorum_event(event: Transfer) -> dict:
-    return {
+    encoded = {
         "sender": event.sender,
         "receiver": event.receiver,
         "amount": event.amount,
@@ -111,16 +116,22 @@ def _encode_quorum_event(event: Transfer) -> dict:
         "parents": sorted(event.parents),
     }
 
+    # Absent when empty: an event without data has the form it had before data existed.
+    if event.data != "":
+        encoded["data"] = event.data
+
+    return encoded
+
 
 def _decode_quorum_event(value) -> Transfer:
-    data = _object_with_fields(
-        value,
-        "sender",
-        "receiver",
-        "amount",
-        "nonce",
-        "parents",
-    )
+    # One form on the wire: "data" is either absent or a non-empty canonical text.
+    if type(value) is dict and "data" in value:
+        data = _object_with_fields(value, *_EVENT_FIELDS, "data")
+
+        if type(data["data"]) is not str or data["data"] == "":
+            raise ValueError("INVALID QUORUM MESSAGE")
+    else:
+        data = _object_with_fields(value, *_EVENT_FIELDS)
 
     if type(data["parents"]) is not list:
         raise ValueError("INVALID QUORUM MESSAGE")
@@ -131,6 +142,7 @@ def _decode_quorum_event(value) -> Transfer:
         amount=data["amount"],
         nonce=data["nonce"],
         parents=tuple(data["parents"]),
+        data=data.get("data", ""),
     )
 
     if not is_well_formed_event(event):
@@ -144,6 +156,7 @@ def _decode_quorum_event(value) -> Transfer:
         amount=event.amount,
         nonce=event.nonce,
         parents=tuple(sorted(event.parents)),
+        data=event.data,
     )
 
 

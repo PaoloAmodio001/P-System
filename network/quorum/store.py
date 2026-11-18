@@ -24,7 +24,7 @@ from core.attestation import (
     Vote,
     is_authorized_transfer,
 )
-from core.event import Transfer
+from core.event import Transfer, transfer_from_canonical_dict
 from core.signed_event import SignedTransfer
 from network.message import (
     decode_epoch_change,
@@ -220,14 +220,7 @@ _SCHEMA = (
 
 
 def _event_from_canonical(canonical: str) -> Transfer:
-    data = json.loads(canonical)
-    return Transfer(
-        sender=data["sender"],
-        receiver=data["receiver"],
-        amount=data["amount"],
-        nonce=data["nonce"],
-        parents=tuple(data["parents"]),
-    )
+    return transfer_from_canonical_dict(json.loads(canonical))
 
 
 def _encode_signatures(certificate: QuorumCertificate) -> str:

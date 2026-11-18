@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.attestation import Committee, Governance
-from core.event import Transfer
+from core.event import Transfer, is_canonical_data, transfer_from_canonical_dict
 from core.signed_event import SignedTransfer
 from core.state import asset_account, split_asset_account
 from crypto.identity import Identity
@@ -111,9 +111,12 @@ class Wallet:
         amount: int,
         nonce: int | None = None,
         parents=(),
+        data: str = "",
     ) -> SignedTransfer:
         """
         Sign a transfer, after the journal holds it. With no `nonce`, the next one.
+
+        `data` is the canonical text of a JSON object (`core.event.canonical_data`), or empty.
 
         A nonce already used for this same transfer gives back the same signed event. For
         another transfer it is refused, and nothing is signed.
@@ -127,7 +130,10 @@ class Wallet:
         if self.asset is not None and split_asset_account(receiver) is None:
             receiver = asset_account(receiver, self.asset)
 
-        event = Transfer(self.account, receiver, amount, nonce, tuple(parents))
+        if not is_canonical_data(data):
+            raise WalletError("DATA IS NOT THE CANONICAL TEXT OF A JSON OBJECT")
+
+        event = Transfer(self.account, receiver, amount, nonce, tuple(parents), data)
         canonical = event.canonical().decode()
 
         try:
@@ -174,14 +180,7 @@ class Wallet:
         found = []
 
         for nonce, canonical, signature in rows:
-            data = json.loads(canonical)
-            event = Transfer(
-                data["sender"],
-                data["receiver"],
-                data["amount"],
-                data["nonce"],
-                tuple(data["parents"]),
-            )
+            event = transfer_from_canonical_dict(json.loads(canonical))
             found.append(SignedTransfer(event, self.identity.public_key, bytes.fromhex(signature)))
 
         return found
@@ -216,6 +215,8 @@ def signed_to_json(signed: SignedTransfer) -> dict:
             "amount": event.amount,
             "nonce": event.nonce,
             "parents": sorted(event.parents),
+            # Absent when empty, as on the wire between nodes.
+            **({"data": event.data} if event.data else {}),
         },
         "public_key": signed.public_key.hex(),
         "signature": signed.signature.hex(),
@@ -433,6 +434,13 @@ class Client:
             if error.status == 404:
                 return None
             raise
+
+    def records(self, after: int = 0, limit: int = 500, sender: str | None = None) -> dict:
+        """Executed events with data and their certificates: `{"records", "next", "executed"}`."""
+        query = {"after": after, "limit": limit}
+        if sender is not None:
+            query["sender"] = sender
+        return self._request("GET", "/v1/records?" + urllib.parse.urlencode(query))
 
     def closures(self) -> list[dict]:
         return self._request("GET", "/v1/closures")["closures"]

@@ -561,3 +561,18 @@ import PSystem
 #print axioms PSystem.Core.execValue_json
 
 #print axioms PSystem.Core.voteValue_json
+
+-- QuorumPayload.lean
+#print axioms PSystem.Payload.idBindsData_satisfiable
+
+#print axioms PSystem.Payload.same_id_same_data
+
+#print axioms PSystem.Payload.carried_data_unique
+
+#print axioms PSystem.Payload.certified_data_agree
+
+#print axioms PSystem.Payload.executed_data_agree
+
+#print axioms PSystem.Payload.decided_data_agree
+
+#print axioms PSystem.Payload.executable_ignores_data

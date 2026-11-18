@@ -4,7 +4,7 @@ from hashlib import sha256
 import json
 import re
 
-from core.event import Transfer
+from core.event import Transfer, is_canonical_data
 from core.signed_event import SignedTransfer
 from core.state import State, account_asset, account_owner
 from crypto.identity import Identity, verify_signature
@@ -113,6 +113,8 @@ def is_well_formed_event(event) -> bool:
             type(parent) is str and _ROOT_PATTERN.fullmatch(parent) is not None
             for parent in event.parents
         )
+        # Data is not in the model: it reaches it only through the id, which hashes it.
+        and is_canonical_data(event.data)
     )
 
 
