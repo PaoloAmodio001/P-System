@@ -26,8 +26,7 @@ import time
 
 import pytest
 
-from core.attestation import Committee, QuorumCertificate, Vote
-from core.decision_status import DecisionStatus
+from core.attestation import PRECOMMIT, Committee, QuorumCertificate, Vote
 from core.derive import StateDeriver
 from core.event import Transfer
 from core.signed_event import SignedTransfer
@@ -39,6 +38,7 @@ from network.message import (
     encode_certificate,
     encode_certificate_sync,
     encode_certificate_sync_request,
+    encode_round_vote,
     encode_vote_request,
 )
 from network.node import Node
@@ -143,6 +143,19 @@ class FaultyMember:
         votes[FAULTY] = self.own_vote(event)
         return QuorumCertificate(event, tuple(votes[v] for v in sorted(votes)))
 
+    def prepare_and_precommit(self, node, signed: SignedTransfer) -> None:
+        """
+        Three votes of round 0 are a prepare certificate, not a decision. This member sends it to
+        `node` and its own precommit to all: with those of the two honest nodes, a decision.
+        """
+        precommit = Vote.create_phase(COMMITTEE, self.identity, signed.transfer, PRECOMMIT, 0)
+        message = encode_round_vote(signed.transfer, precommit, PRECOMMIT, 0)
+        message["public_key"] = signed.public_key.hex()
+        message["sender_signature"] = signed.signature.hex()
+        for connection in self.connections.values():
+            connection.send(message)
+        self.connections[node.node_id].send(encode_certificate(self.certificate(signed.transfer)))
+
     def close(self) -> None:
         for connection in self.connections.values():
             connection.close()
@@ -217,7 +230,7 @@ def assert_the_theorems_hold(nodes) -> None:
     assert_state_is_derive(nodes)
     assert same_state(nodes)
     for node in nodes:
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
 
 
 # --- Scenarios --------------------------------------------------------------------------
@@ -423,7 +436,8 @@ def test_a_reader_without_the_lock_can_see_the_events_before_the_state(make_node
         return real(state)
 
     monkeypatch.setattr(State, "copy", spy)
-    votes = tuple(Vote.create(COMMITTEE, member, event.transfer) for member in MEMBERS[:3])
+    # All four: the votes of round 0 that decide.
+    votes = tuple(Vote.create(COMMITTEE, member, event.transfer) for member in MEMBERS)
     node._handle_quorum_message(encode_certificate(QuorumCertificate(event.transfer, votes)), None)
     assert (1, 0) in seen
 
@@ -480,9 +494,7 @@ def test_a_node_that_was_away_catches_up_when_it_connects(make_nodes):
         faulty.ask_vote(nodes[0], event)
         faulty.ask_vote(nodes[1], event)
         assert wait_until(lambda: len(faulty.collected(event.transfer)) == 2)
-        faulty.connections[nodes[0].node_id].send(
-            encode_certificate(faulty.certificate(event.transfer))
-        )
+        faulty.prepare_and_precommit(nodes[0], event)
         events.append(event.transfer)
 
     assert wait_until(lambda: all(n.local_events == events for n in nodes[:2]))
@@ -504,9 +516,7 @@ def _node_ahead_and_one_behind(make_nodes):
     faulty.ask_vote(ahead, event)
     faulty.ask_vote(other, event)
     assert wait_until(lambda: len(faulty.collected(event.transfer)) == 2)
-    faulty.connections[ahead.node_id].send(
-        encode_certificate(faulty.certificate(event.transfer))
-    )
+    faulty.prepare_and_precommit(ahead, event)
     assert wait_until(lambda: ahead.local_events == [event.transfer])
     faulty.close()
     return ahead, behind, event.transfer
@@ -546,6 +556,27 @@ def test_with_no_intervals_the_node_connected_to_asks_at_once(make_nodes):
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_node_asks_again_at_intervals(make_nodes, monkeypatch):
+    # The interval is the policy of asking what one lacks: a node that is linked and running asks
+    # again at intervals, not only when a connection is new, and not only while it waits for
+    # something. Nothing else happens in the loop, so the asks are only the ones of the clock.
+    nodes = make_nodes()
+    link(nodes)
+    assert wait_until(lambda: all(len(n.peer_connections) == 2 for n in nodes))
+
+    asked = []
+    real = Node._request_certificates
+
+    def spy(self, connection):
+        asked.append(self.node_id)
+        real(self, connection)
+
+    monkeypatch.setattr(Node, "_request_certificates", spy)
+    before = len(asked)
+    assert wait_until(lambda: len(asked) > before + 2, seconds=10)
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_a_restarted_node_recovers_what_it_missed(make_nodes, tmp_path):
     nodes = make_nodes()
     link(nodes)
@@ -562,9 +593,7 @@ def test_a_restarted_node_recovers_what_it_missed(make_nodes, tmp_path):
         faulty.ask_vote(nodes[0], event)
         faulty.ask_vote(nodes[1], event)
         assert wait_until(lambda: len(faulty.collected(event.transfer)) == 2)
-        faulty.connections[nodes[1].node_id].send(
-            encode_certificate(faulty.certificate(event.transfer))
-        )
+        faulty.prepare_and_precommit(nodes[1], event)
         missed.append(event.transfer)
 
     assert wait_until(lambda: nodes[1].local_events == [before.transfer, *missed])
@@ -635,7 +664,7 @@ def test_two_certificates_in_conflict_over_real_tls_halt_and_choose_nothing(make
     def certificate(event):
         return QuorumCertificate(
             event,
-            tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in (0, 1, 2)),
+            tuple(Vote.create(COMMITTEE, member, event) for member in MEMBERS),
         )
 
     connection = faulty.connections[nodes[0].node_id]
@@ -643,7 +672,7 @@ def test_two_certificates_in_conflict_over_real_tls_halt_and_choose_nothing(make
     assert wait_until(lambda: nodes[0].local_events == [event_a])
     connection.send(encode_certificate_sync([certificate(event_b)]))
 
-    assert wait_until(lambda: nodes[0].status() == DecisionStatus.CONFLICTED)
+    assert wait_until(lambda: nodes[0].conflicted)
     assert nodes[0].local_events == [event_a]
     assert nodes[0].state.balance("b") == 0
     faulty.close()

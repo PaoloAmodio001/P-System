@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, run_tests_on, source_of_module
 
 TESTS = [str(Path("tests") / "test_saturation.py")]
 
@@ -71,8 +71,8 @@ MUTATIONS = {
             "        if not self._is_authorized(signed):\n            return _NOTHING\n",
         ),
         "a bad certificate is free": (
-            "        else:\n            self._cost += BAD_SIGNATURE_COST\n\n        return _NOTHING\n",
-            "\n        return _NOTHING\n",
+            '        if not self.replica.certificate_is_valid(certificate):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n\n        if certificate.decides(self.replica.committee_of(certificate)):\n',
+            '        if not self.replica.certificate_is_valid(certificate):\n            return _NOTHING\n\n        if certificate.decides(self.replica.committee_of(certificate)):\n',
         ),
         "a bad batch is free": (
             "            if not self.replica.certificate_is_valid(certificate):\n                self._cost += BAD_SIGNATURE_COST\n                return _NOTHING\n",
@@ -91,12 +91,12 @@ MUTATIONS = {
             "",
         ),
         "the signature comes first": (
-            "        if not self._is_admitted(signed.transfer):\n            return _NOTHING\n\n        if not self._is_authorized(signed):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n",
-            "        if not self._is_authorized(signed):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n\n        if not self._is_admitted(signed.transfer):\n            return _NOTHING\n",
+            '        if self._closing is not None or not self._is_admitted(signed.transfer):\n            return _NOTHING\n\n        if not self._is_authorized(signed):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n',
+            '        if not self._is_authorized(signed):\n            self._cost += BAD_SIGNATURE_COST\n            return _NOTHING\n\n        if self._closing is not None or not self._is_admitted(signed.transfer):\n            return _NOTHING\n',
         ),
         "the signature comes first when submitting": (
-            "        if self.halted or not self._is_admitted(signed.transfer):\n            return _NOTHING\n\n        if not self._is_authorized(signed):\n            return _NOTHING\n",
-            "        if self.halted or not self._is_authorized(signed):\n            return _NOTHING\n\n        if not self._is_admitted(signed.transfer):\n            return _NOTHING\n",
+            '        if self.halted or self._closing is not None or not self._is_admitted(signed.transfer):\n            return _NOTHING\n\n        if not self._is_authorized(signed):\n            return _NOTHING\n',
+            '        if self.halted or self._closing is not None or not self._is_authorized(signed):\n            return _NOTHING\n\n        if not self._is_admitted(signed.transfer):\n            return _NOTHING\n',
         ),
         "no limit for the buffer": (
             "        return len(self._buffer) < self.max_buffered\n",
@@ -141,8 +141,8 @@ MUTATIONS = {
             "",
         ),
         "a halt leaves what waits": (
-            "            self._buffer.clear()\n            self._waiting.clear()\n",
-            "            self._buffer.clear()\n",
+            '        self._buffer.clear()\n        self._waiting.clear()\n        self._aggregating.clear()\n',
+            '        self._buffer.clear()\n        self._aggregating.clear()\n',
         ),
         "what ran stays waiting": (
             "        del nonces[event.nonce]\n\n        if not nonces:\n            del self._waiting[event.sender]\n",
@@ -171,7 +171,7 @@ ALL = [(module, name) for module, table in MUTATIONS.items() for name in table]
 
 
 def source_of(module: str) -> str:
-    return (ROOT / (module.replace(".", "/") + ".py")).read_text()
+    return source_of_module(module)
 
 
 @pytest.mark.parametrize("module", MUTATIONS)

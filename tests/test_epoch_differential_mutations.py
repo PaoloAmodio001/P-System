@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_epoch_differential.py"), "-k", "20261105"]
 
@@ -73,7 +73,7 @@ ATTESTATION = {
 }
 
 CASES = [
-    *(("network.quorum", "network/quorum.py", name, change) for name, change in QUORUM.items()),
+    *(("network.quorum", "network/quorum/", name, change) for name, change in QUORUM.items()),
     *(("core.attestation", "core/attestation.py", name, change) for name, change in ATTESTATION.items()),
 ]
 
@@ -81,7 +81,7 @@ CASES = [
 @pytest.mark.parametrize("case", CASES, ids=[case[2] for case in CASES])
 def test_mutation_is_detected(case):
     module, file, _, (old, new) = case
-    source = (ROOT / file).read_text()
+    source = quorum_source() if file == "network/quorum/" else (ROOT / file).read_text()
     assert source.count(old) == 1
     result = run_tests_on(module, source.replace(old, new), TESTS)
     assert result.returncode == 1, result.stdout + result.stderr

@@ -1,6 +1,7 @@
 import time
 
 from core.state import State
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.peer import Peer
 
@@ -8,7 +9,7 @@ from network.peer import Peer
 def start_on_another_port(node_id: str, old_port: int) -> Node:
     """The system may give back the port just freed, and this test is about a node that moved."""
     for _ in range(20):
-        node = Node(
+        node = standalone_node(
             node_id,
             State({"alice": 10}),
             port=0,
@@ -24,13 +25,13 @@ def start_on_another_port(node_id: str, old_port: int) -> Node:
 
 
 def test_p16_reconnect_eventually_restores_peer_connection():
-    node_a = Node(
+    node_a = standalone_node(
         "p16-node-A",
         State({"alice": 10}),
         port=0,
     )
 
-    node_b = Node(
+    node_b = standalone_node(
         "p16-node-B",
         State({"alice": 10}),
         port=0,
@@ -103,13 +104,13 @@ def test_p16_reconnect_eventually_restores_peer_connection():
 
 
 def test_p16_reconnect_recovers_across_repeated_peer_restarts():
-    node_a = Node(
+    node_a = standalone_node(
         "p16-repeat-A",
         State({"alice": 10}),
         port=0,
     )
 
-    node_b = Node(
+    node_b = standalone_node(
         "p16-repeat-B",
         State({"alice": 10}),
         port=0,

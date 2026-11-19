@@ -587,7 +587,7 @@ def test_a_limit_refuses_only_a_vote_and_never_a_certificate(tmp_path):
             encode_certificate(
                 QuorumCertificate(
                     event,
-                    tuple(Vote.create(committee, members[i], event) for i in range(3)),
+                    tuple(Vote.create(committee, members[i], event) for i in range(committee.n)),
                 )
             )
         )
@@ -711,7 +711,7 @@ def test_a_valid_certificate_is_final_whatever_the_node_is():
 
     members, committee, verifier = _verifier()
     event = Transfer("alice", "bob", 1, 0)
-    good = QuorumCertificate(event, tuple(Vote.create(committee, members[i], event) for i in range(3)))
+    good = QuorumCertificate(event, tuple(Vote.create(committee, members[i], event) for i in range(committee.n)))
     client = LyingClient({"/v1/certificates": encode_certificate(good), "/v1/closures": {"closures": []}})
     assert client.verify_final(event, verifier)
 
@@ -723,7 +723,7 @@ def test_a_node_cannot_prove_what_was_not_certified():
     members, committee, verifier = _verifier()
     event = Transfer("alice", "bob", 1, 0)
     one_signature = Vote.create(committee, members[0], event).signature
-    forged = QuorumCertificate(event, tuple(Vote(i, one_signature) for i in range(3)))
+    forged = QuorumCertificate(event, tuple(Vote(i, one_signature) for i in range(committee.n)))
     client = LyingClient({"/v1/certificates": encode_certificate(forged), "/v1/closures": {"closures": []}})
     assert not client.verify_final(event, verifier)
 
@@ -734,7 +734,7 @@ def test_a_certificate_for_another_event_proves_nothing():
 
     members, committee, verifier = _verifier()
     other = Transfer("alice", "carol", 1, 0)
-    valid = QuorumCertificate(other, tuple(Vote.create(committee, members[i], other) for i in range(3)))
+    valid = QuorumCertificate(other, tuple(Vote.create(committee, members[i], other) for i in range(committee.n)))
     client = LyingClient({"/v1/certificates": encode_certificate(valid), "/v1/closures": {"closures": []}})
     assert not client.verify_final(Transfer("alice", "bob", 1, 0), verifier)
 

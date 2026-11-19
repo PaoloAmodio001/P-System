@@ -26,7 +26,7 @@ COMMITTEE = Committee.create([m.public_key for m in MEMBERS], 1, GENESIS)
 
 def certificate(nonce: int) -> QuorumCertificate:
     event = Transfer(ALICE, "bob", 1, nonce)
-    return QuorumCertificate(event, tuple(Vote.create(COMMITTEE, m, event) for m in MEMBERS[:3]), 0)
+    return QuorumCertificate(event, tuple(Vote.create(COMMITTEE, m, event) for m in MEMBERS), 0)
 
 
 def open_replica(path, create=True) -> QuorumReplica:

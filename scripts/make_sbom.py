@@ -8,10 +8,16 @@ installed from that file. It says what is there, and nothing about whether any o
 
 import json
 import re
+import tomllib
 from importlib import metadata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def project_version() -> str:
+    """The version of P-System, from pyproject.toml: one number, the same everywhere (tests/test_version.py)."""
+    return tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 
 
 def locked() -> dict[str, list[str]]:
@@ -63,7 +69,7 @@ def main() -> None:
                 "specVersion": "1.5",
                 "version": 1,
                 "metadata": {
-                    "component": {"type": "application", "name": "p-system", "version": "0.2.0"}
+                    "component": {"type": "application", "name": "p-system", "version": project_version()}
                 },
                 "components": components,
             },

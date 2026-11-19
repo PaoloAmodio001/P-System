@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "P-System node API",
-  "version": "1",
+  "version": "1.0.0",
   "description": "What a node says about state may be behind, or false if the node is faulty: only a certificate proves something. See docs/API.md. Not ready for production: docs/VALIDATION-PLAN.md."
  },
  "components": {
@@ -487,6 +487,108 @@
        "application/json": {
         "schema": {
          "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Token missing or wrong",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Too many requests from this address",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/records": {
+   "get": {
+    "summary": "Executed events that carry data (mission records), with their certificates, in this node's execution order",
+    "parameters": [
+     {
+      "name": "after",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 500,
+       "default": 500
+      }
+     },
+     {
+      "name": "sender",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "required": [
+          "records",
+          "next",
+          "executed"
+         ],
+         "properties": {
+          "records": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "position",
+             "event_id",
+             "certificate"
+            ]
+           }
+          },
+          "next": {
+           "type": "integer"
+          },
+          "executed": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "After or limit out of range",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
         }
        }
       }

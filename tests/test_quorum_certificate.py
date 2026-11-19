@@ -19,7 +19,6 @@ from core.attestation import (
     vote_payload,
 )
 from core.event import Transfer
-from core.identity_claim import IdentityClaim
 from core.signed_event import SignedTransfer
 from core.state import State
 from crypto.identity import Identity, verify_signature
@@ -209,7 +208,7 @@ def test_vote_is_not_a_signature_of_a_transfer():
     ).verify()
 
 
-def test_vote_is_not_an_attestation_or_an_identity_claim():
+def test_vote_is_not_an_attestation():
     committee, identities = make_committee()
     identity = identities[0]
     vote = Vote.create(committee, identity, EVENT)
@@ -217,19 +216,12 @@ def test_vote_is_not_an_attestation_or_an_identity_claim():
         EVENT.event_id(), identity.public_key, 1, vote.signature
     ).verify()
 
-    claim = IdentityClaim.create(identity, "alice")
-    assert not IdentityClaim(
-        claim.identity_id, claim.alias, claim.public_key, vote.signature
-    ).verify()
-
 
 def test_other_signatures_of_the_same_key_are_not_votes():
     committee, identities = make_committee()
     identity = identities[0]
     attestation = Attestation.create(identity, EVENT.event_id(), 1)
-    claim = IdentityClaim.create(identity, "alice")
     assert not Vote(0, attestation.signature).verify(committee, EVENT)
-    assert not Vote(0, claim.signature).verify(committee, EVENT)
 
 
 def test_payload_starts_with_the_domain_tag_and_binds_the_committee():

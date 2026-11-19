@@ -2,14 +2,14 @@
 
 Left out: test_a_node_killed_while_gathering_finishes_when_it_comes_back and
 test_the_metrics_of_a_real_node_say_what_is_stuck, whose nodes are separate processes that import the real
-modules. The first was seen to fail by hand without the change: see archive/docs/piano-bizantino.md.
+modules. The first was seen to fail by hand without the change.
 """
 
 from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, run_tests_on, source_of_module
 
 TESTS = [
     str(Path("tests") / "test_resend_after_restart.py"),
@@ -40,12 +40,12 @@ MUTATIONS = {
             "",
         ),
         "nothing resumes after a restart": (
-            "        if not self.halted:\n            self._resume_gathering()\n",
-            "",
+            '        if not self.halted:\n            self._resume_gathering()\n',
+            '        if not self.halted:\n',
         ),
         "resumes after a halt": (
-            "        if not self.halted:\n            self._resume_gathering()\n",
-            "        self._resume_gathering()\n",
+            '        if not self.halted:\n            self._resume_gathering()\n',
+            '        self._resume_gathering()\n        if not self.halted:\n',
         ),
         "no limit on what resumes": (
             "self.replica.gathering()[: self.max_aggregating]",
@@ -62,10 +62,8 @@ MUTATIONS = {
             "                needs_own_vote=True,\n",
             "",
         ),
-        "a certificate in memory loses the row": (
-            "                if known is None or known.event.canonical() != canonical:\n",
-            "                if True:\n",
-        ),
+        # "a certificate in memory loses the row" is gone: since store schema 8 a decision is held on
+        # disk before it waits, so a restart keeps it with or without the row of the gathering.
         "another version certified keeps the row": (
             "                if known is None or known.event.canonical() != canonical:\n",
             "                if known is None:\n",
@@ -79,20 +77,20 @@ MUTATIONS = {
             "next(reversed(self._to_resend.values()), None)",
         ),
         "a certificate stays in the numbers": (
-            "        self._to_resend.pop(event.canonical(), None)\n",
-            "",
+            '        self._to_resend.pop(event.canonical(), None)\n        taken = self._accept(certificate)\n',
+            '        taken = self._accept(certificate)\n',
         ),
         "a file of schema 5 refused": (
-            "(_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4)",
-            "(_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_4)",
+            '_SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5, _SCHEMA_VERSION_4\n',
+            '_SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6, _SCHEMA_VERSION_4\n',
         ),
         "a migration without the table": (
-            "                if version != _SCHEMA_VERSION_6:\n                    self._connection.execute(_GATHERING_TABLE)\n",
-            "",
+            '                if version not in (_SCHEMA_VERSION_7, _SCHEMA_VERSION_6):\n                    self._connection.execute(_GATHERING_TABLE)\n',
+            '',
         ),
         "a file of schema 5 gets the older migration": (
-            "            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5):\n",
-            "            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_6):\n",
+            '            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6, _SCHEMA_VERSION_5):\n',
+            '            if version not in (_SCHEMA_VERSION, _SCHEMA_VERSION_7, _SCHEMA_VERSION_6):\n',
         ),
     },
     "network.node": {
@@ -107,7 +105,7 @@ ALL = [(module, name) for module, table in MUTATIONS.items() for name in table]
 
 
 def source_of(module: str) -> str:
-    return (ROOT / (module.replace(".", "/") + ".py")).read_text()
+    return source_of_module(module)
 
 
 @pytest.mark.parametrize("module,name", ALL)

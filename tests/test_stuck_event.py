@@ -1,6 +1,6 @@
 """An event of an honest sender that stopped with every node up, and what prevents it.
 
-Measured in archive/docs/piano-bizantino.md. The node with the lower id called back a peer that had already called it,
+Measured with scripts/probe_stuck_event.py. The node with the lower id called back a peer that had already called it,
 and closed the connection in use: what was queued, in flight or still to be answered on it was lost, and
 nothing sent it again. These tests stage that moment with proxies, so that they do not depend on timing.
 """
@@ -19,6 +19,7 @@ from core.state import State
 from crypto.identity import Identity
 from network.handshake import Handshake
 from network.message import decode_vote_request, encode_certificate, encode_vote, encode_vote_request
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.peer import Peer
 from network.peer_connection import PeerConnection
@@ -30,6 +31,16 @@ from tests.chaos import ChaosDeployment
 from tests.deployment_helpers import wait_until
 from tests.failure_evidence import ROOT, failures_directory
 from tests.test_quorum_node import GENESIS, PAYER, Committee4, signed
+
+from network.quorum.rounds import RoundDriver
+
+
+@pytest.fixture(autouse=True)
+def _no_round_timeouts(monkeypatch):
+    # These tests are about asking again; the rounds that follow a split have their own tests.
+    monkeypatch.setattr(RoundDriver, "ROUND_FIRST_SECONDS", float("inf"))
+    monkeypatch.setattr(RoundDriver, "ROUND_LONGEST_SECONDS", float("inf"))
+
 
 BURST = 50
 # Longer than a node waits between two tries of a peer that cannot be reached.
@@ -46,7 +57,7 @@ def peer_of(node: Node) -> Peer:
 
 
 def test_a_live_connection_from_the_higher_id_is_not_replaced():
-    lower, higher = Node("a-node", State()), Node("z-node", State())
+    lower, higher = standalone_node("a-node", State()), standalone_node("z-node", State())
 
     try:
         lower.start()
@@ -81,7 +92,7 @@ def agree(left: Node, right: Node) -> bool:
 @pytest.mark.parametrize("round_number", range(5))
 def test_two_nodes_that_call_each_other_end_on_one_connection(round_number):
     # What the rule of the lower id is for, and it stays. Here the reconnect loops call, as in the service.
-    left, right = Node("a-node", State()), Node("z-node", State())
+    left, right = standalone_node("a-node", State()), standalone_node("z-node", State())
 
     try:
         left.start()

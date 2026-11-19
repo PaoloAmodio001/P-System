@@ -10,7 +10,7 @@ maximum 60, i.e. `reconnectDelay (k - 1)` below.
 
 These are properties of the formula only. They are not a liveness result:
 nothing here says that a connection eventually succeeds. Taken from the
-former P16 module (see the tag `pre-lean-cleanup`), without the theorems
+former P16 module (see commit `e10f4a4`), without the theorems
 that assumed the hard part (`P16_conditional_eventual_reconnection`) or
 restated a definition.
 -/

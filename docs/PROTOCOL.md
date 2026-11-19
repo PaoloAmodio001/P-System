@@ -43,7 +43,10 @@ All Ed25519.
 |---|---|---|
 | `VOTE_REQUEST` | `transfer`, `public_key`, `signature` | `VOTE`, or nothing if refused |
 | `VOTE` | `transfer`, `validator`, `signature` | |
-| `CERTIFICATE` | `transfer`, `votes`, optional `epoch` | |
+| `CERTIFICATE` | `transfer`, `votes`, optional `epoch`, `phase`, `round`, `public_key`, `sender_signature` | |
+| `ROUND_VOTE` | `phase` (`prevote` or `precommit`), `round`, `transfer`, `validator`, `signature`, optional `epoch`, `public_key`, `sender_signature` | |
+| `NEW_ROUND` | `report`: `sender`, `nonce`, `round`, `validator`, `vote0`, `best`, `signature` | the decision, if this node holds one |
+| `PROPOSAL` | `round`, `value` (a signed transfer), `reports`, `validator`, `signature` | |
 | `CERTIFICATE_SYNC_REQUEST` | `frontier`: sorted `[sender, next_nonce]`; optional `epoch` | `EPOCH_CLOSURE`s, a `SNAPSHOT` if this node holds what is asked only inside one, then `CERTIFICATE_SYNC` |
 | `CERTIFICATE_SYNC` | `certificates`, at most about 4 MiB | a new request if something new was learned |
 | `EPOCH_CHANGE` | `change` | `EPOCH_REPORT` |
@@ -59,10 +62,35 @@ anyone can send one. A batch of certificates stops at its first invalid one.
 ## Certificates
 
 Valid when: the event is well formed, the signers are distinct members of the committee of its epoch,
-at least `2f+1` of them, and **every** signature verifies, also beyond the quorum.
+at least `2f+1` of them, and **every** signature verifies, for the phase and round of the certificate,
+also beyond the quorum.
 
-Two valid certificates for different events with one `(sender, nonce)` mean more than `f` faulty
-members. A node stops for good and keeps both: see `docs/OPERATIONS.md`.
+A valid certificate **decides** when it holds the votes of round 0 of all `n` members, or the
+precommits of `2f+1` in one round. Only a decision executes, and only decisions travel in
+`CERTIFICATE_SYNC`. A valid certificate of `2f+1` to `n-1` votes of round 0, or of `2f+1` prevotes of a
+round, is a **prepare**: the precommits follow it.
+
+Two decisions for different events with one `(sender, nonce)`, or two prepares of one round, mean
+more than `f` faulty members. A node stops for good and keeps both: see `docs/OPERATIONS.md`.
+
+## Rounds
+
+For each `(sender, nonce)` on its own, with `n = 3f+1` (`formal/lean/PSystem/QuorumRounds.lean`):
+
+1. Round 0 is the vote above. A validator that holds a prepare of the round it is in precommits it,
+   and sends a prepare it receives on, once.
+2. A validator that voted on a key and has no decision after a timeout (2 s, doubling up to 60 s) moves
+   to the next round and sends `NEW_ROUND` to all: its vote of round 0 and the highest prepare it holds.
+   It joins a higher round when `f+1` reports show one.
+3. The leader of round `r` is member `(k + r) mod n`, with `k` from the hash of the key. With `2f+1`
+   reports it proposes the value of the highest prepare among them; with none, a value that `f+1` of
+   them voted in round 0; else any version signed by its sender.
+4. A validator prevotes a proposal only if it comes from the leader and the reports justify it.
+   `2f+1` prevotes are a prepare of the round, and the precommits follow as in step 1.
+
+A node that has decided a key answers `NEW_ROUND` with the decision. A member that orders the end of
+an epoch waits up to 8 s for its open keys, and its report adds every value it voted for in any round,
+with its sender's signature: see `docs/PROOF-SCOPE.md` for what stays locked.
 
 ## Changing committee
 

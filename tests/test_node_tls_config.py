@@ -7,6 +7,7 @@ import pytest
 
 from core.state import State
 from network.handshake import Handshake
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.node_tls_identity import issue_node_certificate, create_authority
 from network.peer import Peer
@@ -32,8 +33,8 @@ def config_for(authority, node_id, tmp_path):
 
 
 def test_nodes_with_certificates_of_one_authority_connect(authority, tmp_path):
-    first = Node("a-node", State(), tls_config=config_for(authority, "a-node", tmp_path))
-    second = Node("b-node", State(), tls_config=config_for(authority, "b-node", tmp_path))
+    first = standalone_node("a-node", State(), tls_config=config_for(authority, "a-node", tmp_path))
+    second = standalone_node("b-node", State(), tls_config=config_for(authority, "b-node", tmp_path))
     first.start()
     second.start()
     try:
@@ -47,8 +48,8 @@ def test_nodes_with_certificates_of_one_authority_connect(authority, tmp_path):
 
 def test_node_of_another_authority_cannot_connect(authority, tmp_path):
     other = create_authority(tmp_path / "other-ca")
-    first = Node("a-node", State(), tls_config=config_for(authority, "a-node", tmp_path))
-    second = Node(
+    first = standalone_node("a-node", State(), tls_config=config_for(authority, "a-node", tmp_path))
+    second = standalone_node(
         "b-node",
         State(),
         tls_config=issue_node_certificate(other, "b-node", tmp_path / "other"),
@@ -79,7 +80,7 @@ def _handshake_as(config, claimed_id, node):
 def test_a_peer_cannot_claim_the_node_id_of_another_certificate(authority, tmp_path):
     # Holding a certificate of the authority is not being every node of it: this used to
     # replace the connection of the real peer.
-    node = Node("victim", State(), tls_config=config_for(authority, "victim", tmp_path))
+    node = standalone_node("victim", State(), tls_config=config_for(authority, "victim", tmp_path))
     node.start()
     try:
         connection = _handshake_as(config_for(authority, "mallory", tmp_path), "honest-peer", node)
@@ -94,7 +95,7 @@ def test_a_peer_cannot_claim_the_node_id_of_another_certificate(authority, tmp_p
 
 
 def test_a_peer_with_its_own_certificate_is_accepted_under_its_name(authority, tmp_path):
-    node = Node("victim", State(), tls_config=config_for(authority, "victim", tmp_path))
+    node = standalone_node("victim", State(), tls_config=config_for(authority, "victim", tmp_path))
     node.start()
     try:
         connection = _handshake_as(config_for(authority, "peer-x", tmp_path), "peer-x", node)
@@ -118,8 +119,8 @@ def test_an_authority_can_be_loaded_again(authority, tmp_path):
     from network.node_tls_identity import load_authority
 
     again = load_authority(authority.directory)
-    first = Node("a-node", State(), tls_config=config_for(authority, "a-node", tmp_path))
-    second = Node(
+    first = standalone_node("a-node", State(), tls_config=config_for(authority, "a-node", tmp_path))
+    second = standalone_node(
         "b-node",
         State(),
         tls_config=issue_node_certificate(again, "b-node", tmp_path / "later"),
@@ -135,8 +136,8 @@ def test_an_authority_can_be_loaded_again(authority, tmp_path):
 
 
 def test_without_a_config_a_node_still_works_inside_one_process():
-    first = Node("a-node", State())
-    second = Node("b-node", State())
+    first = standalone_node("a-node", State())
+    second = standalone_node("b-node", State())
     first.start()
     second.start()
     try:
@@ -148,7 +149,7 @@ def test_without_a_config_a_node_still_works_inside_one_process():
 
 
 def _node_on_all_interfaces(authority, tmp_path, name):
-    return Node(name, State(), host="0.0.0.0", tls_config=config_for(authority, name, tmp_path))
+    return standalone_node(name, State(), host="0.0.0.0", tls_config=config_for(authority, name, tmp_path))
 
 
 def test_a_node_on_all_interfaces_stays_reachable_at_the_address_it_was_dialed(authority, tmp_path):
@@ -189,7 +190,7 @@ def test_a_connection_on_its_way_counts_as_connected():
     # tests/test_peer_connection_race_real.py found it under load, so the moment is staged here.
     import threading
 
-    higher = Node("z-node", State())
+    higher = standalone_node("z-node", State())
 
     class Incoming:
         connected = True
@@ -206,7 +207,7 @@ def test_a_connection_on_its_way_counts_as_connected():
 
 
 def test_the_lower_id_does_not_wait_for_a_connection_that_will_not_come():
-    lower = Node("a-node", State())
+    lower = standalone_node("a-node", State())
     started = time.monotonic()
     assert not lower._wait_for_connection_from(Peer(node_id="z-node", host="x", port=1))
     assert time.monotonic() - started < 0.5
@@ -215,7 +216,7 @@ def test_the_lower_id_does_not_wait_for_a_connection_that_will_not_come():
 
 def test_a_connection_this_node_started_is_not_the_one_it_waits_for(monkeypatch):
     monkeypatch.setattr(Node, "SIMULTANEOUS_DIAL_SECONDS", 0.1)
-    higher = Node("z-node", State())
+    higher = standalone_node("z-node", State())
 
     class Outgoing:
         connected = True

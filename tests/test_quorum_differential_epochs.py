@@ -13,7 +13,6 @@ import time
 import pytest
 
 from core.attestation import Committee, EpochChange, Governance
-from core.decision_status import DecisionStatus
 from core.derive import StateDeriver
 from core.event import Transfer
 from core.signed_event import SignedTransfer
@@ -99,7 +98,7 @@ def assert_safe(nodes) -> None:
             root = node.state.root()
 
         assert root == StateDeriver.apply_events(GENESIS.copy(), events).root()
-        assert node.status() != DecisionStatus.CONFLICTED
+        assert not node.conflicted
 
 
 def change(current: Committee, keys) -> EpochChange:

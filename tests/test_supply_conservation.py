@@ -88,7 +88,7 @@ def test_execution_follows_the_model_and_does_not_look_at_assets(tmp_path):
     committee = Committee.create([m.public_key for m in MEMBERS], 1, genesis)
     store = SqliteVoteStore(tmp_path / "e.sqlite", committee, MEMBERS[0].public_key, create=True)
     replica = QuorumReplica(MEMBERS[0], genesis, store, lambda _event: True)
-    certificate = QuorumCertificate(CROSS, tuple(Vote.create(committee, m, CROSS) for m in MEMBERS[:3]), 0)
+    certificate = QuorumCertificate(CROSS, tuple(Vote.create(committee, m, CROSS) for m in MEMBERS), 0)
 
     assert replica.handle_certificate(certificate)
     assert replica.state.balance(account(ALICE, OTHER)) == 10

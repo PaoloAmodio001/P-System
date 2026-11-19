@@ -1,10 +1,11 @@
 from core.state import State
+from tests.node_helpers import standalone_node
 from network.node import Node
 
 
 def test_p16_reconnect_success_resets_retry_state():
-    node_a = Node("p16-extra-a", State({"alice": 10}), port=0)
-    node_b = Node("p16-extra-b", State({"alice": 10}), port=0)
+    node_a = standalone_node("p16-extra-a", State({"alice": 10}), port=0)
+    node_b = standalone_node("p16-extra-b", State({"alice": 10}), port=0)
 
     try:
         node_a.start()

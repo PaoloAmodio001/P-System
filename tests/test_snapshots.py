@@ -76,7 +76,8 @@ def signed_by(identity: Identity, event: Transfer) -> SignedTransfer:
 
 
 def certificate(event: Transfer, epoch: int = 0, committee: Committee = COMMITTEE, members=MEMBERS):
-    votes = tuple(Vote.create(committee, member, event) for member in members[:3])
+    # Every member: a decision of round 0, which executes.
+    votes = tuple(Vote.create(committee, member, event) for member in members[: committee.n])
     return QuorumCertificate(event, votes, epoch)
 
 

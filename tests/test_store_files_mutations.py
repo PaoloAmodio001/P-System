@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, run_tests_on, source_of_module
 
 TESTS = [
     str(Path("tests") / "test_store_files.py"),
@@ -48,7 +48,7 @@ CASES = [(module, name) for module, cases in MUTATIONS.items() for name in cases
 
 
 def source_of(module: str) -> str:
-    return (ROOT / Path(*module.split("."))).with_suffix(".py").read_text()
+    return source_of_module(module)
 
 
 def test_the_tests_pass_on_the_real_source():

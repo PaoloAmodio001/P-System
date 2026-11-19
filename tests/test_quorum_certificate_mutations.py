@@ -178,22 +178,21 @@ MUTATIONS = {
         "        VOTE_DOMAIN\n",
     ),
     "the id is signed instead of the canonical form": (
-        "        + event.canonical()\n",
-        "        + event.event_id().encode()\n",
+        '        VOTE_DOMAIN\n        + bytes.fromhex(committee.committee_id)\n        + event.canonical()\n',
+        '        VOTE_DOMAIN\n        + bytes.fromhex(committee.committee_id)\n        + event.event_id().encode()\n',
     ),
     # Votes.
     "vote on a malformed event": (
-        "        if not is_well_formed_event(event):\n"
-        "            raise ValueError(\"MALFORMED EVENT\")\n",
-        "",
+        '        must only call it through the lock in the replica.\n        """\n        if not is_well_formed_event(event):\n            raise ValueError("MALFORMED EVENT")\n',
+        '        must only call it through the lock in the replica.\n        """\n',
     ),
     "vote by an identity outside the committee": (
-        "            raise ValueError(\"IDENTITY IS NOT A COMMITTEE MEMBER\")\n",
-        "            validator = 0\n",
+        '            raise ValueError("IDENTITY IS NOT A COMMITTEE MEMBER")\n\n        return cls(\n            validator=validator,\n            signature=identity.sign(vote_payload(committee, event)),\n',
+        '            validator = 0\n\n        return cls(\n            validator=validator,\n            signature=identity.sign(vote_payload(committee, event)),\n',
     ),
     "vote verified on a malformed event": (
-        "        return is_well_formed_event(event) and self._verify_payload(\n",
-        "        return self._verify_payload(\n",
+        '        return is_well_formed_event(event) and self._verify_payload(committee, payload)\n',
+        '        return self._verify_payload(committee, payload)\n',
     ),
     "validator of a vote not checked": (
         "        return committee.has_validator(self.validator) and verify_signature(\n",

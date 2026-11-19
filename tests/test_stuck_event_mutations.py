@@ -2,14 +2,14 @@
 
 Left out: test_a_burst_is_not_lost_to_a_call_back and test_a_burst_lost_with_two_connections_runs_all_the_same,
 whose nodes are separate processes that import the real modules. Each was seen to fail by hand without
-the correction: see archive/docs/piano-bizantino.md.
+the correction, with scripts/probe_stuck_event.py.
 """
 
 from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, run_tests_on, source_of_module
 
 TESTS = [str(Path("tests") / "test_stuck_event.py"), "-k", "not burst"]
 
@@ -32,8 +32,8 @@ MUTATIONS = {
             "                self._clock(),\n",
         ),
         "never asked again": (
-            "*snapshot.broadcasts, *self._resend_requests()),",
-            "*snapshot.broadcasts),",
+            "*snapshot.broadcasts, *self._resend_requests(), *rounds)",
+            "*snapshot.broadcasts, *rounds)",
         ),
         "always the same wait": (
             "            pending.wait = min(2 * pending.wait, self.RESEND_LONGEST_SECONDS)\n",
@@ -74,7 +74,7 @@ ALL = [(module, name) for module, table in MUTATIONS.items() for name in table]
 
 
 def source_of(module: str) -> str:
-    return (ROOT / (module.replace(".", "/") + ".py")).read_text()
+    return source_of_module(module)
 
 
 @pytest.mark.parametrize("module,name", ALL)

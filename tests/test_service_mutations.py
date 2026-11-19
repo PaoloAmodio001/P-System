@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 SERVICE_TESTS = [str(Path("tests") / "test_service.py")]
 TLS_TESTS = [str(Path("tests") / "test_node_tls_config.py")]
@@ -114,7 +114,7 @@ MUTATIONS = {
             "",
         ),
     },
-    ("network.quorum", "network/quorum.py", "service"): {
+    ("network.quorum", "network/quorum/", "service"): {
         "no limit on the nonce": (
             "        if self.max_nonce_ahead is not None and not (\n"
             "            expected <= event.nonce <= expected + self.max_nonce_ahead\n"
@@ -180,7 +180,7 @@ CASES = [
 @pytest.mark.parametrize("key,name", CASES, ids=[name for _, name in CASES])
 def test_mutation_is_detected(key, name):
     module, relative, suite = key
-    source = (ROOT / relative).read_text()
+    source = quorum_source() if relative == "network/quorum/" else (ROOT / relative).read_text()
     old, new = MUTATIONS[key][name]
     assert source.count(old) == 1, name
     tests = SERVICE_TESTS if suite == "service" else TLS_TESTS

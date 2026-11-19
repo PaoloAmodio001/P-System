@@ -3,13 +3,12 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 from core.state import State
-from network.node import Node
-from tests.signed_helpers import authorize, identity_with_claim, signed_transfer
+from tests.node_helpers import standalone_node
 
 
-def test_real_tls_simultaneous_connections_and_signed_sync():
-    node_a = Node("race-real-A", State({"alice": 10}), port=0)
-    node_b = Node("race-real-B", State({"alice": 10}), port=0)
+def test_real_tls_simultaneous_connections_keep_one_connection():
+    node_a = standalone_node("race-real-A", State({"alice": 10}), port=0)
+    node_b = standalone_node("race-real-B", State({"alice": 10}), port=0)
     nodes = (node_a, node_b)
 
     try:
@@ -33,8 +32,8 @@ def test_real_tls_simultaneous_connections_and_signed_sync():
             result_a = future_a.result(timeout=10)
             result_b = future_b.result(timeout=10)
 
-        assert result_a, "Il nodo A non ha completato la connessione"
-        assert result_b, "Il nodo B non ha completato la connessione"
+        assert result_a, "node A did not complete the connection"
+        assert result_b, "node B did not complete the connection"
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -57,25 +56,15 @@ def test_real_tls_simultaneous_connections_and_signed_sync():
 
         assert conn_a is not None and conn_a.connected
         assert conn_b is not None and conn_b.connected
-        assert conn_a.initiated_locally, "A deve mantenere la connessione uscente"
-        assert not conn_b.initiated_locally, "B deve mantenere la connessione entrante"
+        assert conn_a.initiated_locally, "A must keep its outgoing connection"
+        assert not conn_b.initiated_locally, "B must keep its incoming connection"
 
-        identity, claim = identity_with_claim("alice")
-        for node in nodes:
-            authorize(node, claim)
+        # Traffic on the connections kept: a request for certificates each way.
+        node_a._request_certificates(conn_a)
+        node_b._request_certificates(conn_b)
+        time.sleep(0.2)
 
-        tx, signed = signed_transfer(identity, "alice", "bob", 1, 0)
-        assert node_a.receive_signed(signed, broadcast=False)
-
-        node_a.sync_with(node_b)
-
-        deadline = time.monotonic() + 5
-        while tx not in node_b.events and time.monotonic() < deadline:
-            time.sleep(0.02)
-
-        assert tx in node_b.events, "Il trasferimento firmato non è arrivato a B"
-
-        # La sincronizzazione non deve aver sostituito la connessione corretta.
+        # The traffic must not have replaced the connection kept.
         assert node_a.peer_connections.get(node_b.node_id) is conn_a
         assert node_b.peer_connections.get(node_a.node_id) is conn_b
         assert conn_a.connected and conn_b.connected

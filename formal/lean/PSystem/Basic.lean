@@ -8,7 +8,7 @@ namespace PSystem
 
 Events, account state and the single-event transition used by the
 convergence results. The former independence, permutation, conflict and
-acyclicity material was removed (see the tag `pre-lean-cleanup` and
+acyclicity material was removed (see commit `e10f4a4` and
 `docs/PROOF-OBLIGATIONS.md`): it was superseded by `Convergence.lean`, or
 degenerate (`Acyclic` held only for events without parents).
 -/

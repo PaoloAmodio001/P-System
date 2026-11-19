@@ -10,6 +10,7 @@ import threading
 import time
 
 from network.handshake import Handshake
+from tests.node_helpers import standalone_node
 from network.node import Node
 from network.node_tls_identity import get_node_tls_config
 from network.secure_transport import SecureTransport
@@ -58,7 +59,7 @@ def _assert_nothing_outlives_stop(node: Node, client_id: str, connection) -> Non
 
 
 def test_peer_finishing_its_handshake_during_stop_does_not_stay_connected():
-    server = Node("stop-race-a")
+    server = standalone_node("stop-race-a")
     server.start()
     client_id = "stop-race-client-a"
     connection = _open_tls(server, client_id)
@@ -84,7 +85,7 @@ def test_connection_being_published_during_stop_does_not_outlive_it():
     # The narrow case: the handshake is over, and only publishing it is left. This
     # one fixes the order of the two steps in Node.stop, because the server cannot
     # refuse a connection that has already passed its check.
-    server = Node("stop-race-b")
+    server = standalone_node("stop-race-b")
     server.start()
     client_id = "stop-race-client-b"
     reached, release = threading.Event(), threading.Event()

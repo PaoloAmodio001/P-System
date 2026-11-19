@@ -1,6 +1,6 @@
 """Differential test B must be able to fail.
 
-Each mutation breaks one rule outside the replica, in network/quorum.py or network/node.py,
+Each mutation breaks one rule outside the replica, in network/quorum/ or network/node.py,
 and the comparison with runNode must report a divergence. Only that counts: a crash, or the
 floor on what a corpus exercises, is not a detection. One seed, stopping at the first
 difference, so this is fast unless a mutation survives.
@@ -20,8 +20,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.mutation_support import quorum_source, source_argument
+
 ROOT = Path(__file__).resolve().parent.parent
-QUORUM = (ROOT / "network" / "quorum.py").read_text()
+QUORUM = quorum_source()
 NODE = (ROOT / "network" / "node.py").read_text()
 
 # network.quorum comes first and network.node after, because node.py takes its classes
@@ -29,10 +31,12 @@ NODE = (ROOT / "network" / "node.py").read_text()
 RUNNER = """
 import sys
 
+from tests.mutation_support import apply_source
+
 import network.quorum
 
 try:
-    exec(compile(sys.argv[1], "network/quorum.py", "exec"), network.quorum.__dict__)
+    apply_source("network.quorum", sys.argv[1])
     import network.node
     exec(compile(sys.argv[2], "network/node.py", "exec"), network.node.__dict__)
 except Exception:
@@ -102,19 +106,20 @@ IN_QUORUM = {
         "",
     ),
     "invalid certificate accepted": (
-        "        if self.replica.certificate_is_valid(certificate):\n"
-        "            self._accept(certificate)\n",
-        "        if True:\n"
-        "            self._accept(certificate)\n",
+        "        if not self.replica.certificate_is_valid(certificate):\n"
+        "            self._cost += BAD_SIGNATURE_COST\n"
+        "            return _NOTHING\n"
+        "\n"
+        "        if certificate.decides(self.replica.committee_of(certificate)):\n",
+        "        if certificate.decides(self.replica.committee_of(certificate)):\n",
     ),
     "invalid certificate halts the node": (
-        "        if self.replica.certificate_is_valid(certificate):\n"
-        "            self._accept(certificate)\n"
-        "        else:\n"
-        "            self._cost += BAD_SIGNATURE_COST\n",
-        "        if self.replica.certificate_is_valid(certificate):\n"
-        "            self._accept(certificate)\n"
-        "        else:\n"
+        "        if not self.replica.certificate_is_valid(certificate):\n"
+        "            self._cost += BAD_SIGNATURE_COST\n"
+        "            return _NOTHING\n"
+        "\n"
+        "        if certificate.decides(self.replica.committee_of(certificate)):\n",
+        "        if not self.replica.certificate_is_valid(certificate):\n"
         "            self._cost += BAD_SIGNATURE_COST\n"
         "            known = self._known.get(\n"
         "                (certificate.event.sender, certificate.event.nonce)\n"
@@ -126,16 +131,22 @@ IN_QUORUM = {
         "                     _encode_signatures(known),\n"
         "                     certificate.event.canonical().decode(),\n"
         "                     _encode_signatures(certificate)),\n"
-        "                )\n",
+        "                )\n"
+        "                self._halted_now()\n"
+        "            return _NOTHING\n"
+        "\n"
+        "        if certificate.decides(self.replica.committee_of(certificate)):\n",
     ),
     "conflict does not halt": (
         "            self.replica.record_halt(known, certificate)\n"
-        "            self._buffer.clear()\n"
-        "            self._waiting.clear()\n"
-        "            self._aggregating.clear()\n"
+        "            self._halted_now()\n"
         "            return False\n",
         "            self._retry_buffer()\n"
         "            return False\n",
+    ),
+    "two prepares in conflict do not halt": (
+        '                self.replica.record_halt(known, certificate)\n                self._halted_now()\n            return []\n',
+        '                pass\n            return []\n',
     ),
     "halt on the same event": (
         "        if known is not None and known.event.canonical() != event.canonical():\n",
@@ -163,7 +174,7 @@ IN_QUORUM = {
         "            False\n",
     ),
     "vote not written to disk": (
-        "        if not self._store.record_vote(event, signed, gathering):\n"
+        "        if not self._store.record_vote(event, signed, gathering, round_state):\n"
         "            return None\n",
         "",
     ),
@@ -177,59 +188,60 @@ IN_QUORUM = {
         "            event.canonical(), (event, {})\n"
         "        )\n",
     ),
-    "certificate made below the quorum": (
-        "        if len(votes) < self.committee.quorum:\n",
-        "        if len(votes) < self.committee.quorum - 1:\n",
+    "prepare made below the quorum": (
+        "        if len(votes) < self.committee.quorum:\n"
+        "            return []\n"
+        "\n"
+        "        certificate = QuorumCertificate(\n"
+        "            event,\n"
+        "            tuple(votes[validator] for validator in sorted(votes)),\n"
+        "            self.committee.epoch,\n"
+        "        )\n",
+        "        if len(votes) < self.committee.quorum - 1:\n"
+        "            return []\n"
+        "\n"
+        "        certificate = QuorumCertificate(\n"
+        "            event,\n"
+        "            tuple(votes[validator] for validator in sorted(votes)),\n"
+        "            self.committee.epoch,\n"
+        "        )\n",
+    ),
+    "decision made below n votes": (
+        "        if certificate.decides(committee):\n"
+        "            self._aggregating.pop(event.canonical(), None)\n",
+        "        if len(votes) >= committee.n - 1:\n"
+        "            self._aggregating.pop(event.canonical(), None)\n",
     ),
     "new certificate not executed here": (
-        "        self._accept(certificate)\n"
-        "        return certificate\n",
-        "        return certificate\n",
+        "            return [encode_certificate(certificate), *self._take_decision(certificate)]\n",
+        "            return [encode_certificate(certificate)]\n",
     ),
     "gathering not resumed after a restart": (
-        "        if not self.halted:\n"
-        "            self._resume_gathering()\n",
-        "",
+        '        if not self.halted:\n            self._resume_gathering()\n',
+        '        if not self.halted:\n',
     ),
     "gathering forgotten when a certificate comes, not when it runs": (
-        "        self._accept(certificate)\n"
-        "        return certificate\n",
-        "        self._accept(certificate)\n"
-        "        self.replica.forget_gathering([event.event_id()])\n"
-        "        return certificate\n",
+        "        taken = self._accept(certificate)\n",
+        "        taken = self._accept(certificate)\n"
+        "        self.replica.forget_gathering([event.event_id()])\n",
     ),
     "submit asks even when its own vote is refused": (
         "        if vote is None:\n"
         "            return _NOTHING\n"
         "\n"
-        "        _, votes = self._aggregating",
+        "        self.rounds.learn(signed)\n",
         "        if vote is None:\n"
         "            return DriverOutput(broadcasts=(encode_vote_request(signed),))\n"
         "\n"
-        "        _, votes = self._aggregating",
+        "        self.rounds.learn(signed)\n",
     ),
 }
 
 IN_NODE = {
-    "evidence votes": (
-        "                self._quorum.driver.record_evidence(event)\n",
-        "                self._quorum.driver.record_evidence(event)\n"
-        "                self._quorum.replica.handle_vote_request(event.transfer)\n",
-    ),
-    "evidence executes": (
-        "                self._quorum.driver.record_evidence(event)\n",
-        "                self._quorum.driver.record_evidence(event)\n"
-        "                if self._quorum.replica._is_ready(event.transfer) and"
-        " self._quorum.replica._is_executable(event.transfer) and"
-        " self._quorum.replica._is_fresh(event.transfer):\n"
-        "                    self._quorum.replica._execute(\n"
-        "                        type('C', (), {'event': event.transfer})()\n"
-        "                    )\n",
-    ),
     "state not restored at a restart": (
-        "            self._sync_interval = quorum.sync_interval\n"
-        "            self._publish_quorum_state()\n",
-        "            self._sync_interval = quorum.sync_interval\n",
+        "        self._sync_interval = quorum.sync_interval\n"
+        "        self._publish_quorum_state()\n",
+        "        self._sync_interval = quorum.sync_interval\n",
     ),
     "public state not published after a message": (
         "            finally:\n"
@@ -257,8 +269,8 @@ IN_NODE = {
         "        self.events.sort(key=lambda e: e.event_id())\n",
     ),
     "halt does not reach the status": (
-        "        known = list(self.events) + self._quorum_halt_events\n",
-        "        known = list(self.events)\n",
+        "            return bool(self._quorum_halt_events)\n",
+        "            return False\n",
     ),
     "replies not sent": (
         "                self._send_quorum_reply(connection, message)\n",
@@ -269,15 +281,17 @@ IN_NODE = {
         "                    pass\n",
     ),
     "quorum messages take the old way": (
-        "        if self._quorum is not None and message_type in QUORUM_MESSAGE_TYPES:\n",
-        "        if False:\n",
+        "        if message.get(\"type\") in QUORUM_MESSAGE_TYPES:\n"
+        "            self._handle_quorum_message(message, connection)\n",
+        "        if False:\n"
+        "            self._handle_quorum_message(message, connection)\n",
     ),
 }
 
 
 def _run(quorum: str, node: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-c", RUNNER, quorum, node, *TESTS],
+        [sys.executable, "-c", RUNNER, source_argument(quorum), node, *TESTS],
         cwd=ROOT,
         capture_output=True,
         text=True,

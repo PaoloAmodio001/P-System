@@ -1,4 +1,4 @@
-"""Several messages, one transaction (network/quorum.py and PeerConnection.receive_loop).
+"""Several messages, one transaction (network/quorum/ and PeerConnection.receive_loop).
 
 The rule: a group decides what the same messages decide one by one, and no signature leaves
 before the commit. A property test compares the two on random mixes, including conflicts,
@@ -41,7 +41,7 @@ def spend(nonce: int, receiver: str = "bob") -> SignedTransfer:
     return SignedTransfer.create(SENDER, Transfer(ALICE, receiver, 1, nonce))
 
 
-def certificate(event: Transfer, signers=(0, 1, 2)) -> QuorumCertificate:
+def certificate(event: Transfer, signers=(0, 1, 2, 3)) -> QuorumCertificate:
     return QuorumCertificate(
         event,
         tuple(Vote.create(COMMITTEE, MEMBERS[i], event) for i in signers),

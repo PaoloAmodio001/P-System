@@ -66,6 +66,11 @@ jobs:
         working-directory: formal/lean
         run: lake build
 
+      # The node calls the compiled core (network/quorum/lean_core.py): the shared library is built here.
+      - name: Build the Lean core of the node
+        working-directory: formal/lean
+        run: lake build PSystem:shared
+
       # lake build accepts sorry with a warning, and a theorem can rest on a new axiom.
       - name: Refuse shortcuts in the proofs
         working-directory: formal/lean
@@ -99,7 +104,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # The run of the differentials required before a merge (archive/CLAUDE.md, rule 7), on every
+  # The run of the differentials required before a merge (15 seeds), on every
   # pull request, so that it cannot be left out: on 9 November 2026 two commits reached main with
   # only the 3 default seeds, and seed 8 of differential B diverged. A job of its own, because
   # with 15 seeds it takes longer than the rest of the suite. A green run says that these seeds
@@ -158,6 +163,11 @@ jobs:
       - name: Build the proofs
         working-directory: formal/lean
         run: lake build
+
+      # The node calls the compiled core (network/quorum/lean_core.py): the shared library is built here.
+      - name: Build the Lean core of the node
+        working-directory: formal/lean
+        run: lake build PSystem:shared
 
       - name: Run the differentials with 15 seeds
         env:

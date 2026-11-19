@@ -16,10 +16,9 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
 from core.attestation import EpochChange
-from core.decision_status import DecisionStatus
 from core.derive import check_supply_conservation
 from core.exceptions import SupplyViolation
 from core.signed_event import SignedTransfer
@@ -38,6 +37,8 @@ API_VERSION = "v1"
 MAX_BODY_BYTES = 1024 * 1024
 MAX_DISCARDED_BYTES = 8 * 1024 * 1024
 MAX_BATCH = 256
+# The most records one answer of GET /v1/records holds.
+MAX_RECORDS_PAGE = 500
 REQUEST_TIMEOUT = 10.0
 MAX_CONNECTIONS = 256
 MAX_TRACKED_CLIENTS = 10_000
@@ -330,6 +331,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(200, self._account(route[1]))
         elif len(route) == 2 and route[0] == "certificates":
             self._certificate(route[1])
+        elif route == ["records"]:
+            self._records(parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {})
         else:
             self._reply(404, {"error": "UNKNOWN PATH"})
 
@@ -347,7 +350,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "executed": replica.executed_count,
                 "state_root": replica.state.root(),
                 "halted": node._quorum.driver.halted,
-                "conflicted": node.status() == DecisionStatus.CONFLICTED,
+                "conflicted": node.conflicted,
                 "is_member": replica.is_member,
                 "peers": sorted(node.peer_connections),
                 "guilty_members": [key.hex() for key in node.guilty_members()],
@@ -390,6 +393,54 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         self._reply(200, encode_certificate(found))
+
+    def _records(self, query: dict) -> None:
+        """
+        Executed events that carry data (docs/MISSION-RECORDS.md), with their certificates, in the
+        order this node executed them. `after` is a position in that order, which is this node's:
+        another node, or this one after a snapshot pruned its log, may number them otherwise. A
+        reader keeps the event ids it has, and the certificate is the proof, not this answer.
+        """
+        try:
+            after = int(query.get("after", ["0"])[0])
+            limit = int(query.get("limit", [str(MAX_RECORDS_PAGE)])[0])
+        except ValueError:
+            self._reply(400, {"error": "AFTER AND LIMIT ARE INTEGERS"})
+            return
+
+        sender = query.get("sender", [None])[0]
+
+        if after < 0 or not 0 < limit <= MAX_RECORDS_PAGE:
+            self._reply(400, {"error": f"AFTER >= 0 AND LIMIT FROM 1 TO {MAX_RECORDS_PAGE}"})
+            return
+
+        with self.node._state_lock:
+            log = list(self.node._quorum.replica.log)
+
+        records = []
+        position = after
+
+        for position in range(after, len(log)):
+            certificate = log[position]
+
+            if certificate.event.data == "" or (sender is not None and certificate.event.sender != sender):
+                continue
+
+            if len(records) == limit:
+                position -= 1
+                break
+
+            records.append(
+                {
+                    "position": position,
+                    "event_id": certificate.event.event_id(),
+                    "certificate": encode_certificate(certificate),
+                }
+            )
+        else:
+            position = len(log) - 1
+
+        self._reply(200, {"records": records, "next": max(position + 1, after), "executed": len(log)})
 
     def do_POST(self) -> None:
         if not self._within_rate():

@@ -16,4 +16,4 @@ authors = [{ name = "Paolo Amodio" }]
 psystem = "network.cli:main"
 
 [tool.setuptools]
-packages = ["core", "crypto", "network", "sdk"]
+packages = ["core", "crypto", "network", "network.quorum", "sdk"]

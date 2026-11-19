@@ -6,7 +6,7 @@ namespace PSystem
 # Causal readiness and valid sequences
 
 The causal part of the model used by `derive` and its proofs. Taken from
-the former R17 modules (see the tag `pre-lean-cleanup`); only the
+the former R17 modules (see commit `e10f4a4`); only the
 definitions and lemmas used by the convergence results are kept.
 
 Causality is expressed through ids that have already been processed

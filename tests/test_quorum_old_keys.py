@@ -26,9 +26,19 @@ from tests.test_quorum_reports import (
     wire,
 )
 
+from network.quorum import QuorumDriver as _Driver
+
+
+@pytest.fixture(autouse=True)
+def _close_at_once(monkeypatch):
+    # Closures here form at once, with what is open locked: the limit that remains when the wait
+    # for decisions runs out (`QuorumDriver.CLOSING_GRACE_SECONDS`).
+    monkeypatch.setattr(_Driver, "CLOSING_GRACE_SECONDS", 0.0)
+
+
 
 def forged(event, committee=COMMITTEE, epoch=0):
-    votes = tuple(Vote.create(committee, member, event) for member in MEMBERS[:3])
+    votes = tuple(Vote.create(committee, member, event) for member in MEMBERS[: committee.n])
     return QuorumCertificate(event, votes, epoch)
 
 

@@ -1,6 +1,11 @@
 import re
 
 from core.attestation import (
+    PRECOMMIT,
+    PREVOTE,
+    VOTE,
+    RoundProposal,
+    RoundReport,
     EpochChange,
     EpochClosure,
     Snapshot,
@@ -27,6 +32,7 @@ def encode_signed_transfer(
             "amount": event.transfer.amount,
             "nonce": event.transfer.nonce,
             "parents": list(event.transfer.parents),
+            **({"data": event.transfer.data} if event.transfer.data else {}),
         },
         "public_key": event.public_key.hex(),
         "signature": event.signature.hex(),
@@ -48,6 +54,7 @@ def decode_signed_transfer(
         amount=data["amount"],
         nonce=data["nonce"],
         parents=tuple(data.get("parents", [])),
+        data=data.get("data", ""),
     )
 
     return SignedTransfer(
@@ -97,8 +104,11 @@ def _hex_bytes(value, pattern: re.Pattern) -> bytes:
     return bytes.fromhex(value)
 
 
+_EVENT_FIELDS = ("sender", "receiver", "amount", "nonce", "parents")
+
+
 def _encode_quorum_event(event: Transfer) -> dict:
-    return {
+    encoded = {
         "sender": event.sender,
         "receiver": event.receiver,
         "amount": event.amount,
@@ -106,16 +116,22 @@ def _encode_quorum_event(event: Transfer) -> dict:
         "parents": sorted(event.parents),
     }
 
+    # Absent when empty: an event without data has the form it had before data existed.
+    if event.data != "":
+        encoded["data"] = event.data
+
+    return encoded
+
 
 def _decode_quorum_event(value) -> Transfer:
-    data = _object_with_fields(
-        value,
-        "sender",
-        "receiver",
-        "amount",
-        "nonce",
-        "parents",
-    )
+    # One form on the wire: "data" is either absent or a non-empty canonical text.
+    if type(value) is dict and "data" in value:
+        data = _object_with_fields(value, *_EVENT_FIELDS, "data")
+
+        if type(data["data"]) is not str or data["data"] == "":
+            raise ValueError("INVALID QUORUM MESSAGE")
+    else:
+        data = _object_with_fields(value, *_EVENT_FIELDS)
 
     if type(data["parents"]) is not list:
         raise ValueError("INVALID QUORUM MESSAGE")
@@ -126,6 +142,7 @@ def _decode_quorum_event(value) -> Transfer:
         amount=data["amount"],
         nonce=data["nonce"],
         parents=tuple(data["parents"]),
+        data=data.get("data", ""),
     )
 
     if not is_well_formed_event(event):
@@ -139,6 +156,7 @@ def _decode_quorum_event(value) -> Transfer:
         amount=event.amount,
         nonce=event.nonce,
         parents=tuple(sorted(event.parents)),
+        data=event.data,
     )
 
 
@@ -212,7 +230,158 @@ def decode_vote(message) -> tuple[Transfer, Vote]:
     )
 
 
-def encode_certificate(certificate: QuorumCertificate) -> dict:
+def _check_round(value, first: int = 0) -> None:
+    if type(value) is not int or not first <= value < 2**63:
+        raise ValueError("INVALID QUORUM MESSAGE")
+
+
+def encode_round_vote(event: Transfer, vote: Vote, phase: str, round_: int, epoch: int = 0) -> dict:
+    """A vote of a round after 0, or a precommit, sent to every member."""
+    message = {
+        "type": "ROUND_VOTE",
+        "phase": phase,
+        "round": round_,
+        "transfer": _encode_quorum_event(event),
+        "validator": vote.validator,
+        "signature": vote.signature.hex(),
+    }
+    if epoch != 0:
+        message["epoch"] = epoch
+    return message
+
+
+def decode_round_vote(message) -> tuple[Transfer, Vote, str, int, int, SignedTransfer | None]:
+    """The vote, and the version with its sender's signature when it came with it."""
+    has_epoch = type(message) is dict and "epoch" in message
+    has_signed = type(message) is dict and ("public_key" in message or "sender_signature" in message)
+    fields = ("phase", "round", "transfer", "validator", "signature") + (("epoch",) if has_epoch else ()) + (
+        ("public_key", "sender_signature") if has_signed else ()
+    )
+    data = _message_of_type(message, "ROUND_VOTE", *fields)
+    phase, round_ = data["phase"], data["round"]
+    if phase not in (PREVOTE, PRECOMMIT):
+        raise ValueError("INVALID QUORUM MESSAGE")
+    _check_round(round_, 1 if phase == PREVOTE else 0)
+    if has_epoch:
+        _check_epoch(data["epoch"])
+    event = _decode_quorum_event(data["transfer"])
+    signed = None
+    if has_signed:
+        signed = SignedTransfer(
+            transfer=event,
+            public_key=_hex_bytes(data["public_key"], _PUBLIC_KEY_PATTERN),
+            signature=_hex_bytes(data["sender_signature"], _SIGNATURE_PATTERN),
+        )
+    return (
+        event,
+        _decode_vote_fields(data["validator"], data["signature"]),
+        phase,
+        round_,
+        data["epoch"] if has_epoch else 0,
+        signed,
+    )
+
+
+def _encode_signed(event: SignedTransfer) -> dict:
+    return {
+        "transfer": _encode_quorum_event(event.transfer),
+        "public_key": event.public_key.hex(),
+        "signature": event.signature.hex(),
+    }
+
+
+def _decode_signed(value) -> SignedTransfer:
+    return _signed_event_of(_object_with_fields(value, "transfer", "public_key", "signature"))
+
+
+def _encode_round_report(report: RoundReport) -> dict:
+    return {
+        "sender": report.sender,
+        "nonce": report.nonce,
+        "round": report.round,
+        "validator": report.validator,
+        "vote0": None if report.vote0 is None else _encode_signed(report.vote0),
+        "best": None if report.best is None else encode_certificate(report.best),
+        "best_value": None if report.best_value is None else _encode_signed(report.best_value),
+        "signature": report.signature.hex(),
+    }
+
+
+def _decode_round_report(value) -> RoundReport:
+    data = _object_with_fields(
+        value, "sender", "nonce", "round", "validator", "vote0", "best", "best_value", "signature"
+    )
+    if type(data["sender"]) is not str:
+        raise ValueError("INVALID QUORUM MESSAGE")
+    _check_round(data["nonce"])
+    _check_round(data["round"], 1)
+    vote = _decode_vote_fields(data["validator"], data["signature"])
+    return RoundReport(
+        sender=data["sender"],
+        nonce=data["nonce"],
+        round=data["round"],
+        validator=vote.validator,
+        vote0=None if data["vote0"] is None else _decode_signed(data["vote0"]),
+        best=None if data["best"] is None else decode_certificate(data["best"]),
+        signature=vote.signature,
+        best_value=None if data["best_value"] is None else _decode_signed(data["best_value"]),
+    )
+
+
+def encode_new_round(report: RoundReport, epoch: int = 0) -> dict:
+    """A member entered a round for a key, and reports. Sent to every member."""
+    message = {"type": "NEW_ROUND", "report": _encode_round_report(report)}
+    if epoch != 0:
+        message["epoch"] = epoch
+    return message
+
+
+def decode_new_round(message) -> tuple[RoundReport, int]:
+    has_epoch = type(message) is dict and "epoch" in message
+    data = _message_of_type(message, "NEW_ROUND", "report", *(("epoch",) if has_epoch else ()))
+    if has_epoch:
+        _check_epoch(data["epoch"])
+    return _decode_round_report(data["report"]), data["epoch"] if has_epoch else 0
+
+
+def encode_proposal(proposal: RoundProposal, epoch: int = 0) -> dict:
+    message = {
+        "type": "PROPOSAL",
+        "round": proposal.round,
+        "value": _encode_signed(proposal.value),
+        "reports": [_encode_round_report(report) for report in proposal.reports],
+        "validator": proposal.validator,
+        "signature": proposal.signature.hex(),
+    }
+    if epoch != 0:
+        message["epoch"] = epoch
+    return message
+
+
+def decode_proposal(message) -> tuple[RoundProposal, int]:
+    has_epoch = type(message) is dict and "epoch" in message
+    fields = ("round", "value", "reports", "validator", "signature") + (("epoch",) if has_epoch else ())
+    data = _message_of_type(message, "PROPOSAL", *fields)
+    _check_round(data["round"], 1)
+    if type(data["reports"]) is not list:
+        raise ValueError("INVALID QUORUM MESSAGE")
+    if has_epoch:
+        _check_epoch(data["epoch"])
+    signer = _decode_vote_fields(data["validator"], data["signature"])
+    return (
+        RoundProposal(
+            round=data["round"],
+            value=_decode_signed(data["value"]),
+            reports=tuple(_decode_round_report(item) for item in data["reports"]),
+            validator=signer.validator,
+            signature=signer.signature,
+        ),
+        data["epoch"] if has_epoch else 0,
+    )
+
+
+def encode_certificate(certificate: QuorumCertificate, signed: SignedTransfer | None = None) -> dict:
+    """With `signed`, the event's sender signature goes along: what a member reports needs it."""
     message = {
         "type": "CERTIFICATE",
         "transfer": _encode_quorum_event(certificate.event),
@@ -229,13 +398,41 @@ def encode_certificate(certificate: QuorumCertificate) -> dict:
     if certificate.epoch != 0:
         message["epoch"] = certificate.epoch
 
+    # Only for what is not a vote of round 0, for the same reason.
+    if certificate.phase != VOTE:
+        message["phase"] = certificate.phase
+        message["round"] = certificate.round
+
+    if signed is not None and signed.transfer.canonical() == certificate.event.canonical():
+        message["public_key"] = signed.public_key.hex()
+        message["sender_signature"] = signed.signature.hex()
+
     return message
 
 
 def decode_certificate(message) -> QuorumCertificate:
+    return decode_certificate_and_signed(message)[0]
+
+
+def decode_certificate_and_signed(message) -> tuple[QuorumCertificate, SignedTransfer | None]:
     has_epoch = type(message) is dict and "epoch" in message
-    fields = ("transfer", "votes", "epoch") if has_epoch else ("transfer", "votes")
+    has_phase = type(message) is dict and ("phase" in message or "round" in message)
+    has_signed = type(message) is dict and ("public_key" in message or "sender_signature" in message)
+    fields = ("transfer", "votes") + (("epoch",) if has_epoch else ()) + (
+        ("phase", "round") if has_phase else ()
+    ) + (("public_key", "sender_signature") if has_signed else ())
     data = _message_of_type(message, "CERTIFICATE", *fields)
+
+    phase, round_ = VOTE, 0
+    if has_phase:
+        phase, round_ = data["phase"], data["round"]
+        if (
+            phase not in (PREVOTE, PRECOMMIT)
+            or type(round_) is not int
+            or not 0 <= round_ < 2**63
+            or (phase == PREVOTE and round_ < 1)
+        ):
+            raise ValueError("INVALID QUORUM MESSAGE")
 
     if type(data["votes"]) is not list:
         raise ValueError("INVALID QUORUM MESSAGE")
@@ -251,11 +448,21 @@ def decode_certificate(message) -> QuorumCertificate:
             _decode_vote_fields(entry["validator"], entry["signature"])
         )
 
-    return QuorumCertificate(
+    certificate = QuorumCertificate(
         event=_decode_quorum_event(data["transfer"]),
         votes=tuple(votes),
         epoch=data["epoch"] if has_epoch else 0,
+        phase=phase,
+        round=round_,
     )
+    signed = None
+    if has_signed:
+        signed = SignedTransfer(
+            transfer=certificate.event,
+            public_key=_hex_bytes(data["public_key"], _PUBLIC_KEY_PATTERN),
+            signature=_hex_bytes(data["sender_signature"], _SIGNATURE_PATTERN),
+        )
+    return certificate, signed
 
 
 def encode_certificate_sync(certificates) -> dict:

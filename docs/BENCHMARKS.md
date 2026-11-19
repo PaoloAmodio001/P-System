@@ -2,38 +2,38 @@
 
 Measured on 2026-11-06, on commit `25844e1`, whose `core/`, `network/`, `sdk/` and `crypto/` are those of `5012d3a`, except the containers, measured on 2026-11-05. Each number below comes from a raw file in `benchmarks/results/`, named in its section, and `tests/test_documents.py` compares them. **These numbers belong to this machine and this moment.** Measures on one machine and on containers come first. Measures on separate machines do not exist yet, and have a section of their own to say so. They come from one laptop, with all the nodes on it, and nobody else has repeated them. Nothing here is compared with another system.
 
-## Riproducibilità
+## Reproducibility
 
-Template per ogni run/numero riportato (compilare e allegare il raw JSON/JSONL):
+What each run reports, to fill in with its raw JSON or JSONL attached:
 
-| Campo | Valore |
+| Field | Value |
 |---|---|
-| Data | `YYYY-MM-DD` |
-| Commit sorgente (e note su path rilevanti) | `git rev-parse --short HEAD` + cosa è incluso |
-| Hardware | CPU, core/logical, RAM (se nota), disco/filesystem |
-| Sistema operativo / kernel | |
-| Versione Python | `python3 --version` |
-| Versione Lean / Lake | `lake --version` (in `formal/lean/` se rilevante) |
-| Configurazione rete | localhost/TLS reale tra processi, container+netem, host separati, ecc. |
-| Workload | nodi, f/quorum, eventi, batch, sender, durata |
-| Comando esatto | comando completo con argomenti |
-| Ripetizioni / variabilità | numero run, mediana/p95 se disponibili |
-| Raw results | percorso file in `benchmarks/results/` |
+| Date | `YYYY-MM-DD` |
+| Source commit (and notes on the paths that matter) | `git rev-parse --short HEAD`, and what it includes |
+| Hardware | CPU, cores and logical CPUs, RAM if known, disk and file system |
+| Operating system and kernel | |
+| Python version | `python3 --version` |
+| Lean and Lake versions | `lake --version` (in `formal/lean/` when it matters) |
+| Network | localhost with real TLS between processes, containers with netem, virtual machines, separate hosts |
+| Workload | nodes, f and quorum, events, batch, senders, duration |
+| Exact command | the whole command with its arguments |
+| Repetitions and spread | number of runs, median and p95 when there are |
+| Raw results | the file in `benchmarks/results/` |
 
-Esempio compilato (benchmark più recente disponibile nei raw: quorum su ext4, 2026-11-06):
+Filled in, for the latest benchmark among the raw files (quorum on ext4, 2026-11-06):
 
-| Campo | Valore |
+| Field | Value |
 |---|---|
-| Data | 2026-11-06 |
-| Commit sorgente | `25844e1` (core/network/sdk/crypto come `5012d3a`; dettagli nel testo sopra) |
+| Date | 2026-11-06 |
+| Source commit | `25844e1` (core, network, sdk and crypto as `5012d3a`; details in the text above) |
 | Hardware | Intel Core i3-1115G4, 4 logical CPUs, SK hynix BC711 NVMe, ext4 |
-| Sistema operativo / kernel | `Linux-7.1.5+kali-amd64-x86_64-with-glibc2.43` (da raw) |
-| Versione Python | 3.14.8 |
-| Versione Lean / Lake | Lake 5.0.0-src+eb6cafb (Lean 4.35.0), al 2026-11-07 nell'ambiente di verifica; non influisce sull'esecuzione Python del benchmark |
-| Configurazione rete | nodi reali su TLS reale, **tutti su una sola macchina** (un host, un disco, un interprete Python); nessuna rete tra host separati |
-| Workload | quorum benchmark standard (firma/verifica Ed25519, voti durevoli, verifica certificati, replica path, latenza/throughput con n=4,7,13; batch 1 e 50 dove indicato) |
-| Comando esatto | `python benchmarks/quorum_benchmark.py --dir /var/tmp/psystem-bench.mUYb --out benchmarks/results/quorum-ext4-2026-11-06.json` |
-| Ripetizioni / variabilità | singola esecuzione registrata nel raw; dove presenti, latenza riporta mediana e p95 |
+| Operating system and kernel | `Linux-7.1.5+kali-amd64-x86_64-with-glibc2.43` (from the raw file) |
+| Python version | 3.14.8 |
+| Lean and Lake versions | Lake 5.0.0-src+eb6cafb (Lean 4.35.0) on 2026-11-07; it does not affect the Python run of the benchmark |
+| Network | real nodes on real TLS, **all on one machine** (one host, one disk, one Python interpreter); no network between hosts |
+| Workload | the standard quorum benchmark (Ed25519 signing and verification, durable votes, certificate verification, the replica path, latency and throughput with n = 4, 7, 13; batches of 1 and 50 where stated) |
+| Exact command | `python benchmarks/quorum_benchmark.py --dir /var/tmp/psystem-bench.mUYb --out benchmarks/results/quorum-ext4-2026-11-06.json` |
+| Repetitions and spread | one run recorded in the raw file; where given, latency reports the median and p95 |
 | Raw results | `benchmarks/results/quorum-ext4-2026-11-06.json` |
 
     python benchmarks/quorum_benchmark.py --dir /a/directory/on/the/disk/to/measure --out results.json

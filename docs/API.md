@@ -29,6 +29,7 @@ proves something: see "Proof" below.
 | `GET /v1/accounts/{account}` | `balance`, `next_nonce`. An account of an asset holds a slash: write it `%2F` |
 | `GET /v1/certificates/{event_id}` | The certificate, or `404` if this node has not executed it or has pruned it |
 | `GET /v1/closures` | The closures of the chain, in order |
+| `GET /v1/records?after=&limit=&sender=` | Executed events that carry data, with their certificates, in this node's order: `records` (`position`, `event_id`, `certificate`), `next`, `executed`. See `docs/MISSION-RECORDS.md` |
 
 ## Writes
 
@@ -41,6 +42,8 @@ proves something: see "Proof" below.
   "signature": "…"
 }
 ```
+
+A transfer may also carry `"data"`: the canonical text of a JSON object, at most 16 KiB, bound into its id and signature (`docs/MISSION-RECORDS.md`). It is absent when empty.
 
 `POST /v1/transfers:batch` takes a list of up to 256 of these, sharing one write to disk.
 `POST /v1/epoch-changes` takes an `EpochChange` as in `docs/PROTOCOL.md`.

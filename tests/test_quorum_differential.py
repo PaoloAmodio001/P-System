@@ -164,8 +164,19 @@ def _lean_entry(entry: Entry, event: Transfer) -> str:
     raise AssertionError(entry.kind)
 
 
+def decision_quorum(f: int) -> int:
+    """
+    The votes of round 0 that decide: all `n` of them. A certificate of `2f+1` to `n-1` votes of
+    round 0 only prepares, and the replica does not execute it (`Rounds.decisions_agree`): the
+    rounds that start from it run in the Lean core itself (`network/quorum/lean_core.py`). So the
+    model `Quorum.runNode`, which takes `Q` as a parameter, runs here with `Q = n`: the hypothesis
+    `n + f < 2Q` of `quorum_intersection_honest` holds for it as for `2f+1`.
+    """
+    return 3 * f + 1
+
+
 def lean_case(case: Case) -> str:
-    lines = [f"N {3 * case.f + 1}", f"Q {2 * case.f + 1}"]
+    lines = [f"N {3 * case.f + 1}", f"Q {decision_quorum(case.f)}"]
     lines += [
         f"A {name} {case.balances[name]} {case.nonces.get(name, 0)}"
         for name in ACCOUNTS
@@ -343,6 +354,8 @@ def _classify(stats: dict, case: Case, replica: QuorumReplica, item: tuple) -> N
         failing.append("cert: repeated signer")
     if len(entries) < 2 * case.f + 1:
         failing.append("cert: below quorum")
+    elif len(entries) < decision_quorum(case.f):
+        failing.append("cert: prepare only")
 
     state = replica.state
     executed = replica.executed
@@ -404,26 +417,30 @@ def _random_entries(rng, case: Case, event: Transfer, pool) -> list[Entry]:
     quorum = 2 * case.f + 1
     shape = rng.random()
 
-    if shape < 0.50:
-        size = rng.randint(quorum, n)
+    if shape < 0.44:
+        return [Entry(v) for v in rng.sample(range(n), n)]
+
+    if shape < 0.50 and quorum < n:
+        # Valid votes of round 0, a prepare certificate: not a decision.
+        size = rng.randint(quorum, n - 1)
         return [Entry(v) for v in rng.sample(range(n), size)]
 
     if shape < 0.56:
         size = rng.randint(0, quorum - 1)
         return [Entry(v) for v in rng.sample(range(n), size)]
 
-    entries = [Entry(v) for v in rng.sample(range(n), rng.randint(quorum, n))]
+    # One bad entry among votes that would otherwise decide.
+    entries = [Entry(v) for v in rng.sample(range(n), n)]
 
     if shape < 0.62:
         entries.append(Entry(rng.choice(entries).validator))
         return entries
 
-    if shape < 0.71:
-        entries.append(Entry(rng.randrange(n), OUTSIDER))
-        return entries
-
     if shape < 0.80:
-        entries.append(Entry(rng.randrange(n), NEGATIVE))
+        # In place of one member, so that no other rule fails with it.
+        kind = OUTSIDER if shape < 0.71 else NEGATIVE
+        replaced = entries.pop(rng.randrange(n))
+        entries.append(Entry(replaced.validator, kind))
         return entries
 
     target = rng.choice(entries)
@@ -590,6 +607,7 @@ DECISIVE_RULES = (
     "cert: insufficient balance",
     "cert: parent missing",
     "cert: below quorum",
+    "cert: prepare only",
     "cert: repeated signer",
     f"cert: {OUTSIDER}",
     f"cert: {NEGATIVE}",

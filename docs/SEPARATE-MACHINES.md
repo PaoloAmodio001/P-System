@@ -43,7 +43,7 @@ Behind NAT a node needs port forwarding or a VPN, so that it is reachable at the
 ## 3. Install, on every machine
 
 ```sh
-git clone https://github.com/PaoloAmodio001/P-System && cd P-System
+git clone https://github.com/PaoloAmodio001/P-System2 && cd P-System2
 git rev-parse HEAD                     # must be the same commit on all four machines
 python3.14 -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements.lock && pip install --no-deps .

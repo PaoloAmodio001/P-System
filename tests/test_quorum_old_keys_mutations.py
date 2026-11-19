@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_support import ROOT, run_tests_on
+from tests.mutation_support import ROOT, quorum_source, run_tests_on
 
 TESTS = [str(Path("tests") / "test_quorum_old_keys.py")]
 
 CHANGES = {
-    ("network.quorum", "network/quorum.py"): {
+    ("network.quorum", "network/quorum/"): {
         "old certificates believed": (
             "        return certificate.verify(self._store.committee_of(certificate)) and (\n"
             "            certificate.epoch >= self.committee.epoch\n"
@@ -30,8 +30,8 @@ CHANGES = {
             "            self._store.is_locked_event(certificate.event)\n",
         ),
         "the replay applies the rule of arrival": (
-            "        return self._can_run_now(certificate.event) and self.certificate_was_valid(certificate)\n",
-            "        return self._can_run_now(certificate.event) and self.certificate_is_valid(certificate)\n",
+            '            rows = self._execution(certificate, old_keys=False)\n',
+            '            rows = self._execution(certificate, old_keys=True)\n',
         ),
         "a lock on the spend, not the event": (
             "                        \"SELECT 1 FROM locks WHERE sender = ? AND nonce = ? AND canonical = ?\",\n"
@@ -85,7 +85,7 @@ CASES = [
 @pytest.mark.parametrize("case", CASES, ids=[case[2] for case in CASES])
 def test_mutation_is_detected(case):
     module, file, _, (old, new) = case
-    source = (ROOT / file).read_text()
+    source = quorum_source() if file == "network/quorum/" else (ROOT / file).read_text()
     assert source.count(old) == 1
     result = run_tests_on(module, source.replace(old, new), TESTS)
     assert result.returncode == 1, result.stdout + result.stderr
