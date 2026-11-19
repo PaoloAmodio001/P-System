@@ -13,6 +13,25 @@ Python implementation, with a Lean 4 model of the protocol and machine-checked t
 execution of a certificate and the rounds are the Lean definitions themselves, compiled and called by the node, with theorems
 that what Python hands them is enough; the Python around them is tested, not proved (`docs/PROOF-OBLIGATIONS.md`).
 
+## What it is for
+
+The protocol does not depend on the application. An "account" is any record with one owner, and an "event" is any signed
+change to it; the names `Wallet` and `transfer` in the API come from the first use case, payments, and are not a limit.
+What the design gives is: each party orders its own records with no global order and no central server; a committee run by
+independent parties certifies exactly one version of each record, tolerating `f` faulty or malicious members; and anyone
+can rebuild and check the result from the certificates alone, in any order of arrival.
+
+Examples outside payments:
+
+- **Certified evidence across companies.** Suppliers, primes, test facilities and operators each sign their own records
+  (test results, certificates of conformity, as-built baselines, qualification decisions), and an auditor checks the whole
+  chain without trusting any one of them. This is run end to end, on one machine, in `docs/SATCOM-DIGITAL-THREAD.md`
+  (`examples/satcom_digital_thread.py`).
+- **Allocation by an owner.** A party that owns a resource (a ground station's downlink windows, a band, an energy
+  budget) hands each unit to one user with a signed event, as a transfer of one unit; it can never hand the same unit to
+  two users, which is the theorem `no_double_spend`. This covers allocation by an owner, not a race between users for a
+  resource nobody owns: that needs consensus, which this design does not provide (see Limits).
+
 ## Try it in five minutes
 
 You need Linux, Python 3.14, and Docker with Compose for this demo.
