@@ -10,6 +10,8 @@ version can be taken by mistake.
   and `formal/lean/PSystem/QuorumPayload.lean` (7 theorems). See `docs/MISSION-RECORDS.md`.
 - **A satcom digital-thread example.** `examples/satcom_digital_thread.py`: suppliers, prime and test
   facility certify records on four nodes, an auditor rebuilds the chain. See `docs/SATCOM-DIGITAL-THREAD.md`.
+- **What it is for.** A section of the README says that the protocol does not depend on the application, with
+  certified evidence across companies and allocation by an owner as examples, and the limit of the second.
 
 ## 1.0.0
 
