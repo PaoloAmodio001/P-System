@@ -14,7 +14,7 @@ measured.
 ## Setting up
 
 ```sh
-git clone https://github.com/PaoloAmodio001/P-System && cd P-System
+git clone https://github.com/PaoloAmodio001/P-System2 && cd P-System2
 python3.14 -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements.lock && pip install --no-deps .
 

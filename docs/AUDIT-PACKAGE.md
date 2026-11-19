@@ -90,7 +90,7 @@ Known gaps: `docs/THREAT-MODEL.md`.
 ## 5. How to repeat everything
 
 ```sh
-git clone https://github.com/PaoloAmodio001/P-System && cd P-System
+git clone https://github.com/PaoloAmodio001/P-System2 && cd P-System2
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 

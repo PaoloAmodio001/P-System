@@ -7,7 +7,7 @@ authors:
 license: "Apache-2.0"
 version: "1.0.0"
 type: software
-repository-code: "https://github.com/PaoloAmodio001/P-System"
+repository-code: "https://github.com/PaoloAmodio001/P-System2"
 abstract: >-
   A registry of single-owner state without global consensus: a committee of
   3f+1 validators decides, for each sender and nonce, which version runs,
